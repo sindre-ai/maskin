@@ -414,6 +414,70 @@ describe('pushSessionWorkspace — transient storage failures', () => {
 	})
 })
 
+describe('pullSessionWorkspace — transient storage failures', () => {
+	// Fails `get` the first N times, so `exists` finds the archive but the read is refused.
+	class FlakyReadStorage extends InMemoryStorage {
+		private failuresLeft = 0
+		attempts = 0
+
+		failNextReads(n: number) {
+			this.failuresLeft = n
+		}
+
+		override async get(key: string): Promise<Buffer> {
+			this.attempts++
+			if (this.failuresLeft > 0) {
+				this.failuresLeft--
+				throw new Error('ServiceUnavailable')
+			}
+			return super.get(key)
+		}
+	}
+
+	async function seededStorage(sessionId: string) {
+		const storage = new FlakyReadStorage()
+		const sessionDir = join(tmpRoot, `${sessionId}-src`)
+		await mkdir(join(sessionDir, 'workspace'), { recursive: true })
+		await writeFile(join(sessionDir, 'workspace', 'file.txt'), 'saved')
+		await pushSessionWorkspace(storage, sessionId, sessionDir)
+		return storage
+	}
+
+	it('succeeds on the 2nd try after a refused read', async () => {
+		const storage = await seededStorage('pull-flaky')
+		storage.failNextReads(1)
+
+		const sleeps: number[] = []
+		const restored = join(tmpRoot, 'pull-flaky-restored')
+		const result = await pullSessionWorkspace(storage, 'pull-flaky', restored, undefined, {
+			sleep: async (ms) => {
+				sleeps.push(ms)
+			},
+		})
+
+		expect(result.restored).toBe(true)
+		expect(storage.attempts).toBe(2)
+		expect(sleeps).toEqual([2000])
+		expect((await readFile(join(restored, 'workspace', 'file.txt'))).toString()).toBe('saved')
+	})
+
+	it('throws once every try is used up', async () => {
+		const storage = await seededStorage('pull-down')
+		storage.failNextReads(10)
+
+		const sleeps: number[] = []
+		await expect(
+			pullSessionWorkspace(storage, 'pull-down', join(tmpRoot, 'pull-down-restored'), undefined, {
+				sleep: async (ms) => {
+					sleeps.push(ms)
+				},
+			}),
+		).rejects.toThrow(/ServiceUnavailable/)
+		expect(storage.attempts).toBe(4)
+		expect(sleeps).toEqual([2000, 4000, 8000])
+	})
+})
+
 // The discriminating assertion from the bet's test approach (tech spec §9):
 // a session dispatched with an attached workspace skill AND no prior S3
 // snapshot must end with the skill's SKILL.md present under

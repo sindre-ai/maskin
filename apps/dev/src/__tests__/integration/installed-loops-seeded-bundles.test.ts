@@ -1,13 +1,23 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { marketplaceLoops, objects, triggers } from '@maskin/db/schema'
+import {
+	events,
+	actors,
+	installedLoops,
+	marketplaceLoops,
+	objects,
+	relationships,
+	triggers,
+} from '@maskin/db/schema'
 import { readLoopViews } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
-import { eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { seedMarketplaceLoops } from '../../lib/dev-bootstrap'
 import { createApiError, formatZodError } from '../../lib/errors'
+import { readLoopSettings } from '../../lib/marketplace-loops/loop-settings'
 import { AgentStorageManager } from '../../services/agent-storage'
+import { provisionLoopChecklist } from '../../services/loop-checklist-provisioning'
 import { bootstrapDefaultAgents } from '../../services/workspace-bootstrap'
 import { insertWorkspace } from '../factories'
 import { jsonRequest } from '../helpers'
@@ -92,7 +102,7 @@ function makeApp(actorId: string) {
 // regression gate for the "bundle install 500s on the first seeded loop" bug:
 // each seeded bundle must install into a fresh workspace and return 201.
 describe('Marketplace install — seeded bundle end-to-end', () => {
-	let seededLoops: Array<{ id: string; slug: string; name: string }>
+	let seededLoops: Array<{ id: string; slug: string; name: string; loopSettings: unknown }>
 
 	beforeAll(async () => {
 		await rawSql`TRUNCATE marketplace_loops, marketplace_loop_items CASCADE`
@@ -102,6 +112,7 @@ describe('Marketplace install — seeded bundle end-to-end', () => {
 				id: marketplaceLoops.id,
 				slug: marketplaceLoops.slug,
 				name: marketplaceLoops.name,
+				loopSettings: marketplaceLoops.loopSettings,
 			})
 			.from(marketplaceLoops)
 		if (seededLoops.length === 0) throw new Error('expected seeded marketplace loops')
@@ -124,6 +135,7 @@ describe('Marketplace install — seeded bundle end-to-end', () => {
 		'knowledge-wiki-loop',
 		'product-usage-loop',
 		'accounting-loop',
+		'signal-intake-flow',
 	] as const
 
 	for (const slug of BUNDLE_SLUGS) {
@@ -222,5 +234,274 @@ describe('Marketplace install — seeded bundle end-to-end', () => {
 		expect(fold?.actionPrompt).toContain('list_loops')
 		expect(fold?.actionPrompt).toContain('in_loop')
 		for (const row of rows) expect(row.actionPrompt).toContain(flow?.title)
+	})
+
+	// The Knowledge Wiki flow ships an onboarding checklist: one parent task and one child per
+	// prerequisite, driven by the installed Curator, each moved from backlog to todo.
+	it('installs the knowledge-wiki-loop onboarding checklist as tasks driven by the Curator', async () => {
+		const actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+		if (!ws) throw new Error('workspace insert returned no row')
+		const agentStorage = new AgentStorageManager(createMemoryStorage(), db)
+		await bootstrapDefaultAgents(db, agentStorage, ws.id, actorId)
+
+		const loop = seededLoops.find((l) => l.slug === 'knowledge-wiki-loop')
+		if (!loop) throw new Error('seeded loop knowledge-wiki-loop not found')
+
+		const res = await makeApp(actorId).request(
+			jsonRequest('POST', '/api/installed-loops', { loopId: loop.id, workspaceId: ws.id }),
+		)
+		expect(res.status).toBe(201)
+		const body = (await res.json()) as { objectId: string }
+
+		const tasks = await db
+			.select()
+			.from(objects)
+			.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'task')))
+		const parent = tasks.find((t) => t.title === 'Knowledge onboarding checklist')
+		if (!parent) throw new Error('checklist parent task not found')
+		const children = tasks.filter((t) => t.id !== parent.id)
+		expect(children).toHaveLength(11)
+		for (const task of tasks) expect(task.status).toBe('todo')
+
+		const curatorIds = (await db.select({ id: actors.id, name: actors.name }).from(actors))
+			.filter((a) => a.name === 'Knowledge Curator')
+			.map((a) => a.id)
+		expect(curatorIds.length).toBeGreaterThan(0)
+		for (const task of tasks) expect(curatorIds).toContain(task.driver)
+
+		const edges = await db
+			.select()
+			.from(relationships)
+			.where(
+				inArray(
+					relationships.targetId,
+					tasks.map((t) => t.id),
+				),
+			)
+		const breaksInto = edges.filter((e) => e.type === 'breaks_into')
+		expect(breaksInto).toHaveLength(11)
+		for (const edge of breaksInto) expect(edge.sourceId).toBe(parent.id)
+		const inLoop = edges.filter((e) => e.type === 'in_loop')
+		expect(inLoop).toHaveLength(12)
+		for (const edge of inLoop) expect(edge.sourceId).toBe(body.objectId)
+
+		// Created at backlog, then a real move to todo, so the task triggers see both events.
+		const taskEvents = await db
+			.select({ action: events.action })
+			.from(events)
+			.where(inArray(events.entityId, [parent.id, ...children.map((c) => c.id)]))
+		expect(taskEvents.filter((e) => e.action === 'created')).toHaveLength(12)
+		expect(taskEvents.filter((e) => e.action === 'status_changed')).toHaveLength(12)
+
+		// A second call for the same install creates nothing.
+		const [install] = await db
+			.select({ id: installedLoops.id })
+			.from(installedLoops)
+			.where(eq(installedLoops.objectId, body.objectId))
+		const checklist = readLoopSettings(loop.loopSettings)?.checklist
+		if (!install || !checklist) throw new Error('install or checklist missing')
+		const again = await provisionLoopChecklist({
+			db,
+			workspaceId: ws.id,
+			actorId,
+			installId: install.id,
+			loopObjectId: body.objectId,
+			checklist,
+			driverActorId: null,
+		})
+		expect(again.created).toBe(0)
+		const after = await db
+			.select({ id: objects.id })
+			.from(objects)
+			.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'task')))
+		expect(after).toHaveLength(12)
+	})
+
+	// The Competitor watch flow ships a research checklist: one parent task and eight children,
+	// driven by the installed Market Researcher, each moved from backlog to todo.
+	it('installs the market-competitor-watch-loop research checklist as tasks driven by the Market Researcher', async () => {
+		const actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+		if (!ws) throw new Error('workspace insert returned no row')
+		const agentStorage = new AgentStorageManager(createMemoryStorage(), db)
+		await bootstrapDefaultAgents(db, agentStorage, ws.id, actorId)
+
+		const loop = seededLoops.find((l) => l.slug === 'market-competitor-watch-loop')
+		if (!loop) throw new Error('seeded loop market-competitor-watch-loop not found')
+
+		const res = await makeApp(actorId).request(
+			jsonRequest('POST', '/api/installed-loops', { loopId: loop.id, workspaceId: ws.id }),
+		)
+		expect(res.status).toBe(201)
+		const body = (await res.json()) as { objectId: string }
+
+		const tasks = await db
+			.select()
+			.from(objects)
+			.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'task')))
+		const parent = tasks.find((t) => t.title === 'Competitor research checklist')
+		if (!parent) throw new Error('checklist parent task not found')
+		const children = tasks.filter((t) => t.id !== parent.id)
+		expect(children).toHaveLength(8)
+		for (const task of tasks) expect(task.status).toBe('todo')
+
+		const researcherIds = (await db.select({ id: actors.id, name: actors.name }).from(actors))
+			.filter((a) => a.name === 'Market Researcher')
+			.map((a) => a.id)
+		expect(researcherIds.length).toBeGreaterThan(0)
+		for (const task of tasks) expect(researcherIds).toContain(task.driver)
+
+		const edges = await db
+			.select()
+			.from(relationships)
+			.where(
+				inArray(
+					relationships.targetId,
+					tasks.map((t) => t.id),
+				),
+			)
+		const breaksInto = edges.filter((e) => e.type === 'breaks_into')
+		expect(breaksInto).toHaveLength(8)
+		for (const edge of breaksInto) expect(edge.sourceId).toBe(parent.id)
+		const inLoop = edges.filter((e) => e.type === 'in_loop')
+		expect(inLoop).toHaveLength(9)
+		for (const edge of inLoop) expect(edge.sourceId).toBe(body.objectId)
+
+		// A second call for the same install creates nothing.
+		const [install] = await db
+			.select({ id: installedLoops.id })
+			.from(installedLoops)
+			.where(eq(installedLoops.objectId, body.objectId))
+		const checklist = readLoopSettings(loop.loopSettings)?.checklist
+		if (!install || !checklist) throw new Error('install or checklist missing')
+		const again = await provisionLoopChecklist({
+			db,
+			workspaceId: ws.id,
+			actorId,
+			installId: install.id,
+			loopObjectId: body.objectId,
+			checklist,
+			driverActorId: null,
+		})
+		expect(again.created).toBe(0)
+		const after = await db
+			.select({ id: objects.id })
+			.from(objects)
+			.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'task')))
+		expect(after).toHaveLength(9)
+	})
+
+	// The Accounting flow ships a setup checklist: one parent task and six children, driven by
+	// the installed Bookkeeper, each moved from backlog to todo. A second call creates nothing.
+	it('installs the accounting-loop setup checklist as tasks driven by the Bookkeeper', async () => {
+		const actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+		if (!ws) throw new Error('workspace insert returned no row')
+		const agentStorage = new AgentStorageManager(createMemoryStorage(), db)
+		await bootstrapDefaultAgents(db, agentStorage, ws.id, actorId)
+
+		const loop = seededLoops.find((l) => l.slug === 'accounting-loop')
+		if (!loop) throw new Error('seeded loop accounting-loop not found')
+
+		const res = await makeApp(actorId).request(
+			jsonRequest('POST', '/api/installed-loops', { loopId: loop.id, workspaceId: ws.id }),
+		)
+		expect(res.status).toBe(201)
+		const body = (await res.json()) as { objectId: string }
+
+		const tasks = await db
+			.select()
+			.from(objects)
+			.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'task')))
+		const parent = tasks.find((t) => t.title === 'Accounting setup checklist')
+		if (!parent) throw new Error('checklist parent task not found')
+		const children = tasks.filter((t) => t.id !== parent.id)
+		expect(children).toHaveLength(6)
+		for (const task of tasks) expect(task.status).toBe('todo')
+
+		const bookkeeperIds = (await db.select({ id: actors.id, name: actors.name }).from(actors))
+			.filter((a) => a.name === 'Bookkeeper')
+			.map((a) => a.id)
+		expect(bookkeeperIds.length).toBeGreaterThan(0)
+		for (const task of tasks) expect(bookkeeperIds).toContain(task.driver)
+
+		const edges = await db
+			.select()
+			.from(relationships)
+			.where(
+				inArray(
+					relationships.targetId,
+					tasks.map((t) => t.id),
+				),
+			)
+		const breaksInto = edges.filter((e) => e.type === 'breaks_into')
+		expect(breaksInto).toHaveLength(6)
+		for (const edge of breaksInto) expect(edge.sourceId).toBe(parent.id)
+		const inLoop = edges.filter((e) => e.type === 'in_loop')
+		expect(inLoop).toHaveLength(7)
+		for (const edge of inLoop) expect(edge.sourceId).toBe(body.objectId)
+
+		const [install] = await db
+			.select({ id: installedLoops.id })
+			.from(installedLoops)
+			.where(eq(installedLoops.objectId, body.objectId))
+		const checklist = readLoopSettings(loop.loopSettings)?.checklist
+		if (!install || !checklist) throw new Error('install or checklist missing')
+		const again = await provisionLoopChecklist({
+			db,
+			workspaceId: ws.id,
+			actorId,
+			installId: install.id,
+			loopObjectId: body.objectId,
+			checklist,
+			driverActorId: null,
+		})
+		expect(again.created).toBe(0)
+		const after = await db
+			.select({ id: objects.id })
+			.from(objects)
+			.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'task')))
+		expect(after).toHaveLength(7)
+	})
+
+	// Every sweep trigger finds the flow by its name, and the first sweep files a note into it with an
+	// in_loop edge. The install must carry that name and wire all four triggers to the one agent.
+	it('installs the signal-intake-flow flow under the name its triggers look it up by', async () => {
+		const actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+		if (!ws) throw new Error('workspace insert returned no row')
+		const agentStorage = new AgentStorageManager(createMemoryStorage(), db)
+		await bootstrapDefaultAgents(db, agentStorage, ws.id, actorId)
+
+		const loop = seededLoops.find((l) => l.slug === 'signal-intake-flow')
+		if (!loop) throw new Error('seeded loop signal-intake-flow not found')
+
+		const res = await makeApp(actorId).request(
+			jsonRequest('POST', '/api/installed-loops', { loopId: loop.id, workspaceId: ws.id }),
+		)
+		expect(res.status).toBe(201)
+		const body = (await res.json()) as {
+			objectId: string | null
+			provisioned: { actors: number; triggers: number }
+		}
+		expect(body.provisioned).toMatchObject({ actors: 1, triggers: 4 })
+		const [flow] = await db
+			.select({ title: objects.title, type: objects.type, metadata: objects.metadata })
+			.from(objects)
+			.where(eq(objects.id, body.objectId as string))
+		expect(flow?.type).toBe('loop')
+		expect(flow?.title).toBe('Signal Intake Flow')
+
+		const meta = flow?.metadata as { trigger_ids: string[] }
+		const rows = await db
+			.select({ name: triggers.name, actionPrompt: triggers.actionPrompt })
+			.from(triggers)
+			.where(inArray(triggers.id, meta.trigger_ids))
+		expect(rows).toHaveLength(4)
+		for (const row of rows) {
+			expect(row.actionPrompt).toContain(flow?.title)
+			expect(row.actionPrompt).toContain('list_loops')
+		}
 	})
 })

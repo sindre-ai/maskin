@@ -340,6 +340,7 @@ export function PendingCommentsProvider({ workspaceId, children }: ProviderProps
 					// creating a duplicate event.
 					await api.events.create(entry.workspaceId, body, tempId)
 					queryClient.invalidateQueries({ queryKey: queryKeys.events.byEntity(entry.objectId) })
+					queryClient.invalidateQueries({ queryKey: queryKeys.objects.graph(entry.objectId) })
 					trackCommentPostedFor(queryClient, entry.objectId, body, tempId)
 					for (const fileId of attachmentIds) {
 						const parentType = queryClient.getQueryData<{ type?: string }>(

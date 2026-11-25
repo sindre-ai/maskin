@@ -7,7 +7,14 @@ import { useConnectDesktop } from '@/hooks/use-desktop'
 import { type TeachingStatus, useDesktopTeaching } from '@/hooks/use-desktop-teaching'
 import { cn } from '@/lib/cn'
 import type { ComputerViewFlow } from '@/lib/computer-view-flow'
-import { attachClipboardShortcuts, createCopyArming, takeRemoteCopy } from '@/lib/desktop-clipboard'
+import { API_ORIGIN } from '@/lib/constants'
+import {
+	COPY_WINDOW_MS,
+	NO_NEW_COPY,
+	attachClipboardShortcuts,
+	createCopyArming,
+	takeRemoteCopy,
+} from '@/lib/desktop-clipboard'
 import { KEYBOARD_SENTINEL, SPECIAL_KEYS, diffTyped, keysymForChar } from '@/lib/desktop-keyboard'
 import type RfbClient from '@novnc/novnc/lib/rfb'
 import { Eye, Keyboard, Maximize2, MousePointer2, RefreshCw, Square } from 'lucide-react'
@@ -138,6 +145,8 @@ export function DesktopViewer({
 	// The browser refused to take what the computer copied (Safari): the Copy button steps in.
 	const [copyBlocked, setCopyBlocked] = useState(false)
 	const [keyboardUp, setKeyboardUp] = useState(false)
+	// Runs when the computer has not answered Ctrl/Cmd+C by the end of the window.
+	const copyTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 	const keyboardRef = useRef<HTMLTextAreaElement>(null)
 	const lastTyped = useRef(KEYBOARD_SENTINEL)
 	// Set when the person hides the keyboard, so a tap on the picture does not bring it back.
@@ -170,7 +179,7 @@ export function DesktopViewer({
 				if (cancelled || !target) return
 
 				setPhase('connecting')
-				const url = new URL(path, window.location.href)
+				const url = new URL(path, API_ORIGIN || window.location.href)
 				url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
 				url.searchParams.set('ticket', ticket)
 
@@ -194,6 +203,7 @@ export function DesktopViewer({
 						if (cancelled || !result) return
 						setCopyBlocked(!result.ok)
 						if (result.ok) toast.success('Copied to your clipboard')
+						else toast.error(result.message)
 					})
 				})
 				rfb.addEventListener('disconnect', () => {
@@ -249,9 +259,18 @@ export function DesktopViewer({
 			onPasteFailed: (message) => toast.error(message),
 			onCopyPressed: () => {
 				copyArming.arm()
+				clearTimeout(copyTimeout.current)
+				copyTimeout.current = setTimeout(() => {
+					if (!copyArming.waiting()) return
+					copyArming.disarm()
+					setCopyBlocked(true)
+					toast.error(NO_NEW_COPY)
+				}, COPY_WINDOW_MS + 100)
 			},
 		})
 	}, [shortcutsOn, copyArming])
+
+	useEffect(() => () => clearTimeout(copyTimeout.current), [])
 
 	const busy = phase === 'starting' || phase === 'connecting'
 	const failed = phase === 'disconnected' || phase === 'error'

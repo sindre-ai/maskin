@@ -51,6 +51,8 @@ import dataQueryRoutes from './routes/data-query'
 import desktopRoutes from './routes/desktop'
 import deviceAuthRoutes from './routes/device-auth'
 import devicesRoutes from './routes/devices'
+import dineroBookingRoutes from './routes/dinero-booking'
+import dineroReviewRoutes from './routes/dinero-review'
 import emailPickRoutes from './routes/email-pick'
 import emailStopRoutes from './routes/email-stop'
 import eventsRoutes from './routes/events'
@@ -79,9 +81,11 @@ import integrationsKeychainRoutes from './routes/integrations-keychain'
 import integrationsLinkedinRoutes from './routes/integrations-linkedin-unipile'
 import integrationsLinkedinMcpRoutes from './routes/integrations-linkedin-unipile-mcp'
 import integrationsMicrosoftMcpRoutes from './routes/integrations-microsoft-mcp'
+import integrationsOAuthAppRoutes from './routes/integrations-oauth-app'
 import integrationsResendRoutes from './routes/integrations-resend'
 import integrationsSkjaldConnectRoutes from './routes/integrations-skjald-connect'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
+import integrationsYoutubeMcpRoutes from './routes/integrations-youtube-mcp'
 import keychainAdminRoutes from './routes/keychain-admin'
 import liveActivitiesRoutes from './routes/live-activities'
 import loopsRoutes from './routes/loops'
@@ -102,6 +106,7 @@ import objectGoAheadRoutes from './routes/object-go-ahead'
 import objectNextStepRoutes from './routes/object-next-step'
 import objectOutcomeRoutes from './routes/object-outcome'
 import objectsRoutes from './routes/objects'
+import openaiAppsChallengeRoutes from './routes/openai-apps-challenge'
 import pilotGateRoutes from './routes/pilot-gate'
 import publicBetStrategistRoutes from './routes/public-bet-strategist'
 import publicLandingEventsRoutes from './routes/public-landing-events'
@@ -124,6 +129,7 @@ import webPushRoutes from './routes/web-push'
 import workspaceInvitationsRoutes from './routes/workspace-invitations'
 import workspaceSkillsRoutes from './routes/workspace-skills'
 import workspacesRoutes from './routes/workspaces'
+import youtubeActionsRoutes from './routes/youtube-actions'
 import type { AgentStorageManager } from './services/agent-storage'
 import type { SessionManager } from './services/session-manager'
 
@@ -195,6 +201,16 @@ export interface CreateAppOptions {
 
 const STATIC_FILE_PATH_RE =
 	/^\/(assets|fonts)\/|\.(js|mjs|css|map|json|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|txt|xml|webmanifest)$/i
+
+/** Sets Cache-Control on a 200 that has none. A 404 for a missing file stays no-store. */
+function cacheWhenFound(value: string): MiddlewareHandler {
+	return async (c, next) => {
+		await next()
+		if (c.res.status === 200 && !c.res.headers.has('Cache-Control')) {
+			c.header('Cache-Control', value)
+		}
+	}
+}
 
 const OPENAPI_INFO = {
 	title: 'Maskin Dev Workspace API',
@@ -332,7 +348,25 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// policy — browsers reject wildcard + credentials together. /api/* uses
 	// the configured-origin policy with credentials for the web app.
 	app.use('/mcp', cors({ origin: '*', exposeHeaders: ['WWW-Authenticate'] }))
-	app.use('/api/*', cors({ origin: allowedOrigins, credentials: true }))
+	// The web app can call the API from a second host that skips the Cloudflare Worker
+	// (VITE_API_ORIGIN, e.g. https://api.maskin.io). That makes every call cross-origin, so:
+	// - maxAge lets the browser reuse one preflight (Authorization makes every call preflighted;
+	//   the default of 5s would double the request count).
+	// - exposeHeaders lists the only response headers the web client reads besides the
+	//   CORS-safelisted ones (Retry-After on 429s, Content-Disposition on skill downloads).
+	app.use(
+		'/api/*',
+		cors({
+			origin: allowedOrigins,
+			credentials: true,
+			maxAge: 7200,
+			exposeHeaders: ['Retry-After', 'Content-Disposition'],
+		}),
+	)
+	// Module scripts, stylesheets and fonts loaded from that host are fetched in CORS mode.
+	// No credentials: these files are public.
+	app.use('/assets/*', cors({ origin: allowedOrigins }))
+	app.use('/fonts/*', cors({ origin: allowedOrigins }))
 	app.use(
 		'*',
 		honoLogger((line, ...rest) => console.log(redactLogLine(line.replace(/\?\S*/, '')), ...rest)),
@@ -606,8 +640,13 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/integrations/deepdots/mcp', integrationsDeepdotsMcpRoutes)
 	app.route('/api/integrations/microsoft/mcp', integrationsMicrosoftMcpRoutes)
 	app.route('/api/integrations/google-search-console/mcp', integrationsGoogleSearchConsoleMcpRoutes)
+	// youtube MCP surface — same ordering constraint as google-meet's above.
+	app.route('/api/integrations/youtube/mcp', integrationsYoutubeMcpRoutes)
 	app.route('/api/custom-mcp-servers', customMcpServersRoutes)
+	app.route('/api/dinero-booking', dineroBookingRoutes)
+	app.route('/api/dinero-review', dineroReviewRoutes)
 	app.route('/api/integrations', integrationsKeychainRoutes)
+	app.route('/api/integrations', integrationsOAuthAppRoutes)
 	app.route('/api/keychain', keychainAdminRoutes)
 	app.route('/api/integrations', integrationsGrantsRoutes)
 	app.route('/api/integrations', integrationsGatewayRoutes)
@@ -647,6 +686,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/sessions', sessionsRoutes)
 	app.route('/api/notifications', notificationsRoutes)
 	app.route('/api/for-you', forYouRoutes)
+	app.route('/api/youtube/actions', youtubeActionsRoutes)
 	app.route('/api/devices', devicesRoutes)
 	app.route('/api/notification-preferences', notificationPreferencesRoutes)
 	app.route('/api/email/stop', emailStopRoutes)
@@ -701,6 +741,9 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// otherwise answer these paths with index.html.
 	app.route('/', oauthDiscoveryRoutes)
 
+	// Domain proof for the ChatGPT app listing. 404 until OPENAI_APPS_CHALLENGE is set.
+	app.route('/', openaiAppsChallengeRoutes)
+
 	// Client ID Metadata Document for Vercel's MCP sign-in. Public, and before the SPA fallthrough for
 	// the same reason as the discovery documents above.
 	app.route('/', oauthClientMetadataRoutes)
@@ -743,6 +786,11 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		path.resolve(import.meta.dirname ?? __dirname, '../../web/dist')
 	if (fs.existsSync(staticDir)) {
 		logger.info(`Serving static files from ${staticDir}`)
+		// No CDN in front of the second host, so the origin has to say how long a file lives.
+		// Vite names everything under /assets by content hash, so those never change; /fonts
+		// files keep their names and get a day.
+		app.use('/assets/*', cacheWhenFound('public, max-age=31536000, immutable'))
+		app.use('/fonts/*', cacheWhenFound('public, max-age=86400'))
 		app.use(
 			'*',
 			serveStatic({

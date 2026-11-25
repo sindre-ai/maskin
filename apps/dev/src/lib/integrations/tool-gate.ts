@@ -83,7 +83,8 @@ async function recordDenial(cfg: ToolGateConfig, toolName: string, kind: ToolKin
 			action: 'agent_access_denied',
 			entityType: 'integration',
 			entityId: cfg.integrationId,
-			data: { provider: cfg.provider, tool: toolName, kind, access: cfg.access },
+			// A tool this server registered is a real one: the access card may name it.
+			data: { provider: cfg.provider, tool: toolName, kind, access: cfg.access, tool_listed: true },
 		})
 	} catch (err) {
 		// The refusal matters more than its log line.
@@ -179,6 +180,8 @@ export async function toolGateFor(
 		integrationId: string | null
 		provider: string
 		providerLabel: string
+		/** The chat the call comes from (resolveCallerChat), so an Allow for this chat counts. */
+		conversationId?: string | null
 		sessionId?: string
 	},
 ): Promise<(server: McpServer) => void> {
@@ -186,7 +189,9 @@ export async function toolGateFor(
 	const integrationId = input.integrationId
 	// An integration this workspace does not have resolves to null: treat as no access.
 	const access =
-		(await resolveAgentAccess(db, input.workspaceId, integrationId, input.actorId)) ?? 'none'
+		(await resolveAgentAccess(db, input.workspaceId, integrationId, input.actorId, {
+			conversationId: input.conversationId,
+		})) ?? 'none'
 	return (server) =>
 		gateMcpServer(server, {
 			db,

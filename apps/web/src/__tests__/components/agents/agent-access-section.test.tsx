@@ -11,6 +11,7 @@ vi.mock('@/hooks/use-integrations', () => ({
 	useAgentAccess: () => ({ data: view }),
 	useSetAgentGrant: () => ({ mutate: setGrant, isPending: false }),
 	useRemoveAgentGrant: () => ({ mutate: removeGrant, isPending: false }),
+	useRemoveChatGrant: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 let role = 'member'

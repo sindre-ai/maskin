@@ -24,6 +24,7 @@ import { decodeCursor, encodeCursor } from '../cursor'
 import {
 	DEFAULT_MAX_RESPONSE_TOKENS,
 	MAX_FETCH_HANDLE_IDS,
+	RECORD_CAP_TARGETS,
 	RESPONSE_TOKEN_CAP_ENV_VAR,
 	RESUME_CURSOR,
 	TOKEN_CAP_TARGETS,
@@ -662,7 +663,9 @@ describe('token-cap wired into createMcpServer (AC-T5 / AC-T6 end-to-end)', () =
 		expect(evt.truncated).toBe(true)
 	})
 
-	it('AC-T6: calling fetch_handle.tool with fetch_handle.ids returns the omitted rows without re-truncation', async () => {
+	// Lists 25 big rows under a 2000-token cap and returns the ids the list left out. The two tests
+	// below then ask get_objects for those ids under different caps.
+	async function listAndOmit() {
 		process.env[RESPONSE_TOKEN_CAP_ENV_VAR] = '2000'
 
 		const fixture = Array.from({ length: 25 }, (_, i) => bigObjectRow(i))
@@ -707,18 +710,51 @@ describe('token-cap wired into createMcpServer (AC-T5 / AC-T6 end-to-end)', () =
 		// specifically.
 		recorded.length = 0
 
+		return { getHandler, omittedIds }
+	}
+
+	it('AC-T6: calling fetch_handle.tool with fetch_handle.ids ships every omitted row when they fit under the cap', async () => {
+		const { getHandler, omittedIds } = await listAndOmit()
+
+		// get_objects is capped too (PR 3715), so "no re-truncation" now holds only
+		// while the requested rows fit. Lift the cap for the follow-up.
+		process.env[RESPONSE_TOKEN_CAP_ENV_VAR] = '100000'
+
 		const followUp = (await getHandler({ ids: omittedIds })) as {
 			_meta?: { truncated?: boolean }
 			structuredContent: { objects: unknown[] }
 		}
 
-		// The follow-up must NOT be re-truncated: get_objects returns the full
-		// payload for the requested ids. (get_objects is not in
-		// TOKEN_CAP_TARGETS, so even if the shape overflowed the cap the wrapper
-		// wouldn't touch it — which is precisely the "no re-truncation"
-		// guarantee AC-T6 asks for.)
 		expect(followUp._meta?.truncated).toBeUndefined()
 		expect(followUp.structuredContent.objects).toHaveLength(omittedIds.length)
+	})
+
+	it('AC-T6: a follow-up that does not fit under the cap is cut and says which ids were left out', async () => {
+		const { getHandler, omittedIds } = await listAndOmit()
+
+		// The cap stays at 2000 tokens: the omitted rows together are far over it.
+		const followUp = (await getHandler({ ids: omittedIds })) as {
+			_meta?: { truncated?: boolean; fetch_handle?: { tool: string; ids: string[] } }
+			structuredContent: {
+				objects: Array<{ object: { id: string } }>
+				truncated?: boolean
+				omitted_count?: number
+				omitted_ids?: string[]
+				notice?: string
+			}
+		}
+
+		expect(followUp._meta?.truncated).toBe(true)
+		const shipped = followUp.structuredContent.objects.map((o) => o.object.id)
+		const left = followUp.structuredContent.omitted_ids ?? []
+		expect(shipped.length).toBeGreaterThan(0)
+		expect(left.length).toBeGreaterThan(0)
+		// Every requested id is either shipped or named as left out, none lost.
+		expect([...shipped, ...left]).toEqual(omittedIds)
+		expect(followUp.structuredContent.truncated).toBe(true)
+		expect(followUp.structuredContent.omitted_count).toBe(left.length)
+		expect(followUp.structuredContent.notice).toContain(`of ${omittedIds.length} objects`)
+		expect(followUp._meta?.fetch_handle?.ids).toEqual(left)
 	})
 
 	describe('a trimmed page keeps a cursor, so a walk skips no rows', () => {
@@ -865,5 +901,348 @@ describe('token-cap wired into createMcpServer (AC-T5 / AC-T6 end-to-end)', () =
 				expect(restRows[0]?.id).toBe(fixture[shipped.length].id)
 			})
 		}
+	})
+})
+
+describe('replies that are not a list of rows', () => {
+	const text = (n: number) => 'lorem ipsum "quoted" '.repeat(n)
+	const textBlock = (value: unknown) => ({ type: 'text', text: JSON.stringify(value) })
+
+	describe('get_objects', () => {
+		const object = (i: number, words: number) => ({
+			object: { id: `o${i}`, title: `Object ${i}`, content: text(words) },
+		})
+		function getObjectsResponse(objects: ReturnType<typeof object>[]) {
+			return {
+				content: [textBlock(objects.map((o) => ({ id: o.object.id, success: true, result: o })))],
+				structuredContent: {
+					heroCard: {
+						kind: 'list',
+						tool: 'get_objects',
+						objects: objects.map((o) => ({ id: o.object.id })),
+						totalCount: objects.length,
+						page: { limit: objects.length, offset: 0, hasMore: false },
+					},
+					results: objects.map((o) => ({ id: o.object.id, success: true })),
+					objects,
+				},
+			}
+		}
+
+		it('is registered with the id nested in each row and the content shape kept', () => {
+			expect(TOKEN_CAP_TARGETS.get_objects).toMatchObject({
+				fetchHandleTool: 'get_objects',
+				rowsField: 'objects',
+				idField: 'object.id',
+				keepContentShape: true,
+			})
+		})
+
+		it('cuts objects from the tail, keeps the text a per-id array, and says what was left out', () => {
+			const objects = Array.from({ length: 12 }, (_, i) => object(i, 50))
+			const result = applyResponseTokenCap('get_objects', getObjectsResponse(objects), {
+				maxTokens: 2000,
+			})
+			expect(result.truncated).toBe(true)
+			const capped = result.response as ReturnType<typeof getObjectsResponse> & {
+				_meta: { truncated: boolean; fetch_handle: { tool: string; ids: string[] } }
+			}
+			expect(estimateResponseTokens(capped)).toBeLessThanOrEqual(2000)
+
+			const shipped = capped.structuredContent.objects.map((o) => o.object.id)
+			const omitted = capped._meta.fetch_handle.ids
+			expect([...shipped, ...omitted]).toEqual(objects.map((o) => o.object.id))
+			expect(capped._meta.fetch_handle.tool).toBe('get_objects')
+
+			// The text keeps its own shape (an array of per-id results), minus the omitted ids.
+			const text0 = JSON.parse((capped.content[0] as { text: string }).text) as Array<{
+				id: string
+				result: unknown
+			}>
+			expect(text0.map((e) => e.id)).toEqual(shipped)
+			expect(text0[0]).toHaveProperty('result')
+
+			// The card lists only the rows that shipped.
+			expect(capped.structuredContent.heroCard.objects.map((o) => o.id)).toEqual(shipped)
+
+			// The payload says so in plain words, in both channels.
+			const structured = capped.structuredContent as unknown as {
+				truncated: boolean
+				omitted_count: number
+				omitted_ids: string[]
+				notice: string
+			}
+			expect(structured.truncated).toBe(true)
+			expect(structured.omitted_count).toBe(omitted.length)
+			expect(structured.omitted_ids).toEqual(omitted)
+			expect(structured.notice).toContain(`Showing ${shipped.length} of 12 objects`)
+			const noticeBlock = JSON.parse((capped.content.at(-1) as { text: string }).text)
+			expect(noticeBlock).toMatchObject({ truncated: true, omitted_count: omitted.length })
+			expect(noticeBlock.notice).toBe(structured.notice)
+		})
+
+		it('cuts the long text of a lone object that is over the cap and names the field', () => {
+			const result = applyResponseTokenCap('get_objects', getObjectsResponse([object(0, 20_000)]), {
+				maxTokens: 2000,
+			})
+			expect(result.truncated).toBe(true)
+			const capped = result.response as ReturnType<typeof getObjectsResponse>
+			expect(estimateResponseTokens(capped)).toBeLessThanOrEqual(2000)
+			const body = capped.structuredContent.objects[0].object.content
+			expect(body).toContain('more characters cut]')
+			expect(body.length).toBeLessThan(text(20_000).length)
+			const structured = capped.structuredContent as unknown as { notice: string }
+			expect(structured.notice).toContain('objects.0.object.content')
+			// The text copy is cut by the same amount, and its shape is still the per-id array.
+			const text0 = JSON.parse((capped.content[0] as { text: string }).text) as Array<{
+				result: { object: { content: string } }
+			}>
+			expect(text0[0].result.object.content).toContain('more characters cut]')
+		})
+
+		it('ships a reply under the cap untouched', () => {
+			const response = getObjectsResponse([object(0, 5)])
+			const result = applyResponseTokenCap('get_objects', response, { maxTokens: 2000 })
+			expect(result.truncated).toBe(false)
+			expect(result.response).toBe(response)
+		})
+	})
+
+	describe('get_comments', () => {
+		const comment = (i: number) => ({
+			id: 100 - i,
+			createdAt: `2026-11-1${i % 9}T00:00:00.000Z`,
+			data: { content: text(20) },
+		})
+		function commentsResponse(count: number, resume?: (row: unknown) => string | null) {
+			const comments = Array.from({ length: count }, (_, i) => comment(i))
+			return {
+				content: [
+					textBlock({
+						page: { limit: count, returned: count, total: null, has_more: false },
+						comments,
+					}),
+				],
+				structuredContent: { comments },
+				...(resume ? { [RESUME_CURSOR]: resume } : {}),
+			}
+		}
+
+		it('keeps the page shape of the text, marks it truncated and says how to continue', () => {
+			const resume = (row: unknown) => `after-${(row as { id: number }).id}`
+			const result = applyResponseTokenCap('get_comments', commentsResponse(40, resume), {
+				maxTokens: 3000,
+			})
+			expect(result.truncated).toBe(true)
+			const capped = result.response as {
+				content: Array<{ text: string }>
+				structuredContent: { comments: Array<{ id: number }>; next_cursor: string; notice: string }
+			}
+			expect(estimateResponseTokens(capped)).toBeLessThanOrEqual(3000)
+
+			const shipped = capped.structuredContent.comments
+			const page = JSON.parse(capped.content[0].text) as {
+				page: { returned: number; has_more: boolean }
+				comments: Array<{ id: number }>
+				truncated: boolean
+				notice: string
+				next_cursor: string
+			}
+			expect(page.comments).toEqual(shipped)
+			expect(page.page).toMatchObject({ returned: shipped.length, has_more: true })
+			expect(page.truncated).toBe(true)
+			expect(page.notice).toBe(capped.structuredContent.notice)
+			expect(page.notice).toContain(`Showing ${shipped.length} of 40 comments`)
+			expect(page.notice).toContain('next_cursor')
+			// The walk resumes after the last comment that shipped.
+			expect(capped.structuredContent.next_cursor).toBe(`after-${shipped.at(-1)?.id}`)
+			expect(page.next_cursor).toBe(capped.structuredContent.next_cursor)
+		})
+	})
+
+	describe('get_session_logs', () => {
+		const line = (id: number) => ({
+			id,
+			sessionId: 's1',
+			stream: 'stdout',
+			content: text(40),
+			createdAt: 't',
+		})
+
+		it('keeps the array of rows, names the id to continue from and sets _meta.truncated', () => {
+			const lines = Array.from({ length: 300 }, (_, i) => line(1000 - i))
+			const response = { content: [textBlock(lines)] }
+			const result = applyResponseTokenCap('get_session_logs', response, { maxTokens: 3000 })
+			expect(result.truncated).toBe(true)
+			const capped = result.response as {
+				content: Array<{ text: string }>
+				_meta: { truncated: boolean }
+			}
+			expect(estimateResponseTokens(capped)).toBeLessThanOrEqual(3000)
+			const shipped = JSON.parse(capped.content[0].text) as Array<{ id: number }>
+			expect(Array.isArray(shipped)).toBe(true)
+			expect(shipped.length).toBeLessThan(300)
+			expect(shipped[0]).toEqual(lines[0])
+			expect(capped._meta.truncated).toBe(true)
+			const notice = JSON.parse(capped.content[1].text) as { truncated: boolean; notice: string }
+			expect(notice.truncated).toBe(true)
+			expect(notice.notice).toContain(`Showing ${shipped.length} of 300 log lines`)
+			expect(notice.notice).toContain(`before_id ${shipped.at(-1)?.id}`)
+		})
+
+		it('continues forward with after_id when the rows run oldest first', () => {
+			const lines = Array.from({ length: 300 }, (_, i) => line(i + 1))
+			const result = applyResponseTokenCap(
+				'get_session_logs',
+				{ content: [textBlock(lines)] },
+				{ maxTokens: 3000 },
+			)
+			const capped = result.response as { content: Array<{ text: string }> }
+			const shipped = JSON.parse(capped.content[0].text) as Array<{ id: number }>
+			expect(JSON.parse(capped.content[1].text).notice).toContain(`after_id ${shipped.at(-1)?.id}`)
+		})
+
+		it('cuts the text of one huge line instead of shipping it whole', () => {
+			const result = applyResponseTokenCap(
+				'get_session_logs',
+				{ content: [textBlock([{ ...line(1), content: text(50_000) }])] },
+				{ maxTokens: 3000 },
+			)
+			const capped = result.response as { content: Array<{ text: string }> }
+			expect(estimateResponseTokens(capped)).toBeLessThanOrEqual(3000)
+			const [only] = JSON.parse(capped.content[0].text) as Array<{ content: string }>
+			expect(only.content).toContain('more characters cut]')
+			expect(JSON.parse(capped.content[1].text).notice).toContain('0.content')
+		})
+
+		it('ships a page under the cap untouched', () => {
+			const response = { content: [textBlock([line(2), line(1)])] }
+			const result = applyResponseTokenCap('get_session_logs', response, { maxTokens: 3000 })
+			expect(result.truncated).toBe(false)
+			expect(result.response).toBe(response)
+		})
+	})
+
+	describe('get_session', () => {
+		it('cuts a long prompt and log lines both, so the lines are not all pushed out by the prompt', () => {
+			const logs = Array.from({ length: 100 }, (_, i) => ({ id: 500 - i, content: text(40) }))
+			const record = { session: { id: 'sess-1', actionPrompt: text(30_000) }, logs }
+			const result = applyResponseTokenCap(
+				'get_session',
+				{ content: [textBlock(record)] },
+				{ maxTokens: 4000 },
+			)
+			expect(result.truncated).toBe(true)
+			const capped = result.response as { content: Array<{ text: string }> }
+			expect(estimateResponseTokens(capped)).toBeLessThanOrEqual(4000)
+			const body = JSON.parse(capped.content[0].text) as {
+				truncated: boolean
+				notice: string
+				session: { id: string; actionPrompt: string }
+				logs: Array<{ id: number }>
+			}
+			expect(body.truncated).toBe(true)
+			expect(Object.keys(body).slice(0, 2)).toEqual(['truncated', 'notice'])
+			expect(body.session.id).toBe('sess-1')
+			expect(body.session.actionPrompt).toContain('more characters cut]')
+			expect(body.logs.length).toBeGreaterThan(1)
+			expect(body.logs.length).toBeLessThan(100)
+			expect(body.notice).toContain('session.actionPrompt')
+			expect(body.notice).toContain(
+				`get_session_logs with id sess-1 and before_id ${body.logs.at(-1)?.id}`,
+			)
+		})
+
+		it('leaves a session without logs alone when it fits', () => {
+			const response = { content: [textBlock({ id: 'sess-1', status: 'completed' })] }
+			const result = applyResponseTokenCap('get_session', response, { maxTokens: 3000 })
+			expect(result.truncated).toBe(false)
+			expect(result.response).toBe(response)
+		})
+	})
+
+	describe('get_file', () => {
+		it('cuts a long text file, keeps its fields and names the offset to read on from', () => {
+			const file = { id: 'f1', name: 'big.md', encoding: 'utf8', content: text(50_000) }
+			const result = applyResponseTokenCap(
+				'get_file',
+				{ content: [textBlock(file)] },
+				{ maxTokens: 3000 },
+			)
+			expect(result.truncated).toBe(true)
+			const capped = result.response as { content: Array<{ text: string }> }
+			expect(estimateResponseTokens(capped)).toBeLessThanOrEqual(3000)
+			const body = JSON.parse(capped.content[0].text) as {
+				notice: string
+				id: string
+				name: string
+				encoding: string
+				content: string
+			}
+			expect(body).toMatchObject({ id: 'f1', name: 'big.md', encoding: 'utf8' })
+			const head = body.content.split('… [')[0]
+			expect(text(50_000).startsWith(head)).toBe(true)
+			expect(body.notice).toContain(`call get_file again with offset ${head.length}`)
+			expect(body.notice).toContain('format "text"')
+		})
+
+		it('continues from an earlier offset', () => {
+			const file = { id: 'f1', encoding: 'utf8', offset: 1000, content: text(50_000) }
+			const result = applyResponseTokenCap(
+				'get_file',
+				{ content: [textBlock(file)] },
+				{ maxTokens: 3000 },
+			)
+			const capped = result.response as { content: Array<{ text: string }> }
+			const body = JSON.parse(capped.content[0].text) as { notice: string; content: string }
+			const head = body.content.split('… [')[0]
+			expect(body.notice).toContain(`offset ${1000 + head.length}`)
+		})
+
+		it('leaves an image reply (a text block plus an image block) alone', () => {
+			const response = {
+				content: [
+					textBlock({ id: 'f1', mimeType: 'image/png' }),
+					{ type: 'image', data: 'A'.repeat(200_000), mimeType: 'image/png' },
+				],
+			}
+			const result = applyResponseTokenCap('get_file', response, { maxTokens: 3000 })
+			expect(result.truncated).toBe(false)
+			expect(result.response).toBe(response)
+		})
+	})
+
+	it('registers all three record tools', () => {
+		expect(Object.keys(RECORD_CAP_TARGETS).sort()).toEqual([
+			'get_file',
+			'get_session',
+			'get_session_logs',
+		])
+	})
+
+	it('honours the MCP_RESPONSE_MAX_TOKENS override on a record tool', () => {
+		const file = { id: 'f1', encoding: 'utf8', content: text(5000) }
+		const response = { content: [textBlock(file)] }
+		const roomy = applyResponseTokenCap('get_file', response, {
+			env: { [RESPONSE_TOKEN_CAP_ENV_VAR]: '100000' },
+		})
+		expect(roomy.truncated).toBe(false)
+		const tight = applyResponseTokenCap('get_file', response, {
+			env: { [RESPONSE_TOKEN_CAP_ENV_VAR]: '1000' },
+		})
+		expect(tight.truncated).toBe(true)
+	})
+
+	it('adds a plain notice to a tool that was already capped', () => {
+		const rows = Array.from({ length: 6 }, (_, i) => ({ id: String(i), body: 'y'.repeat(1024) }))
+		const payload = { objects: rows, page: { limit: 6, returned: 6, total: null, has_more: false } }
+		const result = applyResponseTokenCap(
+			'list_objects',
+			{ content: [textBlock(payload)], structuredContent: payload },
+			{ maxTokens: 1000 },
+		)
+		const structured = (result.response as { structuredContent: { notice: string } })
+			.structuredContent
+		expect(structured.notice).toMatch(/^Showing \d+ of 6 objects/)
 	})
 })

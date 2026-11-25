@@ -19,6 +19,29 @@ export interface RemovalEntry {
 	decision: string
 }
 
+// Keys of post_conversation_message.metadata that the server writes itself (cards,
+// delivery records, helper returns). The advertised schema now spells out only the keys
+// an agent writes. These keys still pass through to the handler and the API still
+// validates them, so a caller that sends one gets the same answer as before.
+const SERVER_OWNED_METADATA_KEYS = [
+	'comment_event_id',
+	'computer_request',
+	'delivery',
+	'final_output',
+	'from_suggested_step',
+	'helper_return',
+	'integration_connect',
+	'keychain_access_request',
+	'keychain_request',
+	'needed_tools',
+	'plain_tail',
+	'question',
+	'question_answer',
+	'source',
+	'suggested_steps',
+	'voice_session_id',
+] as const
+
 export const REMOVAL_LEDGER: readonly RemovalEntry[] = [
 	{
 		tool: 'run_agent',
@@ -49,4 +72,14 @@ export const REMOVAL_LEDGER: readonly RemovalEntry[] = [
 		decision:
 			'Folded into list_objects by the list contract (wave 2, T3), which takes q and pages a ranked search behind its one cursor. Kept as a listed alias of list_objects: live in tools/list, see tool-aliases.ts. Maps query to q, driver_id to driver and offset to the cursor offset. Earliest removal 2027-02-01, and only after a clean stored-prompt sweep. Rollback: MASKIN_MCP_LIST_CONTRACT=off restores the old tool (needs a restart).',
 	},
+	...SERVER_OWNED_METADATA_KEYS.map(
+		(key): RemovalEntry => ({
+			tool: 'post_conversation_message',
+			path: `metadata.${key}`,
+			removed: '2026-11-19',
+			sweepDate: '2026-11-19',
+			decision:
+				'Left the advertised schema to cut about 9 KB from the tool list (Lighter tool replies, slice 3). The key is written by the server, not by agents, and still passes through to the handler; the API still validates it. Nothing stored names it, so there is nothing to sweep.',
+		}),
+	),
 ]

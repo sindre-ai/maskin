@@ -24,7 +24,10 @@ export function describeTrigger(trigger: Pick<TriggerResponse, 'type' | 'config'
 	}
 	if (trigger.type === 'cron') {
 		const expr = config.expression ? String(config.expression) : ''
-		return expr ? `Runs ${describeCronExpression(expr)}` : 'Runs on a schedule'
+		if (!expr) return 'Runs on a schedule'
+		// describeCronExpression hands the raw text back for a schedule it cannot put into words.
+		const described = describeCronExpression(expr)
+		return described === expr ? 'Runs on a schedule' : `Runs ${described}`
 	}
 	if (trigger.type === 'reminder') {
 		const at = config.scheduled_at ? new Date(String(config.scheduled_at)) : null

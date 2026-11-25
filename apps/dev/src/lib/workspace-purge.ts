@@ -141,6 +141,7 @@ export const WORKSPACE_PURGE_CASCADE = [
 	'oauth_grants',
 	'oauth_tokens',
 	'outcome_checks',
+	'owner_approvals',
 	'plan_limit_emails',
 	'readings',
 	'receipt_intake_keys',
@@ -160,6 +161,8 @@ export const WORKSPACE_PURGE_CASCADE = [
 	'workspace_onboarding_prompts',
 	'workspace_skills',
 	'workspace_suppressions',
+	'youtube_action_audit',
+	'youtube_pending_actions',
 ] as const
 
 export interface WorkspacePurgeResult {

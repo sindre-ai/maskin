@@ -53,6 +53,8 @@ export function useCreateComment(workspaceId: string, entityId: string) {
 		mutationFn: (data: CreateCommentInput) => api.events.create(workspaceId, data),
 		onSuccess: (_result, variables) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.events.byEntity(entityId) })
+			// The timeline reads comments from the graph, whose SSE refresh trails one window.
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.graph(entityId) })
 			trackCommentPostedFor(queryClient, entityId, variables, null)
 		},
 		// Without this a rejected POST is indistinguishable from nothing

@@ -44,6 +44,9 @@ const FIND_ROW_ALLOWLIST = new Set([
 	// Accepted gap: system caller with no actor (the Stripe webhook), and Slack is outside the two
 	// provider directories. Same class as Meet watch.ts. This read writes no audit row.
 	'lib/vat-notifications.ts',
+	// System caller, no actor, same class as vat-notifications.ts; approved by the CTO 22 Nov 2026.
+	// Reads one Slack row for a platform-wide alert. This read writes no audit row.
+	'services/openrouter-balance-monitor.ts',
 ])
 
 /** Accepted gap: LinkedIn webhook (account.reconnect) decrypts account_id; it is a system caller with no actor. */

@@ -447,12 +447,18 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 			[emitShortcut, openLinkPopover, focusToolbar, variant],
 		)
 
+		// The hint is read through a ref too. A new placeholder must never rebuild the editor: that
+		// would throw away what the person has typed (the new-chat box changes its hint when the
+		// first recipient is picked).
+		const placeholderRef = useRef(placeholder)
+		const readPlaceholder = useCallback(() => placeholderRef.current, [])
+
 		const tiptapExtensions = useMemo(
 			() =>
 				buildExtensions(
 					variant,
 					disallowedNodes,
-					placeholder,
+					readPlaceholder,
 					[...(extensions ?? []), commentExtension, linkChipExtension],
 					shortcutExtension,
 					allowTables,
@@ -461,7 +467,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 				variant,
 				disallowedNodes,
 				allowTables,
-				placeholder,
+				readPlaceholder,
 				extensions,
 				commentExtension,
 				linkChipExtension,
@@ -566,6 +572,14 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 			},
 			[tiptapExtensions],
 		)
+
+		// Show the new hint. A transaction with no document change, so an empty box redraws it and
+		// nothing reaches onUpdate, autosave or the markdown.
+		useEffect(() => {
+			placeholderRef.current = placeholder
+			if (!editor || editor.isDestroyed) return
+			editor.view.dispatch(editor.state.tr)
+		}, [editor, placeholder])
 
 		// Hand the editor the comments to draw. A transaction with no document
 		// change, so it never reaches onUpdate, autosave or the markdown.

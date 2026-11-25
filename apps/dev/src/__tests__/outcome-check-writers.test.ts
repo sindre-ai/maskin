@@ -52,6 +52,10 @@ const WRITERS: Record<string, Writer> = {
 		via: 'not-an-agent-route',
 		note: 'Moves a task to todo, which is not a closed status. Not a close.',
 	},
+	"services/loop-checklist-provisioning.ts :: { status: 'todo', updatedAt: new Date() }": {
+		via: 'not-an-agent-route',
+		note: 'Install of a flow with a checklist moves its new tasks from backlog to todo, which is not a closed status. Not a close.',
+	},
 	"lib/integrations/providers/skjald/meeting-sync.ts :: { title, content, status: 'done', metadata: metadata(existingMetadata), updatedAt: new Date(), }":
 		{
 			via: 'not-an-agent-route',

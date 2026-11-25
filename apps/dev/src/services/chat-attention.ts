@@ -1,7 +1,7 @@
 import type { Database } from '@maskin/db'
 import { REQUEST_CARD_METADATA_KEYS } from '@maskin/shared'
 import { sql } from 'drizzle-orm'
-import { loadLatestSnippets, loadWorkingByConversation } from './chat-list-rows'
+import { loadWorkingByConversation } from './chat-list-rows'
 import { type TurnMetadata, USAGE_LIMIT_TEXT, failureOf } from './chat-needs-person'
 
 /**
@@ -227,47 +227,34 @@ export async function loadLastPersonMessageIds(
 	return byConversation
 }
 
-/** How many of the caller's newest chats the search filters is:needs and is:working look at. */
+/** How many of the caller's newest chats the search filter is:working looks at. */
 export const ATTENTION_SEARCH_CHAT_CAP = 500
 
 /**
- * The caller's chats that need them, and the chats where an agent is working, for the search
- * filters is:needs and is:working. Reads the same facts as the list rows, over the caller's
- * newest chats (a chat that waits on someone is almost always a recent one). Only what is asked
- * for is read. A chat the caller marked Done or Later never needs them.
+ * The chats where an agent is working, for the search filter is:working. Reads the same facts as
+ * the list rows, over the caller's newest chats. Only what is asked for is read.
  */
 export async function loadAttentionChatIds(
 	db: Database,
-	args: { workspaceId: string; callerId: string; needs: boolean; working: boolean },
-): Promise<{ needs: string[]; working: string[] }> {
-	const result = { needs: [] as string[], working: [] as string[] }
-	if (!args.needs && !args.working) return result
+	args: { workspaceId: string; callerId: string; working: boolean },
+): Promise<{ working: string[] }> {
+	const result = { working: [] as string[] }
+	if (!args.working) return result
 
 	const chats = (await db.execute(sql`
-		SELECT c.id AS id,
-			(cp.archived OR (cp.later_at IS NOT NULL AND cp.later_at >= c.last_message_at)) AS parked
+		SELECT c.id AS id
 		FROM conversations c
 		INNER JOIN conversation_participants cp
 			ON cp.conversation_id = c.id AND cp.actor_id = ${args.callerId} AND cp.left_at IS NULL
 		WHERE c.workspace_id = ${args.workspaceId}
 		ORDER BY c.last_message_at DESC, c.id
 		LIMIT ${ATTENTION_SEARCH_CHAT_CAP}
-	`)) as unknown as Array<{ id: string; parked: boolean }>
+	`)) as unknown as Array<{ id: string }>
 
-	if (args.working) {
-		const working = await loadWorkingByConversation(
-			db,
-			chats.map((c) => c.id),
-		)
-		result.working = [...working.keys()]
-	}
-	if (args.needs) {
-		const active = chats.filter((c) => !c.parked).map((c) => c.id)
-		const [asks, latest] = await Promise.all([
-			loadChatsWithOpenAsk(db, args.callerId, active),
-			loadLatestSnippets(db, active),
-		])
-		result.needs = active.filter((id) => asks.has(id) || readFailedTurn(latest.get(id)) !== null)
-	}
+	const working = await loadWorkingByConversation(
+		db,
+		chats.map((c) => c.id),
+	)
+	result.working = [...working.keys()]
 	return result
 }

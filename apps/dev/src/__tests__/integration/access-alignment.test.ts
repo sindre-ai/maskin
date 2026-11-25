@@ -2,7 +2,13 @@ import { randomBytes } from 'node:crypto'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { MasterKeyProvider } from '@maskin/auth/kms'
 import type { Database } from '@maskin/db'
-import { conversations, integrations, sessions, workspaceMembers } from '@maskin/db/schema'
+import {
+	agentChatGrants,
+	conversations,
+	integrations,
+	sessions,
+	workspaceMembers,
+} from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -375,5 +381,32 @@ describe('Access reads the same on every surface (Integration)', () => {
 		const linear = view.integrations.find((r) => r.integration_id === s.linear.id)
 		expect(linear.server_attached).toBe(false)
 		expect((await launch(s)).linearAttached).toBe(false)
+	})
+
+	it('lists only chat grants that are still in force, so Settings never shows an expired one', async () => {
+		const s = await setup()
+		const [otherChat] = await db
+			.insert(conversations)
+			.values({ workspaceId: s.ws.id, title: 'Other chat', createdBy: s.human })
+			.returning()
+		const grant = (conversationId: string, expiresAt: Date | null) => ({
+			workspaceId: s.ws.id,
+			integrationId: s.stripeId,
+			actorId: s.agent.id,
+			conversationId,
+			createdBy: s.human,
+			expiresAt,
+		})
+		await db.insert(agentChatGrants).values(grant(s.conversation.id, new Date(Date.now() - 60_000)))
+		const [live] = await db
+			.insert(agentChatGrants)
+			.values(grant(otherChat.id, new Date(Date.now() + 3_600_000)))
+			.returning()
+
+		const list = await json<Array<{ id: string; chatGrants: Array<{ id: string }> }>>(
+			await asHuman(s).request(jsonRequest('GET', '/api/integrations', undefined, H(s))),
+		)
+
+		expect(list.find((r) => r.id === s.stripeId)?.chatGrants.map((g) => g.id)).toEqual([live.id])
 	})
 })

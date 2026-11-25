@@ -44,19 +44,20 @@ describe('POST /api/objects/:id/star', () => {
 		expect(res.status).toBe(404)
 	})
 
-	it('returns 403 when the object lives in a different workspace', async () => {
-		// Cross-workspace guard: authMiddleware verified the caller is a member
-		// of `wsId`, but the object's workspace_id says otherwise. Refuse rather
-		// than starring an entity the caller could never see.
+	it('returns 404 when the object lives in a different workspace', async () => {
+		// Cross-workspace guard: the lookup is scoped to the header workspace, so a
+		// foreign object finds no row (the mock db stands in for that filter) and
+		// answers exactly like a missing one.
 		const obj = buildObject({ workspaceId: otherWsId })
-		const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-		mockResults.selectQueue = [[obj]]
+		const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
+		mockResults.selectQueue = [[]]
 
 		const res = await app.request(
 			jsonRequest('POST', `/api/objects/${obj.id}/star`, undefined, headers),
 		)
 
-		expect(res.status).toBe(403)
+		expect(res.status).toBe(404)
+		expect(calls.inserts).toHaveLength(0)
 	})
 
 	it('returns 400 for a malformed object id', async () => {
@@ -106,13 +107,13 @@ describe('DELETE /api/objects/:id/star', () => {
 		expect(res.status).toBe(404)
 	})
 
-	it('returns 403 when the object lives in a different workspace', async () => {
+	it('returns 404 when the object lives in a different workspace', async () => {
 		const obj = buildObject({ workspaceId: otherWsId })
 		const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-		mockResults.selectQueue = [[obj]]
+		mockResults.selectQueue = [[]]
 
 		const res = await app.request(jsonDelete(`/api/objects/${obj.id}/star`, headers))
 
-		expect(res.status).toBe(403)
+		expect(res.status).toBe(404)
 	})
 })

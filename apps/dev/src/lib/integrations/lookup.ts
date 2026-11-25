@@ -175,6 +175,30 @@ export async function findIntegrationRow(
 	return rows[0] ?? null
 }
 
+/**
+ * Every active connection of a workspace-scoped provider, oldest first (the order that decides
+ * which one a lookup without an account means). Rows only: nothing is decrypted here.
+ */
+export async function listActiveIntegrationRows(
+	db: Database,
+	workspaceId: string,
+	provider: string,
+): Promise<Array<{ id: string; externalId: string | null }>> {
+	return db
+		.select({ id: integrations.id, externalId: integrations.externalId })
+		.from(integrations)
+		.where(
+			and(
+				eq(integrations.workspaceId, workspaceId),
+				eq(integrations.provider, provider),
+				eq(integrations.providerMode, 'registered'),
+				eq(integrations.status, INTEGRATION_STATUS_ACTIVE),
+				isNull(integrations.actorId),
+			),
+		)
+		.orderBy(asc(integrations.createdAt), asc(integrations.id))
+}
+
 // ── Keychain: the single choke point ────────────────────────────────────────
 
 export type CredentialReadContext = {

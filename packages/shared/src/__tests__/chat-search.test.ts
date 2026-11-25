@@ -39,9 +39,9 @@ describe('parseChatSearch', () => {
 	})
 
 	it('accepts every is: value and keeps an unknown one as plain text', () => {
-		const parsed = parseChatSearch('is:needs is:working is:later is:archived is:unread is:nonsense')
-		expect(parsed.is).toEqual(['needs', 'working', 'later', 'archived', 'unread'])
-		expect(parsed.text).toBe('is:nonsense')
+		const parsed = parseChatSearch('is:working is:later is:archived is:unread is:needs is:nonsense')
+		expect(parsed.is).toEqual(['working', 'later', 'archived', 'unread'])
+		expect(parsed.text).toBe('is:needs is:nonsense')
 	})
 
 	it('keeps an unknown key, a time and a lone dash as plain text', () => {

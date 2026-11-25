@@ -10,6 +10,7 @@ public enum IntegrationCategory: String, CaseIterable, Identifiable, Sendable {
 	case code = "Code"
 	case design = "Design"
 	case salesAndPayments = "Sales & payments"
+	case accounting = "Accounting"
 	case analytics = "Analytics"
 	case custom = "Custom"
 
@@ -18,6 +19,7 @@ public enum IntegrationCategory: String, CaseIterable, Identifiable, Sendable {
 
 	private static let byProvider: [String: IntegrationCategory] = [
 		"attio": .salesAndPayments,
+		"dinero": .accounting,
 		"github": .code,
 		"gmail": .emailAndCalendar,
 		"google-calendar": .emailAndCalendar,
@@ -29,12 +31,14 @@ public enum IntegrationCategory: String, CaseIterable, Identifiable, Sendable {
 		"microsoft": .chatAndSocial,
 		"miro": .design,
 		"notion": .docsAndData,
+		"numina": .accounting,
 		"posthog": .analytics,
 		"resend": .emailAndCalendar,
 		"skjald": .docsAndData,
 		"slack": .chatAndSocial,
 		"stripe": .salesAndPayments,
 		"ubersuggest": .analytics,
+		"uniconta": .accounting,
 	]
 
 	/// A provider the catalog does not know yet is still listed, under Docs & data.

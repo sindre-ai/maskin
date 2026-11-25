@@ -8,7 +8,7 @@
  *
  * Order of evidence, strongest first:
  *   1. the curated sets below, for tools we register ourselves (Slack, LinkedIn, Meet, Drive,
- *      Search Console);
+ *      Search Console, YouTube);
  *   2. the server's own MCP annotation (readOnlyHint), for hosted servers we do not
  *      control, and only when it says read-only — destructiveHint or a missing hint
  *      never makes a tool a read;
@@ -47,6 +47,19 @@ const READ_TOOLS: Record<string, ReadonlySet<string>> = {
 		'google_drive__get_sheet_range',
 	]),
 	'google-search-console': new Set(['inspect_url', 'list_sites', 'list_sitemaps', 'get_sitemap']),
+	// Maskin-hosted and read-only. Curated, so a tool added later is a write until it is listed here.
+	youtube: new Set([
+		'youtube__get_channel',
+		'youtube__get_video_stats',
+		'youtube__get_analytics',
+		'youtube__list_recent_videos',
+		'youtube__search',
+		'youtube__get_public_channel',
+		'youtube__get_public_videos',
+		'youtube__get_upload_status',
+		'youtube__list_comments',
+		'youtube__get_own_captions',
+	]),
 	// Outlook calendar, served by Maskin. Curated, so a tool added later is a write until it is listed here.
 	microsoft: new Set(['outlook_list_events', 'outlook_get_event', 'outlook_search_events']),
 	// Azure DevOps (core, repos, wit and pipelines toolsets), from Microsoft's published tool list
@@ -151,11 +164,38 @@ function verbOf(toolName: string): string {
 	return i === -1 ? toolName : toolName.slice(i + 2)
 }
 
+/**
+ * Business Central's hosted server (Microsoft docs read 24 Nov 2026, not yet checked against a live
+ * tools/list). Its read tools are not read verbs: the operational ones are named List_<Entities>_PAG<id>
+ * or _QRY<id> (a fixed configuration) and the rest are lowercase system tools. bc_actions_invoke
+ * stays a write on purpose: in dynamic tool mode it runs a read and a write alike, and a Read agent
+ * must not be able to reach the write side. So a Read agent can discover and describe in dynamic
+ * mode and list wherever the customer's admin added pages, and a Read and write agent can invoke.
+ * The customer's own configuration still decides what a write can do. Anything not named here is a write.
+ */
+const BUSINESS_CENTRAL_READ_TOOLS: ReadonlySet<string> = new Set([
+	'list_companies',
+	'list_environments',
+	'bc_actions_search',
+	'bc_actions_describe',
+	'bc_data_find_tables',
+	'bc_data_get_table_schema',
+	'bc_data_get_table_relations',
+	'bc_data_query',
+])
+const BUSINESS_CENTRAL_LIST_TOOL = /^List_[A-Za-z0-9_]+_(PAG|QRY)\d+$/
+
 export function classifyTool(
 	provider: string,
 	toolName: string,
 	annotations?: ToolAnnotationsLike | null,
 ): ToolKind {
+	if (provider === 'business-central') {
+		if (annotations?.destructiveHint === true) return 'write'
+		return BUSINESS_CENTRAL_READ_TOOLS.has(toolName) || BUSINESS_CENTRAL_LIST_TOOL.test(toolName)
+			? 'read'
+			: 'write'
+	}
 	const curated = READ_TOOLS[provider]
 	if (curated) {
 		// Our own providers are fully curated: a tool outside the set is a write, and

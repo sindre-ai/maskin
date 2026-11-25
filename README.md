@@ -313,6 +313,18 @@ Maskin exposes 73 MCP tools over both stdio and HTTP. See **Quick Start → Get 
 
 The first tool a new agent should call is `list_marketplace` — it lists the available marketplace loops, and `install_loop` installs the one the user picks.
 
+### Gemini CLI
+
+Install the Maskin extension with one command:
+
+```
+gemini extensions install https://github.com/sindre-ai/maskin
+```
+
+Gemini CLI asks for two values: your Maskin API key and your workspace ID. Both are on the **Other** tab under **Settings → MCP** in Maskin. The key is stored in your system keychain. Then start `gemini` and try: *"List the objects in my Maskin workspace."* To create something, try: *"Create a task called 'Try Maskin from Gemini' in Maskin."* It shows up in Maskin under your name.
+
+Sign-in without a key is not supported for Gemini CLI yet. Maskin's sign-in accepts only Claude and ChatGPT as clients. The extension manifest is [`gemini-extension.json`](gemini-extension.json); the listing notes are in [`docs/listings/gemini-cli.md`](docs/listings/gemini-cli.md).
+
 ## Docker
 
 ```bash

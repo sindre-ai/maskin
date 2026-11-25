@@ -502,6 +502,13 @@ describe('workspace deletion (integration)', () => {
 			// The final transaction rolled back: the workspace row and its members are still there.
 			expect(await db.select().from(workspaces).where(eq(workspaces.id, ws.id))).toHaveLength(1)
 			expect(await countRows('workspace_members', 'workspace_id', ws.id)).toBeGreaterThan(0)
+
+			// Once the blocker is gone, the same delete carries on from where it stopped and finishes.
+			await sql.unsafe('DELETE FROM zz_purge_probe WHERE workspace_id = $1', [ws.id])
+			const retry = await del(ws.id, 'Blocked')
+			expect(retry.status).toBe(200)
+			expect(await db.select().from(workspaces).where(eq(workspaces.id, ws.id))).toHaveLength(0)
+			expect(await countRows('objects', 'workspace_id', ws.id)).toBe(0)
 		} finally {
 			await sql.unsafe('DROP TABLE zz_purge_probe')
 		}

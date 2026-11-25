@@ -11,6 +11,7 @@ import {
 	sessions,
 	starState,
 	subscriptions,
+	workspaceMembers,
 	workspaces,
 } from '@maskin/db/schema'
 import { TARGET_TYPE } from '@maskin/ext-targets/shared'
@@ -104,6 +105,7 @@ import {
 	isWorkspaceMember,
 	isWorkspaceWriter,
 } from '../lib/workspace-auth'
+import { assertInWorkspace } from '../lib/workspace-scope'
 import { movedInstruction, wakeAgentFromCard } from '../services/chat-card-wake'
 import { loadObjectLastSession } from '../services/object-last-session'
 import type { SessionManager } from '../services/session-manager'
@@ -705,6 +707,8 @@ app.openapi(createObjectRoute, async (c) => {
 	})
 	if (taskStatusError) return c.json(taskStatusError, 400)
 
+	await assertInWorkspace(db, workspaceId, { actors: [body.driver] })
+
 	if (body.type === 'knowledge') {
 		const duplicate = await findKnowledgeDuplicate(db, workspaceId, body.title)
 		if (duplicate) {
@@ -836,20 +840,23 @@ app.openapi(createObjectRoute, async (c) => {
 			}
 			// Awaited, unlike the comment below: the web sign-up opens this chat as
 			// soon as this response lands, so it has to exist by then.
+			let welcomeMessageId: number | undefined
 			if (signupMeta.welcome_in_chat) {
-				await startSignupWelcomeChat({
+				const welcomeChat = await startSignupWelcomeChat({
 					db,
 					workspaceId,
 					humanActorId: actorId,
 					knowledgeObjectId: created.id,
 					metadata: signupMeta,
-				}).catch((err) =>
+				}).catch((err) => {
 					logger.error('Failed to open signup welcome chat', {
 						workspaceId,
 						knowledgeObjectId: created.id,
 						error: String(err),
-					}),
-				)
+					})
+					return null
+				})
+				welcomeMessageId = welcomeChat?.welcomeMessageId
 			}
 			postSignupWelcomeComment({
 				db,
@@ -858,6 +865,7 @@ app.openapi(createObjectRoute, async (c) => {
 				knowledgeObjectId: created.id,
 				metadata: created.metadata,
 				humanActorId: actorId,
+				welcomeMessageId,
 			}).catch((err) =>
 				logger.error('Failed to post signup welcome comment', {
 					workspaceId,
@@ -1532,7 +1540,13 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		const rows = await db
 			.select({ id: actors.id, name: actors.name })
 			.from(actors)
-			.where(inArray(actors.id, [...referencedActorIds]))
+			.innerJoin(workspaceMembers, eq(workspaceMembers.actorId, actors.id))
+			.where(
+				and(
+					eq(workspaceMembers.workspaceId, workspaceId),
+					inArray(actors.id, [...referencedActorIds]),
+				),
+			)
 		for (const row of rows) actorsById.set(row.id, row)
 	}
 
@@ -1668,11 +1682,16 @@ app.openapi(getObjectGraphRoute, async (c) => {
 				is_starred_by_me: starredIds.has(object.id),
 				preview,
 			},
-			relationships: rels.map((r) => ({
-				...serialize(r),
-				sourceTitle: titleById.get(r.sourceId) ?? null,
-				targetTitle: titleById.get(r.targetId) ?? null,
-			})),
+			// Only edges whose both endpoints resolved inside this workspace: a
+			// legacy or forged edge to a foreign id would otherwise leak that id
+			// and its type as a raw row.
+			relationships: rels
+				.filter((r) => titleById.has(r.sourceId) && titleById.has(r.targetId))
+				.map((r) => ({
+					...serialize(r),
+					sourceTitle: titleById.get(r.sourceId) ?? null,
+					targetTitle: titleById.get(r.targetId) ?? null,
+				})),
 			connected_objects: connectedObjects.map((co) => ({
 				...serialize(co),
 				is_starred_by_me: starredIds.has(co.id),
@@ -2145,6 +2164,8 @@ app.openapi(updateObjectRoute, async (c) => {
 	if (!existing || !(await isWorkspaceWriter(db, actorId, existing.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 	}
+
+	await assertInWorkspace(db, existing.workspaceId, { actors: [body.driver] })
 
 	// If status is being updated, validate against workspace settings
 	if (body.status) {
@@ -2843,6 +2864,8 @@ app.openapi(bulkUpdateObjectsRoute, async (c) => {
 	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const { ids, patch } = c.req.valid('json')
 
+	await assertInWorkspace(db, workspaceId, { actors: [patch.driver] })
+
 	// Dedup so duplicates in the request don't double-write or double-report.
 	const uniqueIds = Array.from(new Set(ids))
 
@@ -3037,12 +3060,9 @@ app.openapi(deleteObjectRoute, async (c) => {
 // an events row tagged `mutation_type: 'star'` — this is the signal the D5
 // Won criterion (PostHog cross-device check) reads. Do not drop the tag.
 //
-// Cross-workspace guard: the object's workspaceId must match the caller's
-// `X-Workspace-Id` header. A member of workspace A trying to star an object
-// in workspace B gets 403 rather than 404 — the header-scoping check that
-// authMiddleware already applied means we know exactly which workspace the
-// caller claimed to be in, so it's a genuine authorization failure, not a
-// resource-existence question.
+// Cross-workspace guard: the lookup is scoped to the caller's `X-Workspace-Id`
+// header, so an object in another workspace answers 404 exactly like one that
+// does not exist. A 403 here would confirm that a foreign id exists.
 
 const toggleStarResponseSchema = z.object({
 	is_starred_by_me: z.boolean(),
@@ -3063,13 +3083,9 @@ const starObjectRoute = createRoute({
 			content: { 'application/json': { schema: toggleStarResponseSchema } },
 			description: 'Object is starred (was or is now)',
 		},
-		403: {
-			content: { 'application/json': { schema: errorSchema } },
-			description: 'Object is in a different workspace than the caller',
-		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
-			description: 'Object not found',
+			description: 'Object not found, or not in the caller’s workspace',
 		},
 	},
 })
@@ -3088,13 +3104,9 @@ const unstarObjectRoute = createRoute({
 			content: { 'application/json': { schema: toggleStarResponseSchema } },
 			description: 'Object is not starred (was or is now)',
 		},
-		403: {
-			content: { 'application/json': { schema: errorSchema } },
-			description: 'Object is in a different workspace than the caller',
-		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
-			description: 'Object not found',
+			description: 'Object not found, or not in the caller’s workspace',
 		},
 	},
 })
@@ -3105,11 +3117,12 @@ app.openapi(starObjectRoute, async (c) => {
 	const { id } = c.req.valid('param')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
-	const [object] = await db.select().from(objects).where(eq(objects.id, id)).limit(1)
+	const [object] = await db
+		.select()
+		.from(objects)
+		.where(and(eq(objects.id, id), eq(objects.workspaceId, workspaceId)))
+		.limit(1)
 	if (!object) return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
-	if (object.workspaceId !== workspaceId) {
-		return c.json(createApiError('FORBIDDEN', 'Object is not in the caller’s workspace'), 403)
-	}
 
 	const result = await starObject(db, {
 		workspaceId: object.workspaceId,
@@ -3130,11 +3143,12 @@ app.openapi(unstarObjectRoute, async (c) => {
 	const { id } = c.req.valid('param')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
-	const [object] = await db.select().from(objects).where(eq(objects.id, id)).limit(1)
+	const [object] = await db
+		.select()
+		.from(objects)
+		.where(and(eq(objects.id, id), eq(objects.workspaceId, workspaceId)))
+		.limit(1)
 	if (!object) return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
-	if (object.workspaceId !== workspaceId) {
-		return c.json(createApiError('FORBIDDEN', 'Object is not in the caller’s workspace'), 403)
-	}
 
 	const result = await unstarObject(db, {
 		workspaceId: object.workspaceId,

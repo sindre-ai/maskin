@@ -1,0 +1,37 @@
+name: billy-mcp
+
+# The Billy tool server in docker/billy-mcp is self-contained (own package file, no
+# link to the app's workspace), so it gets its own small check and does not wait on ci.yml.
+on:
+  push:
+    branches: [main]
+    paths: ['docker/billy-mcp/**', '.github/workflows/billy-mcp.yml']
+  pull_request:
+    branches: [main, 'bet/**']
+    paths: ['docker/billy-mcp/**', '.github/workflows/billy-mcp.yml']
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  billy-mcp:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: docker/billy-mcp
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: docker/billy-mcp/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - name: Host-lock and write-limit tests
+        run: npm test
+      - name: Image builds
+        run: docker build -t billy-mcp:ci .

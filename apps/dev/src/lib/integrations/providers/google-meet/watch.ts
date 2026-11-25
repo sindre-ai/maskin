@@ -37,6 +37,8 @@ export interface MeetIntegrationConfig extends IntegrationConfig {
 		subscriptionName?: string
 		subscriptionExpiresAt?: number
 		subscriptionTargetResource?: string
+		/** Set by the renewer when Google says another workspace hosts the call; it stops retrying. */
+		renewalBlocked?: boolean
 	}
 }
 

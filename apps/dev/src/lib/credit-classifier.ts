@@ -381,13 +381,28 @@ export function classifyClaudeAuthFailureText(
 
 const UNCLASSIFIED_LINE_MAX = 300
 
+/**
+ * True for a stream-json line that echoes what was sent to the run (the mention
+ * prompt), not what the run printed. It differs per run, so saving it would give the
+ * same death a new fingerprint every time, and it tells the owner nothing.
+ */
+function isInputEchoLine(line: string): boolean {
+	if (line[0] !== '{') return false
+	try {
+		const type = (JSON.parse(line) as { type?: unknown } | null)?.type
+		return type === 'user' || type === 'input'
+	} catch {
+		return false
+	}
+}
+
 /** Key shapes that may sit in a run's last output line; the Sentry scrub only knows the Claude connector tokens. */
 const SECRET_LIKE = /\b(?:ank_|sk-ant-|sk-|ghp_|gho_|github_pat_|xox[a-z]-)[A-Za-z0-9_-]{8,}/g
 
 /**
  * The reason saved on a run that exited non-zero when no classifier recognised the output.
  * `verbatim_output` is the last line the run printed (the final result text when the tail
- * has one), scrubbed and cut, so a new banner can be read without opening the log. It is
+ * has one), scrubbed and cut, never the run's own input message, so a new banner can be read without opening the log. It is
  * a different code from the Claude limit codes on purpose: it is never retried, because a
  * blind retry of a death nobody can name burns a start and can make a shared sign-in
  * problem worse.
@@ -399,7 +414,7 @@ export function classifyUnclassifiedExit(tail: string): SessionResultFailureReas
 		tail
 			.split('\n')
 			.map((l) => l.trim())
-			.filter(Boolean)
+			.filter((l) => l && !isInputEchoLine(l))
 			.pop() ||
 		''
 	const line = scrubString(source.replace(SECRET_LIKE, '[redacted]')).slice(

@@ -24,6 +24,41 @@ export type AgentServerRow = {
 // take about 70s and stays unbounded.
 export const STOP_SESSION_TIMEOUT_MS = 45_000
 
+// Budget for the dispatcher's health probe. Short on purpose: the probe runs on
+// every session start, and a slow server must not slow the whole pool.
+export const SERVER_HEALTH_TIMEOUT_MS = 2_000
+
+export type ServerHealth =
+	| { status: 'green' }
+	| { status: 'red'; reason: string }
+	| { status: 'unknown' }
+
+/**
+ * Asks an agent-server's unauthenticated GET /health. Only an explicit red
+ * answer counts as red: a 503 whose body carries a `reason` (disk low, storage
+ * down). A timeout, a network error, a 401 or any other reply is `unknown`,
+ * which callers treat like green, so a network blip never takes a server out.
+ */
+export async function fetchServerHealth(
+	server: { url: string },
+	opts: { fetchImpl?: typeof fetch; timeoutMs?: number } = {},
+): Promise<ServerHealth> {
+	const fetchImpl = opts.fetchImpl ?? fetch
+	try {
+		const res = await fetchImpl(joinUrl(server.url, '/health'), {
+			signal: AbortSignal.timeout(opts.timeoutMs ?? SERVER_HEALTH_TIMEOUT_MS),
+		})
+		if (res.ok) return { status: 'green' }
+		if (res.status !== 503) return { status: 'unknown' }
+		const body = (await res.json()) as { reason?: unknown }
+		return typeof body.reason === 'string' && body.reason !== ''
+			? { status: 'red', reason: body.reason }
+			: { status: 'unknown' }
+	} catch {
+		return { status: 'unknown' }
+	}
+}
+
 export class AgentServerAuthError extends Error {
 	readonly kind = 'unauthorized' as const
 	constructor(readonly server: { id: string; url: string }) {

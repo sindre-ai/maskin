@@ -1,5 +1,6 @@
 import type { ConversationListItemResponse } from '@/lib/api'
 import {
+	CHAT_PILLS,
 	groupChats,
 	matchesPill,
 	operatorBeingTyped,
@@ -36,10 +37,10 @@ function chat(overrides: Partial<ConversationListItemResponse> = {}): Conversati
 }
 
 describe('previewMarker', () => {
-	it('puts error before needs you before working, and never two', () => {
+	it('puts error before working, never two, and ignores the server needs_you flag', () => {
 		const working = [{ agent_id: 'a1', session_id: 's1' }]
 		expect(previewMarker(chat({ working }))).toBe('working')
-		expect(previewMarker(chat({ working, needs_you: true }))).toBe('needs_you')
+		expect(previewMarker(chat({ needs_you: true }))).toBe('none')
 		expect(
 			previewMarker(
 				chat({ working, needs_you: true, error: { reason: 'other', last_person_message_id: 4 } }),
@@ -50,7 +51,6 @@ describe('previewMarker', () => {
 
 	it('reads an older server (no new fields) as no marker', () => {
 		expect(previewMarker(chat())).toBe('none')
-		expect(matchesPill(chat(), 'needs_you')).toBe(false)
 	})
 })
 
@@ -59,7 +59,7 @@ describe('trackedMarker', () => {
 		expect(trackedMarker(chat({ unread_count: 2 }))).toBe('unread')
 		expect(trackedMarker(chat({ later: true }))).toBe('later')
 		expect(trackedMarker(chat())).toBe('none')
-		expect(trackedMarker(chat({ unread_count: 1, needs_you: true }))).toBe('needs_you')
+		expect(trackedMarker(chat({ unread_count: 1, needs_you: true }))).toBe('unread')
 	})
 })
 
@@ -73,14 +73,14 @@ describe('pills', () => {
 		chat({ id: 'f' }),
 	]
 
-	it('counts an error chat under Needs you and keeps Later chats out of every other pill', () => {
-		expect(pillCounts(rows)).toEqual({ all: 5, needs_you: 2, unread: 1, working: 1, later: 1 })
+	it('has no Needs you pill and keeps Later chats out of every other pill', () => {
+		expect(CHAT_PILLS.map((p) => p.label)).toEqual(['All', 'Unread', 'Working', 'Later'])
+		expect(pillCounts(rows)).toEqual({ all: 5, unread: 1, working: 1, later: 1 })
 	})
 
 	it('lists a Later chat only under Later', () => {
 		const later = rows.filter((c) => matchesPill(c, 'later')).map((c) => c.id)
 		expect(later).toEqual(['e'])
-		expect(rows.filter((c) => matchesPill(c, 'needs_you')).map((c) => c.id)).toEqual(['a', 'b'])
 	})
 })
 
@@ -105,7 +105,7 @@ describe('groupChats', () => {
 		])
 	})
 
-	it('puts stopped chats first in Needs you under Group by Status', () => {
+	it('has no Needs you group under Group by Status: a stopped chat sits in Unread or Earlier', () => {
 		const groups = groupChats(
 			[
 				chat({ id: 'ask', needs_you: true }),
@@ -117,9 +117,8 @@ describe('groupChats', () => {
 			{ now: NOW },
 		)
 		expect(groups.map((g) => [g.label, g.items.map((c) => c.id)])).toEqual([
-			['Needs you', ['stopped', 'ask']],
 			['Unread', ['new']],
-			['Earlier', ['quiet']],
+			['Earlier', ['ask', 'stopped', 'quiet']],
 		])
 	})
 

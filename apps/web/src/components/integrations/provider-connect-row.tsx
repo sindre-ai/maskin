@@ -7,6 +7,7 @@ import {
 	DisconnectConfirmDialog,
 	InstallGithubOrgButton,
 	LinkGithubDialog,
+	OwnAppDialog,
 	SkjaldConnectDialog,
 } from '@/components/integrations/provider-dialogs'
 import { ProviderLogo } from '@/components/integrations/provider-logo'
@@ -22,18 +23,19 @@ import {
 	useConnectIntegration,
 	useDisconnectIntegration,
 	useLinkableGithubInstallations,
+	useOAuthApp,
 } from '@/hooks/use-integrations'
 import type { IntegrationResponse, ProviderInfo } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { DRIVE_COPY } from '@/lib/drive-copy'
 import { DRIVE_PROVIDER } from '@/lib/drive-humans'
-import { logoDomainFor } from '@/lib/integration-catalog'
+import { descriptionFor, logoDomainFor } from '@/lib/integration-catalog'
 import type { IntegrationToolState } from '@/lib/integration-tool-state'
 import { PILL_BUTTON } from '@/lib/pill-button'
 import { MULTI_INSTALL_PROVIDERS } from '@maskin/shared'
 import { Link } from '@tanstack/react-router'
 import { Check, ChevronDown, Link2, Plus } from 'lucide-react'
-import { useState } from 'react'
+import { type ReactNode, useState } from 'react'
 
 const SLACK_HISTORY_SCOPES: readonly string[] = [
 	'channels:history',
@@ -49,19 +51,6 @@ const INTRO_SUBTITLES: Record<IntegrationToolState, string> = {
 	missing: 'Not connected yet',
 }
 
-/** What each tool is for, in a few words (mockup Settings, Integrations). */
-const PROVIDER_TAGLINES: Record<string, string> = {
-	github: 'Pull requests',
-	gmail: 'Drafts and sending',
-	'google-drive': 'Files',
-	'linkedin-unipile': 'Posting and outreach',
-	linear: 'Issues',
-	microsoft: 'Teams transcripts',
-	posthog: 'Product analytics',
-	resend: 'Email sending',
-	slack: 'Channels and triggers',
-}
-
 export function ProviderRow({
 	provider,
 	integration,
@@ -70,6 +59,8 @@ export function ProviderRow({
 	onRequestSkjaldConnect,
 	onRequestResendConnect,
 	onRequestDeepdotsConnect,
+	onRequestOwnApp,
+	ownAppSaved = false,
 	linkableCount,
 	onRequestLink,
 	returnTo,
@@ -90,6 +81,10 @@ export function ProviderRow({
 	onRequestResendConnect?: () => void
 	/** Deepdots signs in with an email and password, so Connect opens a two-field form. */
 	onRequestDeepdotsConnect?: () => void
+	/** The tool signs in with the workspace's own app (customerApp). Opens the paste form. */
+	onRequestOwnApp?: () => void
+	/** The workspace already saved that app, so Connect goes straight to the sign-in. */
+	ownAppSaved?: boolean
 	/** Installations bindable to this workspace; 0 for every non-GitHub provider. */
 	linkableCount: number
 	onRequestLink: () => void
@@ -134,8 +129,27 @@ export function ProviderRow({
 			onRequestDeepdotsConnect()
 			return
 		}
+		if (onRequestOwnApp && !ownAppSaved) {
+			onRequestOwnApp()
+			return
+		}
 		connect.mutate({ provider: provider.name, returnTo })
 	}
+	// Changing the saved app is a Settings job; the chat card only connects. It sits under the name,
+	// not beside Connect, so a narrow screen keeps the whole tool name.
+	const changeAppLink =
+		onRequestOwnApp && ownAppSaved && variant === 'settings' ? (
+			<ViewerTooltip>
+				<button
+					type="button"
+					className="w-fit text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground disabled:opacity-50"
+					onClick={onRequestOwnApp}
+					disabled={!canWrite}
+				>
+					Change app
+				</button>
+			</ViewerTooltip>
+		) : null
 
 	// An install whose token predates a scope the provider now requires still
 	// works for everything it was granted, so it stays "connected" — but say
@@ -165,6 +179,8 @@ export function ProviderRow({
 			? integration.config.status_note
 			: null
 
+	const tagline = variant === 'settings' ? descriptionFor(provider.name) : undefined
+
 	const connectedLabel = isConnected
 		? needsReconnect
 			? missingSlackHistoryScopes
@@ -174,9 +190,9 @@ export function ProviderRow({
 				? `Connected as ${integration.externalId}`
 				: integration.externalId
 					? `Connected · Installation ${integration.externalId}`
-					: (variant === 'settings' && PROVIDER_TAGLINES[provider.name]) || 'Connected'
-		: variant === 'settings' && PROVIDER_TAGLINES[provider.name]
-			? PROVIDER_TAGLINES[provider.name]
+					: tagline || 'Connected'
+		: tagline
+			? tagline
 			: provider.events.length > 0
 				? `${provider.events.length} event types available`
 				: 'Available to connect'
@@ -232,6 +248,7 @@ export function ProviderRow({
 			notes={
 				<>
 					{statusNote && <p className="text-xs text-muted-foreground">{statusNote}</p>}
+					{changeAppLink}
 					{isDrive && (
 						<>
 							<p className="text-xs text-muted-foreground">{DRIVE_COPY.providerCard.description}</p>
@@ -402,9 +419,15 @@ export function GroupedProviderRow({
 	const canAdd = isActorScoped ? Boolean(currentActorId) && !hasOwnInstall : true
 	const addLabel = isActorScoped ? 'Connect your account' : 'Add another'
 	// Settings spells out what is being added; the chat card keeps the short "+ Add another".
-	const settingsAddLabel = isActorScoped ? addLabel : 'Connect another installation'
+	// A mailbox is an account, not an installation: the Gmail row is labelled by its address.
+	const isEmailAccount = provider.externalIdDisplay === 'email'
+	const settingsAddLabel = isActorScoped
+		? addLabel
+		: isEmailAccount
+			? 'Connect another account'
+			: 'Connect another installation'
 
-	const unitLabel = isActorScoped ? 'connected account' : 'active installation'
+	const unitLabel = isActorScoped || isEmailAccount ? 'connected account' : 'active installation'
 
 	// Same $49/identity disclosure ProviderRow makes, which a workspace on its
 	// second LinkedIn account would otherwise never see again.
@@ -524,6 +547,7 @@ export function GroupedProviderRow({
 							key={installation.id}
 							integration={installation}
 							actorScoped={isActorScoped}
+							emailAccount={isEmailAccount}
 							actorName={installation.actorId ? actorNames.get(installation.actorId) : undefined}
 							isOwn={Boolean(installation.actorId && installation.actorId === currentActorId)}
 							workspaceId={workspaceId}
@@ -577,6 +601,7 @@ export function GroupedProviderRow({
 function NestedInstallationRow({
 	integration,
 	actorScoped = false,
+	emailAccount = false,
 	actorName,
 	isOwn = false,
 	workspaceId,
@@ -590,6 +615,8 @@ function NestedInstallationRow({
 	integration: IntegrationResponse
 	/** True for providers whose installs belong to a member, not the workspace. */
 	actorScoped?: boolean
+	/** True when the provider's external id is the account's email address (Gmail). */
+	emailAccount?: boolean
 	/** Display name of the member who connected an actor-scoped install. */
 	actorName?: string
 	isOwn?: boolean
@@ -616,11 +643,13 @@ function NestedInstallationRow({
 	// An actor-scoped install is identified by the member who connected it —
 	// the provider gives us only an opaque account id, which is meaningless to
 	// read but is still the stable id worth showing underneath.
-	const noun = actorScoped ? 'Account' : 'Installation'
+	const noun = actorScoped || emailAccount ? 'Account' : 'Installation'
 	const label = actorScoped
 		? (actorName ?? (isOwn ? 'You' : 'Workspace member'))
-		: (ownerLogin ??
-			(integration.externalId ? `Installation ${integration.externalId}` : 'Installation'))
+		: emailAccount && integration.externalId
+			? integration.externalId
+			: (ownerLogin ??
+				(integration.externalId ? `Installation ${integration.externalId}` : 'Installation'))
 
 	return (
 		<div className="flex flex-wrap items-center gap-3 px-4 py-3.5">
@@ -631,7 +660,7 @@ function NestedInstallationRow({
 						<span className="ml-1 font-normal text-muted-foreground">(you)</span>
 					)}
 				</p>
-				{integration.externalId && (
+				{integration.externalId && integration.externalId !== label && (
 					<p className="text-[13px] text-muted-foreground truncate">
 						{noun} {integration.externalId}
 					</p>
@@ -688,6 +717,61 @@ function ConnectedButton() {
 			<Check className="mr-1 h-3.5 w-3.5" />
 			Connected
 		</Button>
+	)
+}
+
+/**
+ * Draws a provider's row, and for a tool that wants the workspace's own sign-in app, the paste form
+ * and what the row needs to open it. Any other tool is drawn untouched and never asks the server.
+ */
+function RowWithOwnApp({
+	enabled,
+	provider,
+	workspaceId,
+	returnTo,
+	connected,
+	renderRow,
+}: {
+	enabled: boolean
+	provider: ProviderInfo
+	workspaceId: string
+	returnTo?: string
+	connected: boolean
+	renderRow: (ownApp: { onRequestOwnApp?: () => void; ownAppSaved?: boolean }) => ReactNode
+}) {
+	if (!enabled) return <>{renderRow({})}</>
+	return (
+		<OwnAppRow
+			provider={provider}
+			workspaceId={workspaceId}
+			returnTo={returnTo}
+			connected={connected}
+			renderRow={renderRow}
+		/>
+	)
+}
+
+function OwnAppRow({
+	provider,
+	workspaceId,
+	returnTo,
+	connected,
+	renderRow,
+}: Omit<Parameters<typeof RowWithOwnApp>[0], 'enabled'>) {
+	const [open, setOpen] = useState(false)
+	const { data: app } = useOAuthApp(workspaceId, provider.name)
+	return (
+		<>
+			{renderRow({ onRequestOwnApp: () => setOpen(true), ownAppSaved: app?.configured === true })}
+			<OwnAppDialog
+				workspaceId={workspaceId}
+				provider={provider}
+				open={open}
+				onClose={() => setOpen(false)}
+				returnTo={returnTo}
+				connected={connected}
+			/>
+		</>
 	)
 }
 
@@ -750,27 +834,39 @@ export function ProviderConnectRow({
 					variant={variant}
 				/>
 			) : (
-				<ProviderRow
+				// A tool whose vendor wants the customer's own sign-in app: Connect asks for it first.
+				// Its own component, so the saved-app lookup only runs for those tools.
+				<RowWithOwnApp
+					enabled={provider.customerApp === true}
 					provider={provider}
-					integration={installations[0]}
 					workspaceId={workspaceId}
-					onRequestApiKey={() => {
-						setApiKey('')
-						setApiKeyOpen(true)
-					}}
-					onRequestSkjaldConnect={openSkjald}
-					onRequestResendConnect={
-						provider.name === 'resend' ? () => setResendOpen(true) : undefined
-					}
-					onRequestDeepdotsConnect={
-						provider.name === 'deepdots' ? () => setDeepdotsOpen(true) : undefined
-					}
-					linkableCount={linkableCount}
-					onRequestLink={() => setLinkGithubOpen(true)}
 					returnTo={returnTo}
-					variant={variant}
-					reconnect={reconnect}
-					introState={introState}
+					connected={installations.length > 0}
+					renderRow={(ownApp) => (
+						<ProviderRow
+							provider={provider}
+							integration={installations[0]}
+							workspaceId={workspaceId}
+							onRequestApiKey={() => {
+								setApiKey('')
+								setApiKeyOpen(true)
+							}}
+							onRequestSkjaldConnect={openSkjald}
+							onRequestResendConnect={
+								provider.name === 'resend' ? () => setResendOpen(true) : undefined
+							}
+							onRequestDeepdotsConnect={
+								provider.name === 'deepdots' ? () => setDeepdotsOpen(true) : undefined
+							}
+							{...ownApp}
+							linkableCount={linkableCount}
+							onRequestLink={() => setLinkGithubOpen(true)}
+							returnTo={returnTo}
+							variant={variant}
+							reconnect={reconnect}
+							introState={introState}
+						/>
+					)}
 				/>
 			)}
 			{provider.authType === 'api_key' && (

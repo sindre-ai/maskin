@@ -1352,6 +1352,7 @@ struct ThreadTranscript: View {
 					store.displayName(for: id).map { (id: id, name: $0) }
 				},
 				questionAnswers: message.serverID.flatMap { answers[$0] },
+				questionNote: message.serverID.flatMap { store.questionNoteIndex[$0] },
 				sendStatus: statusIDs.contains(message.id) ? MessageSendStatus.of(message, readBy: store.readBy(message)) : nil,
 				messageOverride: store.override(for: message.id), isPinned: store.isPinned(message),
 				versionsLocked: store.replyInFlight,

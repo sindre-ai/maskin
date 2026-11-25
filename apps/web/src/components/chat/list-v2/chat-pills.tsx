@@ -2,7 +2,7 @@ import { CHAT_PILLS, type ChatPill } from '@/lib/chat-list-v2'
 import { cn } from '@/lib/cn'
 
 /**
- * The filter pills under the list head: All, Needs you, Unread, Working, Later. Selected is ink
+ * The filter pills under the list head: All, Unread, Working, Later. Selected is ink
  * with inverted text. An inactive pill shows its count when above 0, and no count at all while the
  * list loads. Below 640px the row scrolls sideways in one line.
  */

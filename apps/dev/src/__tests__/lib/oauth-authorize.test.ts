@@ -42,6 +42,21 @@ describe('validateAuthorizeRequest', () => {
 		expect(result.request.client.client_name).toBe('Claude')
 	})
 
+	it('accepts a ChatGPT request and carries its pinned redirect', () => {
+		const result = validateAuthorizeRequest(
+			validParams({
+				client_id: 'https://chatgpt.com/oauth/client.json',
+				redirect_uri: 'https://chatgpt.com/connector_platform_oauth_redirect',
+			}),
+			ENV,
+		)
+
+		expect(result.ok).toBe(true)
+		if (!result.ok) return
+		expect(result.request.redirectUri).toBe('https://chatgpt.com/connector_platform_oauth_redirect')
+		expect(result.request.client.client_name).toBe('ChatGPT')
+	})
+
 	it('ignores one trailing slash on the resource and accepts offline_access in scope', () => {
 		const result = validateAuthorizeRequest(
 			validParams({ resource: 'https://maskin.test/mcp/', scope: 'mcp offline_access' }),

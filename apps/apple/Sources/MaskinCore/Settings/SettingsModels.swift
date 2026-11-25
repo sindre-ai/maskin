@@ -96,16 +96,20 @@ public struct IntegrationProvider: Identifiable, Sendable, Equatable {
 	/// Whether the connected account's email is the right secondary label.
 	public var showsEmail: Bool
 	public var eventCount: Int
+	/// The vendor lets only the customer's own admin create the sign-in app (Salesforce), so
+	/// Connect asks for that app's id and secret first.
+	public var customerApp: Bool
 
 	public init(
 		id: String, displayName: String, authKind: AuthKind, showsEmail: Bool = false,
-		eventCount: Int = 0
+		eventCount: Int = 0, customerApp: Bool = false
 	) {
 		self.id = id
 		self.displayName = displayName
 		self.authKind = authKind
 		self.showsEmail = showsEmail
 		self.eventCount = eventCount
+		self.customerApp = customerApp
 	}
 }
 

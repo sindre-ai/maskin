@@ -14,6 +14,11 @@ export const NOISY_MESSAGES: ReadonlySet<string> = new Set([
 	// the old /api/health database probe alone added about 6 a minute, because its 3 s race answers 503
 	// but leaves the query queued on the pool.
 	'DB query got no response',
+	// Background ticks that log once per tick while the database is stalled (39, 26 and 16 events
+	// since 19 Nov 2026, no users hit). The dispatch queue title has its real em dash.
+	'DailyBudgetCardScheduler tick failed',
+	'Session dispatch queue tick timed out — abandoning batch',
+	'Voice session timeout sweeper tick failed',
 ])
 
 export const DEDUPE_WINDOW_MS = 60 * 60 * 1000

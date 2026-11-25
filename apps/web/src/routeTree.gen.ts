@@ -46,6 +46,7 @@ import { Route as AuthedWorkspaceIdSettingsMcpRouteImport } from './routes/_auth
 import { Route as AuthedWorkspaceIdSettingsKeysRouteImport } from './routes/_authed/$workspaceId/settings/keys'
 import { Route as AuthedWorkspaceIdSettingsKeychainRouteImport } from './routes/_authed/$workspaceId/settings/keychain'
 import { Route as AuthedWorkspaceIdSettingsIntegrationsRouteImport } from './routes/_authed/$workspaceId/settings/integrations'
+import { Route as AuthedWorkspaceIdSettingsDineroReviewRouteImport } from './routes/_authed/$workspaceId/settings/dinero-review'
 import { Route as AuthedWorkspaceIdSettingsBillingRouteImport } from './routes/_authed/$workspaceId/settings/billing'
 import { Route as AuthedWorkspaceIdSessionsSessionIdRouteImport } from './routes/_authed/$workspaceId/sessions/$sessionId'
 import { Route as AuthedWorkspaceIdPeopleActorIdRouteImport } from './routes/_authed/$workspaceId/people.$actorId'
@@ -270,6 +271,12 @@ const AuthedWorkspaceIdSettingsIntegrationsRoute =
     path: '/integrations',
     getParentRoute: () => AuthedWorkspaceIdSettingsRoute,
   } as any)
+const AuthedWorkspaceIdSettingsDineroReviewRoute =
+  AuthedWorkspaceIdSettingsDineroReviewRouteImport.update({
+    id: '/dinero-review',
+    path: '/dinero-review',
+    getParentRoute: () => AuthedWorkspaceIdSettingsRoute,
+  } as any)
 const AuthedWorkspaceIdSettingsBillingRoute =
   AuthedWorkspaceIdSettingsBillingRouteImport.update({
     id: '/billing',
@@ -416,6 +423,7 @@ export interface FileRoutesByFullPath {
   '/$workspaceId/people/$actorId': typeof AuthedWorkspaceIdPeopleActorIdRoute
   '/$workspaceId/sessions/$sessionId': typeof AuthedWorkspaceIdSessionsSessionIdRoute
   '/$workspaceId/settings/billing': typeof AuthedWorkspaceIdSettingsBillingRoute
+  '/$workspaceId/settings/dinero-review': typeof AuthedWorkspaceIdSettingsDineroReviewRoute
   '/$workspaceId/settings/integrations': typeof AuthedWorkspaceIdSettingsIntegrationsRoute
   '/$workspaceId/settings/keychain': typeof AuthedWorkspaceIdSettingsKeychainRouteWithChildren
   '/$workspaceId/settings/keys': typeof AuthedWorkspaceIdSettingsKeysRoute
@@ -470,6 +478,7 @@ export interface FileRoutesByTo {
   '/$workspaceId/people/$actorId': typeof AuthedWorkspaceIdPeopleActorIdRoute
   '/$workspaceId/sessions/$sessionId': typeof AuthedWorkspaceIdSessionsSessionIdRoute
   '/$workspaceId/settings/billing': typeof AuthedWorkspaceIdSettingsBillingRoute
+  '/$workspaceId/settings/dinero-review': typeof AuthedWorkspaceIdSettingsDineroReviewRoute
   '/$workspaceId/settings/integrations': typeof AuthedWorkspaceIdSettingsIntegrationsRoute
   '/$workspaceId/settings/keys': typeof AuthedWorkspaceIdSettingsKeysRoute
   '/$workspaceId/settings/mcp': typeof AuthedWorkspaceIdSettingsMcpRoute
@@ -528,6 +537,7 @@ export interface FileRoutesById {
   '/_authed/$workspaceId/people/$actorId': typeof AuthedWorkspaceIdPeopleActorIdRoute
   '/_authed/$workspaceId/sessions/$sessionId': typeof AuthedWorkspaceIdSessionsSessionIdRoute
   '/_authed/$workspaceId/settings/billing': typeof AuthedWorkspaceIdSettingsBillingRoute
+  '/_authed/$workspaceId/settings/dinero-review': typeof AuthedWorkspaceIdSettingsDineroReviewRoute
   '/_authed/$workspaceId/settings/integrations': typeof AuthedWorkspaceIdSettingsIntegrationsRoute
   '/_authed/$workspaceId/settings/keychain': typeof AuthedWorkspaceIdSettingsKeychainRouteWithChildren
   '/_authed/$workspaceId/settings/keys': typeof AuthedWorkspaceIdSettingsKeysRoute
@@ -587,6 +597,7 @@ export interface FileRouteTypes {
     | '/$workspaceId/people/$actorId'
     | '/$workspaceId/sessions/$sessionId'
     | '/$workspaceId/settings/billing'
+    | '/$workspaceId/settings/dinero-review'
     | '/$workspaceId/settings/integrations'
     | '/$workspaceId/settings/keychain'
     | '/$workspaceId/settings/keys'
@@ -641,6 +652,7 @@ export interface FileRouteTypes {
     | '/$workspaceId/people/$actorId'
     | '/$workspaceId/sessions/$sessionId'
     | '/$workspaceId/settings/billing'
+    | '/$workspaceId/settings/dinero-review'
     | '/$workspaceId/settings/integrations'
     | '/$workspaceId/settings/keys'
     | '/$workspaceId/settings/mcp'
@@ -698,6 +710,7 @@ export interface FileRouteTypes {
     | '/_authed/$workspaceId/people/$actorId'
     | '/_authed/$workspaceId/sessions/$sessionId'
     | '/_authed/$workspaceId/settings/billing'
+    | '/_authed/$workspaceId/settings/dinero-review'
     | '/_authed/$workspaceId/settings/integrations'
     | '/_authed/$workspaceId/settings/keychain'
     | '/_authed/$workspaceId/settings/keys'
@@ -1001,6 +1014,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedWorkspaceIdSettingsIntegrationsRouteImport
       parentRoute: typeof AuthedWorkspaceIdSettingsRoute
     }
+    '/_authed/$workspaceId/settings/dinero-review': {
+      id: '/_authed/$workspaceId/settings/dinero-review'
+      path: '/dinero-review'
+      fullPath: '/$workspaceId/settings/dinero-review'
+      preLoaderRoute: typeof AuthedWorkspaceIdSettingsDineroReviewRouteImport
+      parentRoute: typeof AuthedWorkspaceIdSettingsRoute
+    }
     '/_authed/$workspaceId/settings/billing': {
       id: '/_authed/$workspaceId/settings/billing'
       path: '/billing'
@@ -1176,6 +1196,7 @@ const AuthedWorkspaceIdSettingsKeychainRouteWithChildren =
 
 interface AuthedWorkspaceIdSettingsRouteChildren {
   AuthedWorkspaceIdSettingsBillingRoute: typeof AuthedWorkspaceIdSettingsBillingRoute
+  AuthedWorkspaceIdSettingsDineroReviewRoute: typeof AuthedWorkspaceIdSettingsDineroReviewRoute
   AuthedWorkspaceIdSettingsIntegrationsRoute: typeof AuthedWorkspaceIdSettingsIntegrationsRoute
   AuthedWorkspaceIdSettingsKeychainRoute: typeof AuthedWorkspaceIdSettingsKeychainRouteWithChildren
   AuthedWorkspaceIdSettingsKeysRoute: typeof AuthedWorkspaceIdSettingsKeysRoute
@@ -1196,6 +1217,8 @@ const AuthedWorkspaceIdSettingsRouteChildren: AuthedWorkspaceIdSettingsRouteChil
   {
     AuthedWorkspaceIdSettingsBillingRoute:
       AuthedWorkspaceIdSettingsBillingRoute,
+    AuthedWorkspaceIdSettingsDineroReviewRoute:
+      AuthedWorkspaceIdSettingsDineroReviewRoute,
     AuthedWorkspaceIdSettingsIntegrationsRoute:
       AuthedWorkspaceIdSettingsIntegrationsRoute,
     AuthedWorkspaceIdSettingsKeychainRoute:

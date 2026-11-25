@@ -13,14 +13,12 @@ public enum ChatListTracking {
 		case pinned, unread, agent, recent, room, search
 		case today, yesterday, earlier, working, tag
 		case typeDirect = "type_direct", typeTopic = "type_topic", typeGroup = "type_group"
-		case needsYou = "needs_you"
 	}
 
 	/// The marker the opened row carried: its one preview marker, else unread, else later (a row
 	/// under the Later pill shows none), else none.
 	public enum Marker: String, Sendable {
 		case none, unread, working, later, error
-		case needsYou = "needs_you"
 	}
 
 	/// What a row action did. Retry is the red dot's action.
@@ -42,7 +40,6 @@ public enum ChatListTracking {
 		if c.later { return .later }
 		switch c.previewMarker {
 		case .error: return .error
-		case .needsYou: return .needsYou
 		case .working: return .working
 		case nil: return c.isUnread ? .unread : .none
 		}

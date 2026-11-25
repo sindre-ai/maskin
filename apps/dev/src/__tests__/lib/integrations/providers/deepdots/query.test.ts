@@ -11,6 +11,11 @@ function filterOf(url: string): Record<string, unknown> {
 	return JSON.parse(new URL(url).searchParams.get('filter') ?? '{}')
 }
 
+// The issues route only answers for a topic; the other routes refuse one.
+function forList(list: Parameters<typeof buildListRequest>[0]) {
+	return list === 'issues' ? { topic: 'Login' } : {}
+}
+
 function built(
 	list: Parameters<typeof buildListRequest>[0],
 	input: Parameters<typeof buildListRequest>[1],
@@ -23,34 +28,65 @@ function built(
 describe('buildListRequest', () => {
 	it('always sends an explicit order with the id as the last key', () => {
 		for (const list of ['insights', 'issues', 'opportunities', 'topics'] as const) {
-			const order = filterOf(built(list, {}).url).order as string[]
+			const order = filterOf(built(list, forList(list)).url).order as string[]
 			expect(order.length).toBeGreaterThan(0)
 			expect(order.at(-1)).toBe(`${LIST_SPECS[list].tiebreaker} DESC`)
 		}
 	})
 
 	it('asks for one row more than limit, and limits to 1..50', () => {
-		expect(filterOf(built('issues', { limit: 5 }).url).limit).toBe(6)
-		expect(built('issues', { limit: 5000 }).limit).toBe(MAX_LIMIT)
-		expect(built('issues', { limit: 0 }).limit).toBe(1)
-		expect(filterOf(built('issues', { skip: -3 }).url).skip).toBe(0)
+		expect(filterOf(built('issues', { topic: 'Login', limit: 5 }).url).limit).toBe(6)
+		expect(built('issues', { topic: 'Login', limit: 5000 }).limit).toBe(MAX_LIMIT)
+		expect(built('issues', { topic: 'Login', limit: 0 }).limit).toBe(1)
+		expect(filterOf(built('issues', { topic: 'Login', skip: -3 }).url).skip).toBe(0)
 	})
 
 	it('never asks for more than 50 rows, so limit 50 is sent as 50 (issues and topics 400 on 51)', () => {
 		for (const list of ['issues', 'topics'] as const) {
-			const at50 = built(list, { limit: 50 })
+			const at50 = built(list, { ...forList(list), limit: 50 })
 			expect(filterOf(at50.url).limit).toBe(50)
 			expect(at50.probed).toBe(false)
-			expect(filterOf(built(list, { limit: 5000 }).url).limit).toBe(50)
-			const at49 = built(list, { limit: 49 })
+			expect(filterOf(built(list, { ...forList(list), limit: 5000 }).url).limit).toBe(50)
+			const at49 = built(list, { ...forList(list), limit: 49 })
 			expect(filterOf(at49.url).limit).toBe(50)
 			expect(at49.probed).toBe(true)
 		}
 	})
 
 	it('puts since in one condition with one operator', () => {
-		const filter = filterOf(built('issues', { since: '2026-11-01' }).url)
-		expect(filter.where).toEqual({ externalGeneratedAt: { gte: '2026-11-01T00:00:00.000Z' } })
+		const filter = filterOf(built('issues', { topic: 'Login', since: '2026-11-01' }).url)
+		expect(filter.where).toEqual({
+			issues_topics: { inq: ['Login'] },
+			externalGeneratedAt: { gte: '2026-11-01T00:00:00.000Z' },
+		})
+	})
+
+	it('pins the issues request: one condition on issues_topics, newest first, id last', () => {
+		const filter = filterOf(built('issues', { topic: ' Checkout & Login ', limit: 50 }).url)
+		expect(filter).toEqual({
+			limit: 50,
+			skip: 0,
+			order: ['externalGeneratedAt DESC', 'id DESC'],
+			where: { issues_topics: { inq: ['Checkout & Login'] } },
+		})
+	})
+
+	it('tells the agent which input issues need instead of sending a request Deepdots refuses', () => {
+		for (const input of [{}, { topic: '  ' }]) {
+			const r = buildListRequest('issues', input)
+			expect(r.ok).toBe(false)
+			expect(r.ok === false && r.message).toContain('topic is required')
+			expect(r.ok === false && r.message).toContain('deepdots_list_topics')
+		}
+		expect(buildListRequest('topics', { topic: 'Login' }).ok).toBe(false)
+	})
+
+	it('pins the topics request: order and limit only, no where', () => {
+		expect(filterOf(built('topics', { limit: 50 }).url)).toEqual({
+			limit: 50,
+			skip: 0,
+			order: ['topic DESC'],
+		})
 	})
 
 	it('refuses a date it cannot read, and since or search where the route has none', () => {
@@ -78,13 +114,15 @@ describe('buildListRequest', () => {
 		// The search text still arrives intact, as its own parameter.
 		expect(new URL(r.url).searchParams.get('search')).toBe('x]=y')
 
-		const inFilter = built('issues', { since: '2026-11-01' })
+		const inFilter = built('issues', { topic: 'Login', since: '2026-11-01' })
 		expect(new URL(inFilter.url).searchParams.get('filter')).not.toContain(']=')
 	})
 
 	it('uses the issues path for issues', () => {
 		expect(
-			built('issues', {}).url.startsWith('https://api.deepdots.com/topics/issues?filter='),
+			built('issues', { topic: 'Login' }).url.startsWith(
+				'https://api.deepdots.com/topics/issues?filter=',
+			),
 		).toBe(true)
 	})
 })

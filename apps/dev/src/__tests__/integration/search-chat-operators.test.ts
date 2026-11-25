@@ -175,32 +175,9 @@ describe('GET /api/search with operators', () => {
 		expect(await titles('is:nonsense')).toEqual([])
 	})
 
-	it('is:needs and is:working use the chat own questions and sessions', async () => {
-		const asked = await seedChat(
-			'Needs an answer',
-			[forgeId],
-			[
-				{
-					from: forgeId,
-					text: 'Which one?',
-					metadata: {
-						question: {
-							session_id: crypto.randomUUID(),
-							questions: [
-								{
-									question: 'Which one?',
-									header: 'Pick',
-									multi_select: false,
-									options: [{ label: 'a' }, { label: 'b' }],
-								},
-							],
-						},
-					},
-				},
-			],
-		)
-		expect(asked).toBeTruthy()
-		expect(await titles('is:needs')).toEqual(['Needs an answer'])
+	it('is:needs is plain text now, and is:working uses the chat own sessions', async () => {
+		await seedChat('Needs an answer', [forgeId], [{ from: forgeId, text: 'Which one?' }])
+		expect(await titles('is:needs')).toEqual([])
 		expect(await titles('is:working')).toEqual([])
 	})
 })

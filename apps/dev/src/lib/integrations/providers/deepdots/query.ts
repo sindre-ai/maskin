@@ -28,6 +28,8 @@ interface ListSpec {
 	tiebreaker: string
 	/** True when the route has a text search (the "search" query parameter). */
 	searchable: boolean
+	/** The row field the route insists on seeing in the filter ("X is required in issues filter"). */
+	requiredFilterField?: string
 	/** The fields an agent gets back. Anything else is dropped. */
 	fields: readonly string[]
 }
@@ -47,6 +49,8 @@ export const LIST_SPECS: Record<DeepdotsList, ListSpec> = {
 		dateField: 'externalGeneratedAt',
 		tiebreaker: 'id',
 		searchable: false,
+		// Deepdots answers 400 "issues_topics is required in issues filter" without a condition on it.
+		requiredFilterField: 'issues_topics',
 		fields: [
 			'id',
 			'issues_name',
@@ -98,6 +102,8 @@ export interface ListInput {
 	skip?: number
 	since?: string
 	search?: string
+	/** A topic name, as returned by the topics list. The issues route needs it. */
+	topic?: string
 }
 
 export type BuiltRequest =
@@ -134,9 +140,26 @@ export function buildListRequest(list: DeepdotsList, input: ListInput): BuiltReq
 	const limit = clampInt(input.limit, DEFAULT_LIMIT, 1, MAX_LIMIT)
 	const skip = clampInt(input.skip, 0, 0, MAX_SKIP)
 
+	const topic = input.topic?.trim().slice(0, 200)
+	if (spec.requiredFilterField && !topic) {
+		return {
+			ok: false,
+			message: `topic is required for ${list}: Deepdots only returns them for a topic. Pass a topic name, as returned by deepdots_list_topics.`,
+		}
+	}
+	if (input.topic !== undefined && input.topic.trim() !== '' && !spec.requiredFilterField) {
+		return { ok: false, message: `topic is not available for ${list}.` }
+	}
+
 	const order = [...(spec.dateField ? [`${spec.dateField} DESC`] : []), `${spec.tiebreaker} DESC`]
 	const asked = Math.min(limit + 1, MAX_LIMIT)
 	const filter: Record<string, unknown> = { limit: asked, skip, order }
+
+	const where: Record<string, unknown> = {}
+	if (spec.requiredFilterField && topic) {
+		// issues_topics is an array on each row, so the condition is "one of these topics".
+		where[spec.requiredFilterField] = { inq: [topic] }
+	}
 
 	if (input.since !== undefined) {
 		if (!spec.dateField) return { ok: false, message: `since is not available for ${list}.` }
@@ -148,8 +171,10 @@ export function buildListRequest(list: DeepdotsList, input: ListInput): BuiltReq
 			}
 		}
 		// One operator in the condition: Deepdots applies only the first.
-		filter.where = { [spec.dateField]: { gte: when.toISOString() } }
+		where[spec.dateField] = { gte: when.toISOString() }
 	}
+	// Conditions side by side in where are combined as AND, each with one operator.
+	if (Object.keys(where).length > 0) filter.where = where
 
 	const params = [`filter=${encodeURIComponent(serializeFilter(filter))}`]
 	if (input.search !== undefined && input.search.trim() !== '') {

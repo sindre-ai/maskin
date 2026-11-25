@@ -65,6 +65,7 @@ vi.mock('@/hooks/use-integrations', () => ({
 	}),
 	useSetAgentGrant: () => ({ mutate: mockSetGrant, isPending: false }),
 	useRemoveAgentGrant: () => ({ mutate: mockRemoveGrant, isPending: false }),
+	useRemoveChatGrant: () => ({ mutate: vi.fn(), isPending: false }),
 	useSetDefaultAgentAccess: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 

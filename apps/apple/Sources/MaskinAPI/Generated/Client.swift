@@ -7187,6 +7187,429 @@ public struct Client: APIProtocol {
             }
         )
     }
+    /// Read a workspace's own sign-in app for a tool (app id only, never the secret)
+    ///
+    /// - Remark: HTTP `GET /api/integrations/{provider}/app`.
+    /// - Remark: Generated from `#/paths//api/integrations/{provider}/app/get`.
+    public func get_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app(_ input: Operations.get_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Input) async throws -> Operations.get_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output {
+        try await client.send(
+            input: input,
+            forOperation: Operations.get_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.id,
+            serializer: { input in
+                let path = try converter.renderedPath(
+                    template: "/api/integrations/{}/app",
+                    parameters: [
+                        input.path.provider
+                    ]
+                )
+                var request: HTTPTypes.HTTPRequest = .init(
+                    soar_path: path,
+                    method: .get
+                )
+                suppressMutabilityWarning(&request)
+                try converter.setHeaderFieldAsURI(
+                    in: &request.headerFields,
+                    name: "x-workspace-id",
+                    value: input.headers.x_hyphen_workspace_hyphen_id
+                )
+                converter.setAcceptHeader(
+                    in: &request.headerFields,
+                    contentTypes: input.headers.accept
+                )
+                return (request, nil)
+            },
+            deserializer: { response, responseBody in
+                switch response.status.code {
+                case 200:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.get_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.Ok.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.get_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.Ok.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .ok(.init(body: body))
+                case 400:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.get_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.BadRequest.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.get_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.BadRequest.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .badRequest(.init(body: body))
+                case 403:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.get_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.Forbidden.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.get_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.Forbidden.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .forbidden(.init(body: body))
+                case 404:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.get_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.NotFound.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.get_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.NotFound.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .notFound(.init(body: body))
+                default:
+                    return .undocumented(
+                        statusCode: response.status.code,
+                        .init(
+                            headerFields: response.headerFields,
+                            body: responseBody
+                        )
+                    )
+                }
+            }
+        )
+    }
+    /// Save or replace a workspace's own sign-in app for a tool (admins and owners only)
+    ///
+    /// - Remark: HTTP `PUT /api/integrations/{provider}/app`.
+    /// - Remark: Generated from `#/paths//api/integrations/{provider}/app/put`.
+    public func put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app(_ input: Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Input) async throws -> Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output {
+        try await client.send(
+            input: input,
+            forOperation: Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.id,
+            serializer: { input in
+                let path = try converter.renderedPath(
+                    template: "/api/integrations/{}/app",
+                    parameters: [
+                        input.path.provider
+                    ]
+                )
+                var request: HTTPTypes.HTTPRequest = .init(
+                    soar_path: path,
+                    method: .put
+                )
+                suppressMutabilityWarning(&request)
+                try converter.setHeaderFieldAsURI(
+                    in: &request.headerFields,
+                    name: "x-workspace-id",
+                    value: input.headers.x_hyphen_workspace_hyphen_id
+                )
+                converter.setAcceptHeader(
+                    in: &request.headerFields,
+                    contentTypes: input.headers.accept
+                )
+                return (request, nil)
+            },
+            deserializer: { response, responseBody in
+                switch response.status.code {
+                case 200:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.Ok.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.Ok.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .ok(.init(body: body))
+                case 400:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.BadRequest.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.BadRequest.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .badRequest(.init(body: body))
+                case 403:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.Forbidden.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.Forbidden.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .forbidden(.init(body: body))
+                case 404:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.NotFound.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.NotFound.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .notFound(.init(body: body))
+                case 409:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.Conflict.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.Conflict.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .conflict(.init(body: body))
+                default:
+                    return .undocumented(
+                        statusCode: response.status.code,
+                        .init(
+                            headerFields: response.headerFields,
+                            body: responseBody
+                        )
+                    )
+                }
+            }
+        )
+    }
+    /// Remove a workspace's own sign-in app for a tool (refused while the tool is connected)
+    ///
+    /// - Remark: HTTP `DELETE /api/integrations/{provider}/app`.
+    /// - Remark: Generated from `#/paths//api/integrations/{provider}/app/delete`.
+    public func delete_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app(_ input: Operations.delete_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Input) async throws -> Operations.delete_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output {
+        try await client.send(
+            input: input,
+            forOperation: Operations.delete_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.id,
+            serializer: { input in
+                let path = try converter.renderedPath(
+                    template: "/api/integrations/{}/app",
+                    parameters: [
+                        input.path.provider
+                    ]
+                )
+                var request: HTTPTypes.HTTPRequest = .init(
+                    soar_path: path,
+                    method: .delete
+                )
+                suppressMutabilityWarning(&request)
+                try converter.setHeaderFieldAsURI(
+                    in: &request.headerFields,
+                    name: "x-workspace-id",
+                    value: input.headers.x_hyphen_workspace_hyphen_id
+                )
+                converter.setAcceptHeader(
+                    in: &request.headerFields,
+                    contentTypes: input.headers.accept
+                )
+                return (request, nil)
+            },
+            deserializer: { response, responseBody in
+                switch response.status.code {
+                case 204:
+                    return .noContent(.init())
+                case 400:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.delete_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.BadRequest.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.delete_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.BadRequest.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .badRequest(.init(body: body))
+                case 403:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.delete_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.Forbidden.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.delete_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.Forbidden.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .forbidden(.init(body: body))
+                case 404:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.delete_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.NotFound.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.delete_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.NotFound.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .notFound(.init(body: body))
+                case 409:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.delete_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.Conflict.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.delete_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.Conflict.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .conflict(.init(body: body))
+                default:
+                    return .undocumented(
+                        statusCode: response.status.code,
+                        .init(
+                            headerFields: response.headerFields,
+                            body: responseBody
+                        )
+                    )
+                }
+            }
+        )
+    }
     /// List which agents may use an integration, and how
     ///
     /// - Remark: HTTP `GET /api/integrations/{id}/grants`.
@@ -7904,6 +8327,170 @@ public struct Client: APIProtocol {
                     case "application/json":
                         body = try await converter.getResponseBodyAsJSON(
                             Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_from_hyphen_chat.Output.Conflict.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .conflict(.init(body: body))
+                default:
+                    return .undocumented(
+                        statusCode: response.status.code,
+                        .init(
+                            headerFields: response.headerFields,
+                            body: responseBody
+                        )
+                    )
+                }
+            }
+        )
+    }
+    /// Record that a person pressed Not now on an access card (humans only)
+    ///
+    /// - Remark: HTTP `POST /api/integrations/{id}/decline-from-chat`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/decline-from-chat/post`.
+    public func post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_decline_hyphen_from_hyphen_chat(_ input: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_decline_hyphen_from_hyphen_chat.Input) async throws -> Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_decline_hyphen_from_hyphen_chat.Output {
+        try await client.send(
+            input: input,
+            forOperation: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_decline_hyphen_from_hyphen_chat.id,
+            serializer: { input in
+                let path = try converter.renderedPath(
+                    template: "/api/integrations/{}/decline-from-chat",
+                    parameters: [
+                        input.path.id
+                    ]
+                )
+                var request: HTTPTypes.HTTPRequest = .init(
+                    soar_path: path,
+                    method: .post
+                )
+                suppressMutabilityWarning(&request)
+                try converter.setHeaderFieldAsURI(
+                    in: &request.headerFields,
+                    name: "x-workspace-id",
+                    value: input.headers.x_hyphen_workspace_hyphen_id
+                )
+                converter.setAcceptHeader(
+                    in: &request.headerFields,
+                    contentTypes: input.headers.accept
+                )
+                let body: OpenAPIRuntime.HTTPBody?
+                switch input.body {
+                case let .json(value):
+                    body = try converter.setRequiredRequestBodyAsJSON(
+                        value,
+                        headerFields: &request.headerFields,
+                        contentType: "application/json; charset=utf-8"
+                    )
+                }
+                return (request, body)
+            },
+            deserializer: { response, responseBody in
+                switch response.status.code {
+                case 200:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_decline_hyphen_from_hyphen_chat.Output.Ok.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_decline_hyphen_from_hyphen_chat.Output.Ok.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .ok(.init(body: body))
+                case 400:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_decline_hyphen_from_hyphen_chat.Output.BadRequest.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_decline_hyphen_from_hyphen_chat.Output.BadRequest.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .badRequest(.init(body: body))
+                case 403:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_decline_hyphen_from_hyphen_chat.Output.Forbidden.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_decline_hyphen_from_hyphen_chat.Output.Forbidden.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .forbidden(.init(body: body))
+                case 404:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_decline_hyphen_from_hyphen_chat.Output.NotFound.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_decline_hyphen_from_hyphen_chat.Output.NotFound.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .notFound(.init(body: body))
+                case 409:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_decline_hyphen_from_hyphen_chat.Output.Conflict.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_decline_hyphen_from_hyphen_chat.Output.Conflict.Body.jsonPayload.self,
                             from: responseBody,
                             transforming: { value in
                                 .json(value)

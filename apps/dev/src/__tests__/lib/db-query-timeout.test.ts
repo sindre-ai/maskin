@@ -65,6 +65,40 @@ describe('timeQueries deadline', () => {
 	})
 })
 
+function failingQuery(err: unknown) {
+	return {
+		// biome-ignore lint/suspicious/noThenProperty: mimics the lazy thenable postgres.js returns
+		then(onFulfilled?: (v: unknown) => unknown, onRejected?: (e: unknown) => unknown) {
+			return Promise.reject(err).then(onFulfilled, onRejected)
+		},
+	}
+}
+
+describe('timeQueries read-only refusals', () => {
+	it('reports a write refused as read-only, and still throws the error', async () => {
+		const refused = Object.assign(new Error('cannot execute INSERT in a read-only transaction'), {
+			code: '25006',
+		})
+		const onReadOnlyConnection = vi.fn()
+		const client = timeQueries({ unsafe: () => failingQuery(refused) }, undefined, {
+			onReadOnlyConnection,
+		})
+		await expect(client.unsafe('insert into t values (1)')).rejects.toBe(refused)
+		expect(onReadOnlyConnection).toHaveBeenCalledWith({ sql: 'insert into t values (1)' })
+	})
+
+	it('ignores other errors', async () => {
+		const onReadOnlyConnection = vi.fn()
+		const client = timeQueries(
+			{ unsafe: () => failingQuery(Object.assign(new Error('boom'), { code: '23505' })) },
+			undefined,
+			{ onReadOnlyConnection },
+		)
+		await expect(client.unsafe('select 1')).rejects.toThrow('boom')
+		expect(onReadOnlyConnection).not.toHaveBeenCalled()
+	})
+})
+
 describe('timeQueries pool diagnostics', () => {
 	it('reports the in-flight count and a short SQL preview when a query times out', async () => {
 		const seen: { timeoutMs: number; inFlight: number; sql: string }[] = []

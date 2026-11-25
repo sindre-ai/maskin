@@ -64,11 +64,23 @@ name: iOS TestFlight
 # apps/apple/release-notes.md ("# <version>" on the first line). The release type is automatic: the
 # version goes live as soon as Apple approves it, with no one pressing Release.
 #
+# Daily retry: a schedule (07:23 UTC, weekends too) runs the app-review job alone for the
+# MARKETING_VERSION on main, as a real submit and not a dry run. A submit that failed once, or a
+# version whose upload finished after the push, is then sent without anyone starting a run. It is
+# safe every day: the script stops with "Nothing to do" for a version that is sent, in review or
+# live, and ends quietly when App Store Connect has no build of that version yet.
+#
 # Started by hand (Actions, Run workflow) the workflow does not archive. It reads App Store Connect:
 # "dry run" prints what a submission would do and creates nothing; "submit_version" submits that
 # version (it also retries a submission that failed, because a later merge with the same version
 # never counts as a change). The submit job is separate from the upload job, so a failed
 # submission leaves the TestFlight build in place.
+#
+# TestFlight only (manual): Run workflow with testflight_only ticked archives main with the
+# MARKETING_VERSION in project.yml, a fresh build number, and uploads it to TestFlight. It does not
+# wait for a version change, does not run the Apple TV job and skips app-review completely, so
+# nothing is created or sent in App Store Connect beyond the build itself. Apple accepts the build
+# only while the version's train is open (not released); a refusal shows in the Export and upload step.
 #
 # One macOS runner for roughly 20-30 minutes per merge that changes MARKETING_VERSION (10x the
 # per-minute cost of Linux), and a second one for the Apple TV upload. Other merges only run the
@@ -83,6 +95,9 @@ on:
       - '!apps/apple/Tests/**'
       - '!apps/apple/**/*.md'
       - '.github/workflows/ios-testflight.yml'
+  # Retry of the App Review submit, see the header. Cron runs in UTC and only on the default branch.
+  schedule:
+    - cron: '23 7 * * *'
   workflow_dispatch:
     inputs:
       dry_run:
@@ -93,6 +108,10 @@ on:
         description: 'Version to send to App Review, for example 1.2 (empty = the version in project.yml, dry run only)'
         type: string
         default: ''
+      testflight_only:
+        description: 'TestFlight only: archive and upload the iPhone build of the version in project.yml, send nothing to App Review, skip Apple TV'
+        type: boolean
+        default: false
       tv_signing_check:
         description: 'Apple TV signing check: archive and export MaskinTV signed for distribution, upload nothing, print the entitlements'
         type: boolean
@@ -148,11 +167,12 @@ jobs:
           fi
 
   testflight:
-    # A manual run does not archive; see the app-review job. A push that leaves MARKETING_VERSION
-    # alone is skipped by the plan job.
+    # A manual run archives only with testflight_only; see the app-review job. A push that leaves
+    # MARKETING_VERSION alone is skipped by the plan job. always(): the plan job is skipped on a
+    # manual run, which would skip this job too.
     needs: plan
-    if: github.event_name == 'push' && needs.plan.outputs.upload == 'true'
-    runs-on: macos-26
+    if: always() && ((github.event_name == 'push' && needs.plan.outputs.upload == 'true') || (github.event_name == 'workflow_dispatch' && inputs.testflight_only))
+    runs-on: xcode-27
     timeout-minutes: 90
     outputs:
       build_number: ${{ steps.archive.outputs.build_number }}
@@ -181,13 +201,13 @@ jobs:
       - uses: actions/checkout@v6
         if: steps.gate.outputs.enabled == 'true'
 
-      - name: Select Xcode 26
+      - name: Select Xcode 27
         if: steps.gate.outputs.enabled == 'true'
         run: |
           set -euo pipefail
-          xcode=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)
+          xcode=$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -1 || true)
           if [ -z "$xcode" ]; then
-            echo "::error::No Xcode 26.x on this runner image."
+            echo "::error::No Xcode 27.x on this runner image."
             ls -d /Applications/Xcode*.app || true
             exit 1
           fi
@@ -343,7 +363,8 @@ jobs:
   testflight-tv:
     needs: testflight
     # always(): a manual signing check runs with the iPhone job skipped, which would skip this job too.
-    if: always() && ((needs.testflight.result == 'success' && needs.testflight.outputs.build_number != '' && vars.APPLE_TV_UPLOAD == 'true') || (github.event_name == 'workflow_dispatch' && inputs.tv_signing_check))
+    # A testflight_only run never builds the TV app, whatever else is ticked.
+    if: always() && !(github.event_name == 'workflow_dispatch' && inputs.testflight_only) && ((needs.testflight.result == 'success' && needs.testflight.outputs.build_number != '' && vars.APPLE_TV_UPLOAD == 'true') || (github.event_name == 'workflow_dispatch' && inputs.tv_signing_check))
     runs-on: macos-26
     timeout-minutes: 90
     env:
@@ -534,7 +555,8 @@ jobs:
   # iPhone only: the Apple TV build is uploaded by testflight-tv but not sent to App Review.
   app-review:
     needs: testflight
-    if: always() && (needs.testflight.result == 'success' || needs.testflight.result == 'skipped')
+    # Skipped whole on a testflight_only run: it must not read, create or submit anything in App Review.
+    if: always() && !(github.event_name == 'workflow_dispatch' && inputs.testflight_only) && (needs.testflight.result == 'success' || needs.testflight.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -560,7 +582,9 @@ jobs:
       # Decides whether to submit and which version. On a push: only when MARKETING_VERSION differs
       # from the commit before the push. No previous commit (first push, force push that dropped
       # it) means no comparison is possible, so nothing is submitted and the log says how to do it
-      # by hand. It never fails on that.
+      # by hand. It never fails on that. A scheduled run is a manual run with an empty version and
+      # no dry run: it submits the version in project.yml, and the script skips it when that version
+      # has no uploaded build.
       - name: Decide what to submit
         id: plan
         if: steps.gate.outputs.enabled == 'true'
@@ -579,6 +603,11 @@ jobs:
           if [ -z "$current" ]; then
             echo "::error::Could not read MARKETING_VERSION from apps/apple/project.yml."
             exit 1
+          fi
+
+          if [ "$EVENT" = "schedule" ]; then
+            { echo "submit=true"; echo "version=$current"; echo "build_number="; echo "dry_run=false"; echo "scheduled=true"; } >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
           if [ "$EVENT" = "workflow_dispatch" ]; then
@@ -629,6 +658,7 @@ jobs:
           SUBMIT_VERSION: ${{ steps.plan.outputs.version }}
           BUILD_NUMBER: ${{ steps.plan.outputs.build_number }}
           DRY_RUN: ${{ steps.plan.outputs.dry_run }}
+          SCHEDULED: ${{ steps.plan.outputs.scheduled }}
         run: |
           ASC_KEY_P8_PATH="$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8" \
             node .github/scripts/asc-submit-review.mjs

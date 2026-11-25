@@ -278,6 +278,30 @@ export function firstTouchFromPosthog(): FirstTouch {
 	}
 }
 
+function cleanSourceTag(value: unknown): string {
+	return (typeof value === 'string' ? value : '')
+		.trim()
+		.toLowerCase()
+		.replace(/[^a-z0-9._-]/g, '')
+		.slice(0, 60)
+}
+
+// The campaign tag (one lower-case name per marketplace, or linkedin, internal, outbound) a visit came in
+// with: the utm_source on this page, else the one saved from the first visit. Empty when there is none.
+export function utmSourceFrom(search: string, firstTouch: FirstTouch = {}): string {
+	return (
+		cleanSourceTag(new URLSearchParams(search).get('utm_source') ?? '') ||
+		cleanSourceTag(firstTouch.utmSource)
+	)
+}
+
+// The utm_source property for the sign-up events. Left out when the visit had no tag, never an empty
+// string, so an untagged sign-up reads the same as before.
+export function utmSourceProps(): { utm_source?: string } {
+	const utmSource = utmSourceFrom(window.location.search, firstTouchFromPosthog())
+	return utmSource ? { utm_source: utmSource } : {}
+}
+
 // The channel a sign-up came from: the utm_source on the page, else the one from the first visit, else
 // the site that sent the person (this page's referrer, then the first visit's), else direct. Lower case,
 // short, and only letters, digits and . _ - so a crafted link cannot put free text on a person.
@@ -287,19 +311,13 @@ export function signupSourceFrom(
 	ownHost: string,
 	firstTouch: FirstTouch = {},
 ): string {
-	const clean = (value: unknown) =>
-		(typeof value === 'string' ? value : '')
-			.trim()
-			.toLowerCase()
-			.replace(/[^a-z0-9._-]/g, '')
-			.slice(0, 60)
+	const clean = cleanSourceTag
 	const own = clean(ownHost.replace(/^www\./, ''))
 	const outside = (host: unknown) => {
 		const value = clean(typeof host === 'string' ? host.replace(/^www\./, '') : '')
 		return value && value !== own ? value : ''
 	}
-	const utm =
-		clean(new URLSearchParams(search).get('utm_source') ?? '') || clean(firstTouch.utmSource)
+	const utm = utmSourceFrom(search, firstTouch)
 	if (utm) return utm
 	let pageHost = ''
 	try {

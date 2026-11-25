@@ -16,8 +16,11 @@ import {
 	useCompleteIntegration,
 	useConnectDeepdots,
 	useConnectIntegration,
+	useDeleteOAuthApp,
 	useLinkGithubInstallation,
 	useLinkableGithubInstallations,
+	useOAuthApp,
+	useSaveOAuthApp,
 } from '@/hooks/use-integrations'
 import type { ProviderInfo } from '@/lib/api'
 import { Check, Copy, Plus } from 'lucide-react'
@@ -41,14 +44,24 @@ export function ApiKeyDialog({
 }) {
 	const connect = useConnectIntegration(workspaceId)
 	const canWrite = useCanWrite()
+	const [projectId, setProjectId] = useState('')
+	const takesProject = provider?.name === 'posthog'
+	const projectIdInvalid =
+		takesProject && projectId.trim() !== '' && !/^\d{1,12}$/.test(projectId.trim())
 
 	const open = !!provider
 	const handleConnect = () => {
-		if (!provider || !canWrite) return
+		if (!provider || !canWrite || projectIdInvalid) return
 		connect.mutate(
-			{ provider: provider.name, apiKey, returnTo },
+			{
+				provider: provider.name,
+				apiKey,
+				projectId: takesProject && projectId.trim() ? projectId.trim() : undefined,
+				returnTo,
+			},
 			{
 				onSuccess: () => {
+					setProjectId('')
 					onClose()
 				},
 			},
@@ -81,11 +94,39 @@ export function ApiKeyDialog({
 							placeholder="Paste your API key"
 						/>
 					</div>
+					{takesProject && (
+						<div className="space-y-2">
+							<Label htmlFor="provider-project-id">Project id (optional)</Label>
+							<Input
+								id="provider-project-id"
+								inputMode="numeric"
+								value={projectId}
+								onChange={(e) => setProjectId(e.target.value)}
+								placeholder="For example 12345"
+								aria-invalid={projectIdInvalid}
+							/>
+							<p className="text-xs text-muted-foreground">
+								{projectIdInvalid
+									? 'The project id is a number, like 12345.'
+									: 'Agents start in this project. Leave it empty to use the one PostHog picks. You can find the number in the PostHog address after /project/.'}
+							</p>
+						</div>
+					)}
 					<div className="flex justify-end gap-2">
-						<Button type="button" variant="ghost" onClick={onClose}>
+						<Button
+							type="button"
+							variant="ghost"
+							onClick={() => {
+								setProjectId('')
+								onClose()
+							}}
+						>
 							Cancel
 						</Button>
-						<Button type="submit" disabled={!apiKey.trim() || connect.isPending || !canWrite}>
+						<Button
+							type="submit"
+							disabled={!apiKey.trim() || connect.isPending || !canWrite || projectIdInvalid}
+						>
 							Connect
 						</Button>
 					</div>
@@ -176,6 +217,237 @@ export function DeepdotsConnectDialog({
 							{connect.isPending ? 'Checking…' : 'Connect'}
 						</Button>
 					</div>
+				</form>
+			</DialogContent>
+		</Dialog>
+	)
+}
+
+/**
+ * The paste form for a tool whose vendor lets only the customer's own admin create the sign-in
+ * app (Salesforce). The app id and secret go to the server once; the secret is never shown again,
+ * so a replace asks for the whole pair. Saving a first app carries straight on to the sign-in.
+ */
+export function OwnAppDialog({
+	workspaceId,
+	provider,
+	open,
+	onClose,
+	returnTo,
+	connected,
+}: {
+	workspaceId: string
+	provider: ProviderInfo
+	open: boolean
+	onClose: () => void
+	returnTo?: string
+	/** The tool is already signed in: saving replaces the app and does not start a new sign-in. */
+	connected: boolean
+}) {
+	const { data: app } = useOAuthApp(workspaceId, provider.name, { enabled: open })
+	const save = useSaveOAuthApp(workspaceId, provider.name)
+	const remove = useDeleteOAuthApp(workspaceId, provider.name)
+	const connect = useConnectIntegration(workspaceId)
+	const canWrite = useCanWrite()
+	const [confirmingRemove, setConfirmingRemove] = useState(false)
+	const [clientId, setClientId] = useState('')
+	const [clientSecret, setClientSecret] = useState('')
+	const [value, setValue] = useState('')
+	const [copied, setCopied] = useState(false)
+	// A public client has no secret. A tool at a per-customer address has one more box.
+	const needsSecret = !provider.customerAppPublic
+	const valueField = provider.customerValue
+	const valueToSend = value.trim() || app?.value || ''
+	const ready =
+		!!clientId.trim() && (!needsSecret || !!clientSecret) && (!valueField || !!valueToSend)
+	const replacing = !!app?.configured
+	const pending = save.isPending || connect.isPending
+
+	const close = () => {
+		setClientId('')
+		setClientSecret('')
+		setValue('')
+		setConfirmingRemove(false)
+		save.reset()
+		remove.reset()
+		connect.reset()
+		onClose()
+	}
+	const handleRemove = () => {
+		if (!canWrite) return
+		remove.mutate(undefined, {
+			onSuccess: close,
+			onError: () => setConfirmingRemove(false),
+		})
+	}
+	const handleSave = () => {
+		if (!canWrite || !ready) return
+		save.mutate(
+			{
+				clientId: clientId.trim(),
+				...(needsSecret && { clientSecret }),
+				...(valueField && { value: valueToSend }),
+			},
+			{
+				onSuccess: () => {
+					if (connected) {
+						close()
+						return
+					}
+					setClientSecret('')
+					connect.mutate({ provider: provider.name, returnTo })
+				},
+			},
+		)
+	}
+	const handleCopy = () => {
+		if (!app?.callbackUrl) return
+		navigator.clipboard.writeText(app.callbackUrl)
+		setCopied(true)
+		setTimeout(() => setCopied(false), 2000)
+	}
+	const error = save.isError
+		? save.error
+		: remove.isError
+			? remove.error
+			: connect.isError
+				? connect.error
+				: null
+
+	return (
+		<Dialog open={open} onOpenChange={(next) => !next && close()}>
+			<DialogContent>
+				<DialogHeader>
+					<DialogTitle>
+						{replacing
+							? `Change the ${provider.displayName} app`
+							: `Connect ${provider.displayName}`}
+					</DialogTitle>
+					<DialogDescription>
+						{provider.displayName} lets only your own admin create the app that signs in. Create it
+						in your {provider.displayName} account, then paste its id
+						{needsSecret ? ' and secret' : ''} here.
+						{needsSecret ? ' The secret is stored encrypted and is never shown again.' : ''}
+						{replacing && connected
+							? ' If you change to a different app, reconnect afterwards.'
+							: ''}
+					</DialogDescription>
+				</DialogHeader>
+				<form
+					className="space-y-3"
+					onSubmit={(e) => {
+						e.preventDefault()
+						handleSave()
+					}}
+				>
+					{app?.callbackUrl && (
+						<div className="space-y-2">
+							<Label htmlFor="own-app-callback">Callback URL to give the app</Label>
+							<div className="flex items-center gap-2">
+								<Input id="own-app-callback" readOnly value={app.callbackUrl} />
+								<Button
+									type="button"
+									variant="secondary"
+									size="sm"
+									className="shrink-0"
+									onClick={handleCopy}
+									aria-label="Copy callback URL"
+								>
+									{copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+								</Button>
+							</div>
+						</div>
+					)}
+					<div className="space-y-2">
+						<Label htmlFor="own-app-id">App ID</Label>
+						<Input
+							id="own-app-id"
+							autoComplete="off"
+							value={clientId}
+							onChange={(e) => setClientId(e.target.value)}
+							placeholder={app?.clientId ?? 'Consumer key'}
+						/>
+					</div>
+					{needsSecret && (
+						<div className="space-y-2">
+							<Label htmlFor="own-app-secret">App secret</Label>
+							<Input
+								id="own-app-secret"
+								type="password"
+								autoComplete="new-password"
+								value={clientSecret}
+								onChange={(e) => setClientSecret(e.target.value)}
+								placeholder={replacing ? 'Paste the secret again to replace it' : 'Consumer secret'}
+							/>
+						</div>
+					)}
+					{valueField && (
+						<div className="space-y-2">
+							<Label htmlFor="own-app-value">{valueField.label}</Label>
+							<Input
+								id="own-app-value"
+								autoComplete="off"
+								value={value}
+								onChange={(e) => setValue(e.target.value)}
+								placeholder={app?.value ?? valueField.placeholder}
+							/>
+							{valueField.help && <p className="text-xs text-text-secondary">{valueField.help}</p>}
+						</div>
+					)}
+					{error && (
+						<p role="alert" className="text-sm text-destructive">
+							{error.message}
+						</p>
+					)}
+					{confirmingRemove ? (
+						<div className="space-y-3 rounded-md border p-3">
+							<p className="text-sm">
+								Remove the saved {provider.displayName} app? Its id and secret are deleted, and you
+								will paste them again to connect.
+							</p>
+							<div className="flex justify-end gap-2">
+								<Button
+									type="button"
+									variant="ghost"
+									onClick={() => setConfirmingRemove(false)}
+									disabled={remove.isPending}
+								>
+									Keep
+								</Button>
+								<Button
+									type="button"
+									variant="destructive"
+									onClick={handleRemove}
+									disabled={remove.isPending || !canWrite}
+								>
+									{remove.isPending ? 'Removing…' : 'Remove app'}
+								</Button>
+							</div>
+						</div>
+					) : (
+						<div className="flex justify-end gap-2">
+							{replacing && (
+								<Button
+									type="button"
+									variant="ghost"
+									className="mr-auto text-destructive"
+									onClick={() => {
+										remove.reset()
+										setConfirmingRemove(true)
+									}}
+									disabled={pending || !canWrite}
+								>
+									Remove
+								</Button>
+							)}
+							<Button type="button" variant="ghost" onClick={close}>
+								Cancel
+							</Button>
+							<Button type="submit" disabled={!ready || pending || !canWrite}>
+								{pending ? 'Saving…' : connected || replacing ? 'Save' : 'Save and connect'}
+							</Button>
+						</div>
+					)}
 				</form>
 			</DialogContent>
 		</Dialog>

@@ -139,6 +139,8 @@ struct MessageRow: View {
 	var mentions: [(id: String, name: String)] = []
 	/// What the human picked, once this question has been answered.
 	var questionAnswers: [ChatQuestionAnswer.Answer]?
+	/// Who answered that question, and when; the summary row under it shows both.
+	var questionNote: ChatQuestionState.Note?
 	/// Set only on your newest message.
 	var sendStatus: MessageSendStatus?
 	var messageOverride = MessageOverride()
@@ -531,7 +533,7 @@ struct MessageRow: View {
 			if let threadSummary { ThreadPill(summary: threadSummary, onOpen: onOpenThread) }
 			if !message.questions.isEmpty && askNote == nil {
 				QuestionOptionsView(
-					questions: message.questions, answers: questionAnswers, onSubmit: onAnswer,
+					questions: message.questions, answers: questionAnswers, note: questionNote, onSubmit: onAnswer,
 					// Not on a helper's question: iOS has no session-input path, so a chat message
 					// would leave the helper session blocked.
 					onDismiss: message.isHelperQuestion ? nil : onDismissQuestion)

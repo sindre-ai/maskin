@@ -1,6 +1,6 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, subscriptions, workspaceMembers } from '@maskin/db/schema'
+import { events, messages, subscriptions, workspaceMembers } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import { buildSignupCaptureKnowledge } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
@@ -8,6 +8,7 @@ import { vi } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import type { SessionManager } from '../../services/session-manager'
+import { buildSignupWelcomeMessage } from '../../services/signup-welcome-chat'
 import { insertActor, insertWorkspace } from '../factories'
 import { jsonRequest } from '../helpers'
 import { db, getTestActorId } from './global-setup'
@@ -149,6 +150,8 @@ describe('Signup welcome comment — Chief of Staff comments, Researcher gets sp
 			}),
 		)
 		const researcherCall = (sessionManager.createSession as ReturnType<typeof vi.fn>).mock.calls[0]
+		// No welcome chat was opened for this client, so there is no message to anchor to.
+		expect(researcherCall[1].spawnedByMessageId).toBeUndefined()
 		const researcherPrompt = researcherCall[1].actionPrompt as string
 		// Research inputs: name, email, organization, role — all four, plus the
 		// human's actor id so Researcher can @-mention them in its reply.
@@ -225,6 +228,48 @@ describe('Signup welcome comment — Chief of Staff comments, Researcher gets sp
 		}
 		const item = unread.items.find((i) => i.entity_id === created.id)
 		expect(item?.mentioning_unread_count ?? 0).toBe(0)
+	})
+
+	it("anchors Researcher's session to the Chief of Staff's welcome message so the chat shows a handed-off card (welcome_in_chat)", async () => {
+		const chief = await seedAgent(workspaceId, 'Chief of Staff')
+		const researcher = await seedAgent(workspaceId, 'Researcher')
+		const sessionManager = {
+			createSession: vi.fn().mockResolvedValue(undefined),
+		} as unknown as SessionManager
+		const app = createObjectsApp(sessionManager)
+
+		const base = buildSignupCaptureKnowledge({
+			name: 'Ada Testowski',
+			organization: 'Acme Robotics',
+			role: 'Head of Product',
+		})
+		const payload = { ...base, metadata: { ...base.metadata, welcome_in_chat: true } }
+
+		const res = await app.request(
+			jsonRequest('POST', '/api/objects', payload, { 'x-workspace-id': workspaceId }),
+		)
+		expect(res.status).toBe(201)
+
+		await vi.waitFor(() => {
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		const [welcome] = await db
+			.select({ id: messages.id })
+			.from(messages)
+			.where(
+				and(
+					eq(messages.actorId, chief.id),
+					eq(messages.content, buildSignupWelcomeMessage('Ada Testowski', 'Acme Robotics')),
+				),
+			)
+		expect(welcome).toBeDefined()
+
+		expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
+		expect(sessionManager.createSession).toHaveBeenCalledWith(
+			workspaceId,
+			expect.objectContaining({ actorId: researcher.id, spawnedByMessageId: welcome.id }),
+		)
 	})
 
 	it('does not trigger a comment or session for a knowledge object that is not signup_capture', async () => {

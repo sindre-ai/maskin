@@ -221,7 +221,7 @@ export function MessageThreadPane({
 						<MessageBubble
 							workspaceId={workspaceId}
 							message={root}
-							questionAnswered={answeredQuestions.has(root.id)}
+							questionAnswer={answeredQuestions.get(root.id)}
 							activity={(byReplyMessageId.get(root.id) ?? []).map((turn, i) => (
 								<MessageActivity
 									key={`${turn.sessionId}-above-${i}`}
@@ -279,7 +279,7 @@ export function MessageThreadPane({
 									<MessageBubble
 										workspaceId={workspaceId}
 										message={reply}
-										questionAnswered={answeredQuestions.has(reply.id)}
+										questionAnswer={answeredQuestions.get(reply.id)}
 										activity={(byReplyMessageId.get(reply.id) ?? []).map((turn, i) => (
 											<MessageActivity
 												key={`${turn.sessionId}-above-${i}`}

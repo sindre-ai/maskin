@@ -97,7 +97,10 @@ describe('Deepdots MCP server', () => {
 
 	it('sends the server-built filter with the bearer token, and returns trimmed rows', async () => {
 		const { client, fetchImpl, getAccessToken } = await connect()
-		const res = await client.callTool({ name: 'deepdots_list_issues', arguments: { limit: 5 } })
+		const res = await client.callTool({
+			name: 'deepdots_list_issues',
+			arguments: { topic: 'Login', limit: 5 },
+		})
 		const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit]
 		expect(url).toContain('https://api.deepdots.com/topics/issues?filter=')
 		expect((init.headers as Record<string, string>).Authorization).toBe(`Bearer ${TOKEN}`)
@@ -110,13 +113,16 @@ describe('Deepdots MCP server', () => {
 	it('page 1 and page 2 of 5 rows share no id', async () => {
 		const { client } = await connect()
 		const first = payload(
-			await client.callTool({ name: 'deepdots_list_issues', arguments: { limit: 5 } }),
+			await client.callTool({
+				name: 'deepdots_list_issues',
+				arguments: { topic: 'Login', limit: 5 },
+			}),
 		)
 		expect(first.has_more).toBe(true)
 		const second = payload(
 			await client.callTool({
 				name: 'deepdots_list_issues',
-				arguments: { limit: 5, skip: first.next_skip },
+				arguments: { topic: 'Login', limit: 5, skip: first.next_skip },
 			}),
 		)
 		const ids1 = first.items.map((r: { id: string }) => r.id)
@@ -157,7 +163,10 @@ describe('Deepdots MCP server', () => {
 		const { client } = await connect({
 			fetchImpl: (async () => new Response('{}', { status: 503 })) as unknown as typeof fetch,
 		})
-		const res = await client.callTool({ name: 'deepdots_list_issues', arguments: {} })
+		const res = await client.callTool({
+			name: 'deepdots_list_issues',
+			arguments: { topic: 'Login' },
+		})
 		expect(payload(res).error.code).toBe('TEMPORARILY_UNAVAILABLE')
 	})
 
@@ -165,7 +174,10 @@ describe('Deepdots MCP server', () => {
 		const { client } = await connect({
 			fetchImpl: (async () => new Response('{}', { status: 405 })) as unknown as typeof fetch,
 		})
-		const res = await client.callTool({ name: 'deepdots_list_issues', arguments: {} })
+		const res = await client.callTool({
+			name: 'deepdots_list_issues',
+			arguments: { topic: 'Login' },
+		})
 		expect(payload(res).error.code).toBe('NOT_ALLOWED')
 	})
 
@@ -183,7 +195,10 @@ describe('Deepdots MCP server', () => {
 			fetchImpl: (async () =>
 				new Response(JSON.stringify(body), { status: 400 })) as unknown as typeof fetch,
 		})
-		const res = await client.callTool({ name: 'deepdots_list_issues', arguments: { limit: 50 } })
+		const res = await client.callTool({
+			name: 'deepdots_list_issues',
+			arguments: { topic: 'Login', limit: 50 },
+		})
 		const error = payload(res).error
 		expect(error.code).toBe('REQUEST_FAILED')
 		expect(error.message).toBe(
@@ -201,11 +216,69 @@ describe('Deepdots MCP server', () => {
 		expect(payload(cut).error.message.length).toBeLessThan(400)
 	})
 
+	it('keeps the reason Deepdots gives for a 406, and for a bare message body', async () => {
+		const nested = await connect({
+			fetchImpl: (async () =>
+				new Response(JSON.stringify({ error: { message: 'Company not found for this user' } }), {
+					status: 406,
+				})) as unknown as typeof fetch,
+		})
+		const res = await nested.client.callTool({ name: 'deepdots_list_topics', arguments: {} })
+		expect(payload(res).error.code).toBe('REQUEST_FAILED')
+		expect(payload(res).error.message).toBe(
+			'Deepdots answered with an unexpected status (406): Company not found for this user',
+		)
+
+		const bare = await connect({
+			fetchImpl: (async () =>
+				new Response(JSON.stringify({ message: 'Not acceptable' }), {
+					status: 406,
+				})) as unknown as typeof fetch,
+		})
+		const res2 = await bare.client.callTool({ name: 'deepdots_list_topics', arguments: {} })
+		expect(payload(res2).error.message).toBe(
+			'Deepdots answered with an unexpected status (406): Not acceptable',
+		)
+	})
+
+	it('does not read the body of a sign-in refusal, a 405 or a rate limit', async () => {
+		for (const status of [401, 403, 405, 429]) {
+			const { client } = await connect({
+				fetchImpl: (async () =>
+					new Response(JSON.stringify({ error: { message: 'secret detail' } }), {
+						status,
+					})) as unknown as typeof fetch,
+			})
+			const res = await client.callTool({ name: 'deepdots_list_topics', arguments: {} })
+			expect(JSON.stringify(res)).not.toContain('secret detail')
+		}
+	})
+
+	it('asks for a topic on issues without calling Deepdots', async () => {
+		const { client, fetchImpl } = await connect()
+		const res = await client.callTool({ name: 'deepdots_list_issues', arguments: {} })
+		expect(payload(res).error.code).toBe('INVALID_INPUT')
+		expect(payload(res).error.message).toContain('deepdots_list_topics')
+		expect(fetchImpl).not.toHaveBeenCalled()
+	})
+
+	it('sends the topic as a condition on issues_topics', async () => {
+		const { client, fetchImpl } = await connect()
+		await client.callTool({ name: 'deepdots_list_issues', arguments: { topic: 'Login' } })
+		const [url] = fetchImpl.mock.calls[0] as unknown as [string]
+		expect(JSON.parse(new URL(url).searchParams.get('filter') ?? '{}').where).toEqual({
+			issues_topics: { inq: ['Login'] },
+		})
+	})
+
 	it('keeps the plain message for a 400 whose body is not an error object', async () => {
 		const { client } = await connect({
 			fetchImpl: (async () => new Response('not json', { status: 400 })) as unknown as typeof fetch,
 		})
-		const res = await client.callTool({ name: 'deepdots_list_issues', arguments: {} })
+		const res = await client.callTool({
+			name: 'deepdots_list_issues',
+			arguments: { topic: 'Login' },
+		})
 		expect(payload(res).error.message).toBe('Deepdots answered with an unexpected status (400).')
 	})
 
@@ -216,7 +289,7 @@ describe('Deepdots MCP server', () => {
 		})
 		const res = await client.callTool({
 			name: 'deepdots_list_issues',
-			arguments: { limit: 50 },
+			arguments: { topic: 'Login', limit: 50 },
 		})
 		const [url] = (fetchImpl as unknown as { mock: { calls: [string][] } }).mock.calls[0]
 		expect(JSON.parse(new URL(url).searchParams.get('filter') ?? '{}').limit).toBe(50)
@@ -225,7 +298,7 @@ describe('Deepdots MCP server', () => {
 
 	it('fires integration_tool_called with ids and an outcome only', async () => {
 		const { client, trackToolCalled } = await connect()
-		await client.callTool({ name: 'deepdots_list_issues', arguments: { limit: 2 } })
+		await client.callTool({ name: 'deepdots_list_issues', arguments: { topic: 'Login', limit: 2 } })
 		expect(trackToolCalled).toHaveBeenCalledWith({
 			provider: 'deepdots',
 			tool: 'deepdots_list_issues',
@@ -239,7 +312,10 @@ describe('Deepdots MCP server', () => {
 
 	it('refuses a caller with no access, and never reaches Deepdots', async () => {
 		const { client, fetchImpl } = await connect({}, 'none')
-		const res = await client.callTool({ name: 'deepdots_list_issues', arguments: {} })
+		const res = await client.callTool({
+			name: 'deepdots_list_issues',
+			arguments: { topic: 'Login' },
+		})
 		expect(res.isError).toBe(true)
 		expect(fetchImpl).not.toHaveBeenCalled()
 		const { tools } = await client.listTools()

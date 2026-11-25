@@ -114,6 +114,7 @@ export const OPEN_ROUTES: OpenRoute[] = [
 	['DELETE', '/api/integrations/google-search-console/mcp', 'always answers 405, no handler'],
 	['DELETE', '/api/integrations/microsoft/mcp', 'always answers 405, no handler'],
 	['DELETE', '/api/integrations/slack/mcp', 'always answers 405, no handler'],
+	['DELETE', '/api/integrations/youtube/mcp', 'always answers 405, no handler'],
 	// Per-actor push registration: it writes the caller's own device row and touches no
 	// workspace data, and a read-only viewer still wants their own notifications.
 	['POST', '/api/devices', 'registers the caller\u2019s own device, no workspace data'],
@@ -261,6 +262,7 @@ export const HAND_GATED_ROUTES: OpenRoute[] = [
 	],
 	['POST', '/api/integrations/microsoft/mcp', 'MCP endpoint, tools read as the workspace'],
 	['POST', '/api/integrations/slack/mcp', 'MCP endpoint, tools post as the workspace bot'],
+	['POST', '/api/integrations/youtube/mcp', 'MCP endpoint, tools read as the workspace'],
 	[
 		'PUT',
 		'/api/send-permissions',
@@ -272,6 +274,16 @@ export const HAND_GATED_ROUTES: OpenRoute[] = [
 		'MCP gateway, forwards tool calls with the provider token',
 	],
 	['DELETE', '/api/integrations/:provider/gateway', 'MCP gateway, ends the provider MCP session'],
+	[
+		'POST',
+		'/api/integrations/:provider/gateway/:integrationId',
+		'MCP gateway for one account, forwards tool calls with that account token',
+	],
+	[
+		'DELETE',
+		'/api/integrations/:provider/gateway/:integrationId',
+		'MCP gateway for one account, ends the provider MCP session',
+	],
 	[
 		'POST',
 		'/api/custom-mcp-servers/:id/gateway',

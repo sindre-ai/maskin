@@ -13,6 +13,8 @@
 //
 // Row-carrying tools registered here:
 //
+//   get_objects               → get_objects (batch, `object.id`)
+//   get_comments              → no get-by-id counterpart, resumes by cursor
 //   list_objects              → get_objects (batch, `ids`)
 //   search_objects            → get_objects (batch, `ids`)
 //   list_files                → get_file    (single, `id`)
@@ -86,10 +88,35 @@ export const MAX_FETCH_HANDLE_IDS = 50
 export interface TokenCapDescriptor {
 	fetchHandleTool?: string
 	rowsField: string
+	/** Property on each row that holds its id. A dotted path reaches into a nested row (`object.id`). */
 	idField?: string
+	/** Plain words on how to ask for less, appended to the truncation notice. */
+	narrowHint?: string
+	/** The notice names the omitted ids (up to MAX_FETCH_HANDLE_IDS), for a client that reads only the text. */
+	listOmittedIds?: boolean
+	/**
+	 * `content[0].text` has its own shape (not a copy of `structuredContent`). Trim that shape in place
+	 * instead of replacing it with the structured copy, and cut the long text fields of a lone row that
+	 * is still over the cap.
+	 */
+	keepContentShape?: boolean
 }
 
 export const TOKEN_CAP_TARGETS: Record<string, TokenCapDescriptor> = {
+	get_objects: {
+		fetchHandleTool: 'get_objects',
+		rowsField: 'objects',
+		idField: 'object.id',
+		listOmittedIds: true,
+		keepContentShape: true,
+		narrowHint:
+			'Ask for fewer ids per call, or leave out the include blocks (events, relationships, connected_objects, files) you do not need.',
+	},
+	get_comments: {
+		rowsField: 'comments',
+		keepContentShape: true,
+		narrowHint: 'Ask for a smaller limit to get shorter pages.',
+	},
 	list_objects: { fetchHandleTool: 'get_objects', rowsField: 'objects' },
 	search_objects: { fetchHandleTool: 'get_objects', rowsField: 'objects' },
 	list_files: { fetchHandleTool: 'get_file', rowsField: 'files' },
@@ -185,6 +212,8 @@ export function applyResponseTokenCap(
 	response: unknown,
 	opts?: { maxTokens?: number; env?: NodeJS.ProcessEnv | Record<string, string | undefined> },
 ): ApplyResponseTokenCapResult {
+	const recordTarget = RECORD_CAP_TARGETS[toolName]
+	if (recordTarget) return applyRecordTokenCap(recordTarget, response, opts)
 	const target = TOKEN_CAP_TARGETS[toolName]
 	if (!target) return { response, truncated: false }
 	if (response == null || typeof response !== 'object') return { response, truncated: false }
@@ -213,12 +242,20 @@ export function applyResponseTokenCap(
 	while (rows.length > 1) {
 		const dropped = rows.pop()
 		omitted.unshift(dropped)
-		candidate = buildCappedResponse(rsp, structured, target.rowsField, rows, {
+		candidate = buildCappedResponse(rsp, structured, target, rows, {
 			tool: target.fetchHandleTool,
 			ids: target.fetchHandleTool ? extractIds(omitted, idField) : [],
 			omittedRows: omitted,
 		})
 		if (estimateResponseTokens(candidate) <= maxTokens) break
+	}
+
+	// A lone row that is still over the cap cannot lose rows. Tools that opt in
+	// have its longest text fields cut instead, and say so in the payload.
+	if (target.keepContentShape && estimateResponseTokens(candidate ?? rsp) > maxTokens) {
+		const base = candidate ?? (rsp as MutableMcpResponse)
+		const shrunk = cutOversizedRow(base, maxTokens)
+		if (shrunk) return { response: shrunk, truncated: true }
 	}
 
 	// A single-row page has nothing to drop, so it ships as it came.
@@ -235,10 +272,11 @@ interface TrimResult {
 function buildCappedResponse(
 	rsp: MutableMcpResponse,
 	structured: Record<string, unknown>,
-	rowsField: string,
+	target: TokenCapDescriptor,
 	keptRows: unknown[],
 	fetchHandle: TrimResult,
 ): MutableMcpResponse {
+	const rowsField = target.rowsField
 	// Cap the fetch_handle.ids at MAX_FETCH_HANDLE_IDS so a single hop of
 	// `fetch_handle.tool(ids)` stays within the get-by-id schema's cap.
 	const cappedIds = fetchHandle.ids.slice(0, MAX_FETCH_HANDLE_IDS)
@@ -265,12 +303,20 @@ function buildCappedResponse(
 		keptRows.length,
 	)
 	const resumedStructured = markTruncated(
-		resumeAfterKept(rsp, cappedStructured, keptRows),
-		fetchHandle.omittedRows.length,
+		resumeAfterKept(rsp, cappedStructured, keptRows, target.idField ?? 'id'),
+		{
+			kept: keptRows.length,
+			omitted: fetchHandle.omittedRows.length,
+			target,
+			fetchTool: fetchHandle.tool,
+			omittedIds: target.listOmittedIds ? cappedIds : [],
+		},
 	)
 	return {
 		...rsp,
-		content: capContentToStructured(rsp.content, resumedStructured),
+		content: target.keepContentShape
+			? trimContentInPlace(rsp.content, resumedStructured, target, fetchHandle.omittedRows)
+			: capContentToStructured(rsp.content, resumedStructured),
 		structuredContent: resumedStructured,
 		_meta: meta,
 	}
@@ -294,6 +340,65 @@ function capContentToStructured(
 		return content
 	}
 	return [{ type: 'text', text: JSON.stringify(cappedStructured) }]
+}
+
+/**
+ * For tools whose `content[0].text` has its own shape (a bare array of per-id results for
+ * `get_objects`, a `{ page, next_cursor, comments }` page for `get_comments`), keep that shape and
+ * only take the omitted rows out of it. The text is the half a live voice call reads, so a
+ * trimmed reply still tells it what was cut: an array has no room for a notice, so one more text
+ * block carries it; an object gets the notice fields in place.
+ */
+function trimContentInPlace(
+	content: unknown,
+	cappedStructured: Record<string, unknown>,
+	target: TokenCapDescriptor,
+	omittedRows: unknown[],
+): unknown {
+	if (!Array.isArray(content) || content.length === 0) return content
+	const block = content[0] as { type?: unknown; text?: unknown }
+	if (!block || block.type !== 'text' || typeof block.text !== 'string') return content
+	const parsed = parseJson(block.text)
+	const notice = {
+		truncated: true,
+		omitted_count: cappedStructured.omitted_count,
+		notice: cappedStructured.notice,
+		...(cappedStructured.omitted_ids ? { omitted_ids: cappedStructured.omitted_ids } : {}),
+	}
+	if (Array.isArray(parsed)) {
+		const idField = target.idField ?? 'id'
+		const dropped = new Set(extractIds(omittedRows, idField))
+		const kept = parsed.filter((entry) => !dropped.has((entry as { id?: string } | null)?.id ?? ''))
+		return [
+			{ ...block, text: JSON.stringify(kept) },
+			...content.slice(1),
+			{ type: 'text', text: JSON.stringify(notice) },
+		]
+	}
+	if (parsed && typeof parsed === 'object') {
+		const { [target.rowsField]: _rows, ...rest } = parsed as Record<string, unknown>
+		const rows = cappedStructured[target.rowsField] as unknown[]
+		const page = rest.page
+		const out: Record<string, unknown> = {
+			...notice,
+			...rest,
+			...(page && typeof page === 'object'
+				? { page: { ...(page as object), returned: rows.length, has_more: true } }
+				: {}),
+			...('next_cursor' in cappedStructured ? { next_cursor: cappedStructured.next_cursor } : {}),
+			[target.rowsField]: rows,
+		}
+		return [{ ...block, text: JSON.stringify(out) }, ...content.slice(1)]
+	}
+	return content
+}
+
+function parseJson(text: string): unknown {
+	try {
+		return JSON.parse(text)
+	} catch {
+		return undefined
+	}
 }
 
 /**
@@ -339,10 +444,12 @@ function resumeAfterKept(
 	rsp: MutableMcpResponse,
 	structured: Record<string, unknown>,
 	keptRows: unknown[],
+	idField: string,
 ): Record<string, unknown> {
+	// The card names rows the trim dropped whether or not the tool can resume a cursor.
+	const synced = syncHeroCardRows(structured, keptRows, idField)
 	const resume = rsp[RESUME_CURSOR] as ResumeCursorFn | undefined
-	if (typeof resume !== 'function') return structured
-	const synced = syncHeroCardRows(structured, keptRows)
+	if (typeof resume !== 'function') return synced
 	const last = keptRows[keptRows.length - 1]
 	if (last === undefined) return synced
 	const cursor = resume(last)
@@ -363,12 +470,13 @@ function resumeAfterKept(
 function syncHeroCardRows(
 	structured: Record<string, unknown>,
 	keptRows: unknown[],
+	idField: string,
 ): Record<string, unknown> {
 	const heroCard = structured.heroCard as
 		| { objects?: Array<{ id?: unknown }>; page?: Record<string, unknown> }
 		| undefined
 	if (!heroCard || !Array.isArray(heroCard.objects)) return structured
-	const keptIds = new Set(extractIds(keptRows, 'id'))
+	const keptIds = new Set(extractIds(keptRows, idField))
 	const objects = heroCard.objects.filter((o) => typeof o?.id === 'string' && keptIds.has(o.id))
 	const page = heroCard.page && { ...heroCard.page, limit: objects.length }
 	return { ...structured, heroCard: { ...heroCard, objects, ...(page ? { page } : {}) } }
@@ -390,15 +498,24 @@ function syncReturnedCount(
 	return { ...structured, page: { ...(page as Record<string, unknown>), returned: keptCount } }
 }
 
+interface TruncationNotice {
+	kept: number
+	omitted: number
+	target: TokenCapDescriptor
+	fetchTool?: string
+	omittedIds: string[]
+}
+
 /**
  * Say in the payload itself that rows were dropped. `_meta.truncated` is invisible to a client that
  * reads only the text (a live call), which then sees a short page with nothing to tell it so. The
  * rows that were cut are still reachable through the cursor or the fetch handle; `has_more` is set
- * so a page that looked like the last one does not.
+ * so a page that looked like the last one does not. `notice` says in plain words what shipped and
+ * how to ask for the rest.
  */
 function markTruncated(
 	structured: Record<string, unknown>,
-	omittedCount: number,
+	info: TruncationNotice,
 ): Record<string, unknown> {
 	const page = structured.page
 	const withPage =
@@ -407,7 +524,31 @@ function markTruncated(
 		typeof (page as Record<string, unknown>).has_more === 'boolean'
 			? { ...structured, page: { ...(page as Record<string, unknown>), has_more: true } }
 			: structured
-	return { ...withPage, truncated: true, omitted_count: omittedCount }
+	return {
+		...withPage,
+		truncated: true,
+		omitted_count: info.omitted,
+		...(info.omittedIds.length > 0 ? { omitted_ids: info.omittedIds } : {}),
+		notice: buildNotice(withPage, info),
+	}
+}
+
+function buildNotice(structured: Record<string, unknown>, info: TruncationNotice): string {
+	const { kept, omitted, target } = info
+	const parts = [
+		`Showing ${kept} of ${kept + omitted} ${target.rowsField}; the last ${omitted} were left out to keep the reply small.`,
+	]
+	if (info.omittedIds.length > 0) {
+		parts.push(
+			`Ask again with only the ids in omitted_ids${info.fetchTool ? ` (${info.fetchTool})` : ''}.`,
+		)
+	} else if (readCursor(structured)) {
+		parts.push('Pass next_cursor to get the rest.')
+	} else if (info.fetchTool) {
+		parts.push(`Fetch them one by one with ${info.fetchTool} (ids in _meta.fetch_handle).`)
+	}
+	if (target.narrowHint) parts.push(target.narrowHint)
+	return parts.join(' ')
 }
 
 function readCursor(structured: Record<string, unknown>): string | undefined {
@@ -437,11 +578,20 @@ function writeCursor(
 	return out
 }
 
+function readPath(row: unknown, path: string): unknown {
+	let cur: unknown = row
+	for (const key of path.split('.')) {
+		if (cur == null || typeof cur !== 'object') return undefined
+		cur = (cur as Record<string, unknown>)[key]
+	}
+	return cur
+}
+
 function extractIds(rows: unknown[], idField: string): string[] {
 	const ids: string[] = []
 	for (const row of rows) {
 		if (row == null || typeof row !== 'object') continue
-		const value = (row as Record<string, unknown>)[idField]
+		const value = readPath(row, idField)
 		if (typeof value === 'string' && value.length > 0) ids.push(value)
 	}
 	return ids
@@ -476,4 +626,365 @@ function measureJsonBytes(value: unknown): number {
 	} catch {
 		return 0
 	}
+}
+
+// ─── One reply that is a single record, or a record with a long log array ─────────────────────
+//
+// `get_file`, `get_session` and `get_session_logs` return one JSON text block and no
+// `structuredContent`, so the row cap above never saw them. They are the largest replies in the
+// 12 to 19 Nov size data (1.2 to 2.2 MB). A cut keeps the shape of that JSON (the same keys, the
+// same array of rows), says in the text what was cut and how to ask for the rest, and sets
+// `_meta.truncated`.
+
+export interface RecordCapDescriptor {
+	/** Plain words on how to ask for less. */
+	narrowHint: string
+	/** Name of a long array inside the record (`logs` on get_session). The reply itself is the array when absent. */
+	arrayField?: string
+	/** What the rows are called in the notice. */
+	rowsLabel?: string
+	/** Plain words on how to read on after the last row shown (a log id to start from). */
+	resumeHint?: (ctx: { lastRow: unknown; descending: boolean; record: unknown }) =>
+		| string
+		| undefined
+	/** Plain words on how to read on after a cut text field (a character offset to start from). */
+	continueHint?: (record: unknown, cuts: Cut[]) => string | undefined
+}
+
+function resumeFromLogId(ctx: { lastRow: unknown; descending: boolean; record: unknown }) {
+	const id = (ctx.lastRow as { id?: unknown } | null)?.id
+	if (typeof id !== 'number') return undefined
+	const sessionId =
+		(ctx.record as { session?: { id?: string }; id?: string } | null)?.session?.id ??
+		(ctx.record as { id?: string } | null)?.id
+	const call = sessionId ? `get_session_logs with id ${sessionId}` : 'get_session_logs'
+	return ctx.descending
+		? `Read older lines with ${call} and before_id ${id}.`
+		: `Read later lines with ${call} and after_id ${id}.`
+}
+
+export const RECORD_CAP_TARGETS: Record<string, RecordCapDescriptor> = {
+	get_file: {
+		narrowHint:
+			'For an HTML page, pass format "text" to read only its words instead of its markup.',
+		continueHint: (record, cuts) => {
+			const cut = cuts.find((c) => c.path === 'content' || c.path === 'content_text')
+			if (!cut) return undefined
+			const start = (record as { offset?: unknown } | null)?.offset
+			const next = (typeof start === 'number' ? start : 0) + cut.shown
+			return `To read on, call get_file again with offset ${next}.`
+		},
+	},
+	get_session: {
+		arrayField: 'logs',
+		rowsLabel: 'log lines',
+		resumeHint: resumeFromLogId,
+		narrowHint: 'Ask for a smaller log_limit, or page the logs with get_session_logs.',
+	},
+	get_session_logs: {
+		rowsLabel: 'log lines',
+		resumeHint: resumeFromLogId,
+		narrowHint: 'Ask for a smaller limit, or filter to one stream.',
+	},
+}
+
+export interface Cut {
+	path: string
+	shown: number
+	total: number
+}
+
+const MIN_KEPT_CHARS = 200
+/** Share of the cap that text outside the log lines may take before it is cut. */
+const FIXED_PART_SHARE = 0.6
+/** Room left under the cap for the notice a cut adds. */
+const NOTICE_RESERVE_TOKENS = 150
+
+interface StringLeaf {
+	holder: Record<string, unknown>
+	key: string
+	path: string
+	head: string
+	kept: number
+}
+
+function collectStringLeaves(
+	node: unknown,
+	path: string,
+	out: StringLeaf[],
+	depth = 0,
+): StringLeaf[] {
+	if (depth > 8 || node == null || typeof node !== 'object') return out
+	for (const [key, child] of Object.entries(node as Record<string, unknown>)) {
+		const childPath = path ? `${path}.${key}` : key
+		if (typeof child === 'string') {
+			if (child.length > MIN_KEPT_CHARS) {
+				out.push({
+					holder: node as Record<string, unknown>,
+					key,
+					path: childPath,
+					head: child,
+					kept: child.length,
+				})
+			}
+		} else {
+			collectStringLeaves(child, childPath, out, depth + 1)
+		}
+	}
+	return out
+}
+
+/**
+ * Cut the long strings in a copy of `input` until `overBy` (tokens above the cap) is zero or less.
+ * Every string longer than one shared limit is cut to that limit, and the limit is the highest one
+ * that fits, so two copies of the same text (the text and structured channels) lose the same amount.
+ * A cut string keeps its head and ends with a marker that says how much was left out. When even the
+ * lowest limit does not fit, the caller ships what is left.
+ */
+function shrinkLongStrings<T>(input: T, overBy: (value: T) => number): { value: T; cuts: Cut[] } {
+	const value = structuredClone(input)
+	const leaves = collectStringLeaves(value, '', [])
+	const apply = (limit: number) => {
+		for (const leaf of leaves) {
+			let keep = Math.min(leaf.head.length, limit)
+			const last = leaf.head.charCodeAt(keep - 1)
+			if (keep < leaf.head.length && last >= 0xd800 && last <= 0xdbff) keep--
+			leaf.kept = keep
+			leaf.holder[leaf.key] =
+				keep >= leaf.head.length
+					? leaf.head
+					: `${leaf.head.slice(0, keep)}… [${leaf.head.length - keep} more characters cut]`
+		}
+	}
+	const longest = leaves.reduce((max, leaf) => Math.max(max, leaf.head.length), 0)
+	let lo = MIN_KEPT_CHARS
+	let hi = longest
+	apply(lo)
+	if (overBy(value) <= 0) {
+		while (lo < hi) {
+			const mid = Math.ceil((lo + hi) / 2)
+			apply(mid)
+			if (overBy(value) <= 0) lo = mid
+			else hi = mid - 1
+		}
+		apply(lo)
+	}
+	const cuts = leaves
+		.filter((l) => l.kept < l.head.length)
+		.map((l) => ({ path: l.path, shown: l.kept, total: l.head.length }))
+	return { value, cuts }
+}
+
+function describeCuts(cuts: Cut[]): string {
+	const shown = cuts.slice(0, 5).map((c) => `${c.path} (${c.shown} of ${c.total} characters)`)
+	const more = cuts.length > 5 ? ` and ${cuts.length - 5} more` : ''
+	return `Long text was cut: ${shown.join(', ')}${more}.`
+}
+
+function firstTextBlock(content: unknown): { index: number; text: string } | undefined {
+	if (!Array.isArray(content)) return undefined
+	const index = content.findIndex(
+		(b) =>
+			b &&
+			typeof b === 'object' &&
+			(b as { type?: unknown }).type === 'text' &&
+			typeof (b as { text?: unknown }).text === 'string',
+	)
+	return index < 0 ? undefined : { index, text: (content[index] as { text: string }).text }
+}
+
+function applyRecordTokenCap(
+	target: RecordCapDescriptor,
+	response: unknown,
+	opts?: { maxTokens?: number; env?: NodeJS.ProcessEnv | Record<string, string | undefined> },
+): ApplyResponseTokenCapResult {
+	if (response == null || typeof response !== 'object') return { response, truncated: false }
+	const rsp = response as MutableMcpResponse
+	const block = firstTextBlock(rsp.content)
+	if (!block) return { response, truncated: false }
+	const maxTokens = opts?.maxTokens ?? getMaxResponseTokens(opts?.env)
+	if (estimateResponseTokens(response) <= maxTokens) return { response, truncated: false }
+	const parsed = parseJson(block.text)
+	if (parsed == null || typeof parsed !== 'object') return { response, truncated: false }
+
+	const isArray = Array.isArray(parsed)
+	const allRows = isArray
+		? (parsed as unknown[])
+		: target.arrayField
+			? ((parsed as Record<string, unknown>)[target.arrayField] as unknown)
+			: undefined
+	const rows = Array.isArray(allRows) ? allRows : undefined
+
+	// What the reply looks like with `keep` rows and a notice in it.
+	const assemble = (record: unknown, keep: number | undefined, notice: string | undefined) => {
+		let body: unknown = record
+		if (rows && keep !== undefined) {
+			const kept = (
+				isArray
+					? (record as unknown[])
+					: ((record as Record<string, unknown>)[target.arrayField as string] as unknown[])
+			).slice(0, keep)
+			body = isArray ? kept : { ...(record as object), [target.arrayField as string]: kept }
+		}
+		const flagged =
+			!isArray && notice ? { truncated: true, notice, ...(body as Record<string, unknown>) } : body
+		const content = [...(rsp.content as unknown[])]
+		content[block.index] = { ...(content[block.index] as object), text: JSON.stringify(flagged) }
+		if (isArray && notice)
+			content.push({ type: 'text', text: JSON.stringify({ truncated: true, notice }) })
+		return {
+			...rsp,
+			content,
+			_meta: { ...(rsp._meta ?? {}), truncated: true },
+		} as MutableMcpResponse
+	}
+	const tokens = (r: MutableMcpResponse) => estimateResponseTokens(r)
+
+	// 0. Long text outside the rows (a prompt, a config) must not push every row out. Cut it first,
+	//    down to the share of the cap it may take, then fit the rows into what is left.
+	const withRows = (rec: unknown, list: unknown[]) =>
+		isArray ? list : { ...(rec as object), [target.arrayField as string]: list }
+	const reserve = 'x'.repeat(NOTICE_RESERVE_TOKENS * 4)
+	let base: unknown = parsed
+	let cuts: Cut[] = []
+	if (rows) {
+		const fixedBudget = Math.floor(maxTokens * FIXED_PART_SHARE)
+		const fixed = withRows(parsed, [])
+		if (tokens(assemble(fixed, undefined, reserve)) > fixedBudget) {
+			const shrunk = shrinkLongStrings(
+				fixed,
+				(v) => tokens(assemble(v, undefined, reserve)) - fixedBudget,
+			)
+			base = withRows(shrunk.value, rows)
+			cuts = shrunk.cuts
+		}
+	}
+
+	// 1. Drop log lines from the tail, never below one. Binary search: each probe is a full serialize.
+	const baseRows = rows
+		? isArray
+			? (base as unknown[])
+			: ((base as Record<string, unknown>)[target.arrayField as string] as unknown[])
+		: undefined
+	let keep: number | undefined
+	if (rows && rows.length > 1) {
+		let lo = 1
+		let hi = rows.length
+		while (lo < hi) {
+			const mid = Math.ceil((lo + hi) / 2)
+			if (tokens(assemble(base, mid, reserve)) <= maxTokens) lo = mid
+			else hi = mid - 1
+		}
+		keep = lo < rows.length ? lo : undefined
+	}
+	let record: unknown = base
+	if (baseRows && keep !== undefined) record = withRows(base, baseRows.slice(0, keep))
+
+	// 2. A record still over the cap (one huge line, a long prompt, file text) has its longest strings cut.
+	if (tokens(assemble(record, undefined, reserve)) > maxTokens) {
+		const shrunk = shrinkLongStrings(
+			record,
+			(v) => tokens(assemble(v, undefined, reserve)) - maxTokens,
+		)
+		record = shrunk.value
+		cuts = [...cuts, ...shrunk.cuts]
+	}
+	if (keep === undefined && cuts.length === 0) return { response, truncated: false }
+
+	const notes: string[] = []
+	if (rows && keep !== undefined) {
+		const lastRow = rows[keep - 1]
+		const descending =
+			rows.length > 1
+				? Number((rows[0] as { id?: unknown })?.id) > Number((rows[1] as { id?: unknown })?.id)
+				: true
+		notes.push(
+			`Showing ${keep} of ${rows.length} ${target.rowsLabel ?? 'rows'}; the last ${rows.length - keep} were left out to keep the reply small.`,
+		)
+		const resume = target.resumeHint?.({ lastRow, descending, record: parsed })
+		if (resume) notes.push(resume)
+	}
+	if (cuts.length > 0) {
+		notes.push(describeCuts(cuts))
+		const next = target.continueHint?.(record, cuts)
+		if (next) notes.push(next)
+	}
+	notes.push(target.narrowHint)
+	return { response: assemble(record, undefined, notes.join(' ')), truncated: true }
+}
+
+/**
+ * A lone row that is still over the cap after every other row was dropped: cut its longest text
+ * (an object body, a comment) in both channels and say so in the payload. Returns null when no
+ * string is long enough to cut.
+ */
+function cutOversizedRow(
+	response: MutableMcpResponse,
+	maxTokens: number,
+): MutableMcpResponse | null {
+	const block = firstTextBlock(response.content)
+	const textValue = block ? parseJson(block.text) : undefined
+	const textIsJson = textValue !== undefined
+	const bundle = { s: response.structuredContent, t: textIsJson ? textValue : block?.text }
+	const assemble = (b: typeof bundle): MutableMcpResponse => {
+		const content = Array.isArray(response.content) ? [...response.content] : response.content
+		if (block && Array.isArray(content)) {
+			content[block.index] = {
+				...(content[block.index] as object),
+				text: textIsJson ? JSON.stringify(b.t) : (b.t as string),
+			}
+		}
+		return { ...response, content, structuredContent: b.s as Record<string, unknown> }
+	}
+	const budget = Math.max(1, maxTokens - NOTICE_RESERVE_TOKENS)
+	const { value, cuts } = shrinkLongStrings(
+		bundle,
+		(b) => estimateResponseTokens(assemble(b)) - budget,
+	)
+	if (cuts.length === 0) return null
+	const fromStructured = cuts.filter((c) => c.path.startsWith('s.'))
+	const shown = describeCuts(
+		(fromStructured.length > 0 ? fromStructured : cuts).map((c) => ({
+			...c,
+			path: c.path.replace(/^(s|t)\./, ''),
+		})),
+	)
+	const structured = value.s as Record<string, unknown>
+	const earlier = typeof structured?.notice === 'string' ? structured.notice : undefined
+	const notice = `${earlier ? `${earlier} ` : ''}${shown} Ask for less of this record (for example without the events or long text blocks).`
+	value.s = { ...structured, truncated: true, notice }
+	// The text copy carries the same notice (inside the object, or in the extra block after an
+	// array), so a client that reads only the text sees what was cut as well.
+	const sync = (v: unknown) => {
+		if (
+			v &&
+			typeof v === 'object' &&
+			!Array.isArray(v) &&
+			(v as { notice?: unknown }).notice === earlier
+		) {
+			;(v as { notice?: string }).notice = notice
+		}
+	}
+	if (earlier) sync(value.t)
+	const out = assemble(value)
+	if (earlier && Array.isArray(out.content)) {
+		out.content = out.content.map((b, i) => {
+			if (
+				i === 0 ||
+				!b ||
+				typeof b !== 'object' ||
+				typeof (b as { text?: unknown }).text !== 'string'
+			)
+				return b
+			const parsed = parseJson((b as { text: string }).text)
+			if (
+				!parsed ||
+				typeof parsed !== 'object' ||
+				(parsed as { notice?: unknown }).notice !== earlier
+			)
+				return b
+			return { ...(b as object), text: JSON.stringify({ ...(parsed as object), notice }) }
+		})
+	}
+	return out
 }

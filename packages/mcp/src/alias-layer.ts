@@ -152,10 +152,18 @@ export function wrapInputSchema(
 				const named = unknown.map((key) =>
 					opts.hints?.[key] ? `${key} (use ${opts.hints[key]})` : key,
 				)
+				// A misspelt required key is the usual cause, so say which required key is missing.
+				const missing = Object.keys(shape).filter(
+					(key) =>
+						!shape[key]?.isOptional() && (args as Record<string, unknown>)[key] === undefined,
+				)
+				const missingNote = missing.length
+					? ` Missing required key${missing.length > 1 ? 's' : ''}: ${missing.join(', ')}.`
+					: ''
 				ctx.addIssue({
 					code: z.ZodIssueCode.custom,
 					message:
-						`Unrecognised argument name${unknown.length > 1 ? 's' : ''}: ${named.join(', ')}. Accepted names: ${accepted.join(', ')}. ${opts.unknownKeysSuffix ?? 'Nothing was written.'}`.trimEnd(),
+						`Unrecognised argument name${unknown.length > 1 ? 's' : ''}: ${named.join(', ')}.${missingNote} Accepted names: ${accepted.join(', ')}. ${opts.unknownKeysSuffix ?? 'Nothing was written.'}`.trimEnd(),
 				})
 			}
 		}

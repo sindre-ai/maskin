@@ -107,12 +107,16 @@ final class ComposerImagePasteHandler: NSObject, UITextPasteDelegate {
 		ComposerImagePasteOverride.apply(to: view, handler: self)
 	}
 
-	/// Hands the picture on the clipboard to `onImage`. Called from Paste in the edit menu, which iOS never prompts for.
+	/// Hands every picture on the clipboard, in order, to `onImage`. Called from Paste in the edit menu, which iOS never prompts for.
 	func pasteImageFromClipboard() {
-		guard let provider = UIPasteboard.general.itemProviders.first(where: {
+		let providers = UIPasteboard.general.itemProviders.filter {
 			$0.hasItemConformingToTypeIdentifier(UTType.image.identifier)
-		}) else { return }
-		deliver(provider)
+		}
+		guard !providers.isEmpty else { return }
+		let callback = onImage
+		Task { @MainActor in
+			for data in await ClipboardImages.load(providers).images { callback(data) }
+		}
 	}
 
 	private func deliver(_ provider: NSItemProvider) {

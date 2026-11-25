@@ -26,6 +26,7 @@ interface SettingsNavItem {
 		| '/$workspaceId/settings/keys'
 		| '/$workspaceId/settings/keychain'
 		| '/$workspaceId/settings/send-permissions'
+		| '/$workspaceId/settings/dinero-review'
 	exact?: boolean
 }
 
@@ -62,11 +63,21 @@ const sendPermissionsNavItem: SettingsNavItem = {
 	to: '/$workspaceId/settings/send-permissions',
 }
 
+// Dinero review is listed only while its flag is on, and only for an admin or owner. The route reads
+// the flag too.
+const dineroReviewNavItem: SettingsNavItem = {
+	label: 'Dinero review',
+	to: '/$workspaceId/settings/dinero-review',
+}
+
 function SettingsLayout() {
 	useDocumentTitle('Settings')
 	const { workspace, workspaceId } = useWorkspace()
 	const matchRoute = useMatchRoute()
 	const sendPermissionsEnabled = useFeatureFlag('send-permissions-screen')
+	const dineroReviewEnabled =
+		useFeatureFlag('dinero-review-screen') &&
+		(workspace?.role === 'owner' || workspace?.role === 'admin')
 	const isGeneral = !!matchRoute({ to: '/$workspaceId/settings', params: { workspaceId } })
 	const groups: { label: string; items: SettingsNavItem[] }[] = [
 		{ label: 'Workspace', items: WORKSPACE_NAV },
@@ -77,6 +88,7 @@ function SettingsLayout() {
 				...ACCESS_NAV,
 				keychainNavItem,
 				...(sendPermissionsEnabled ? [sendPermissionsNavItem] : []),
+				...(dineroReviewEnabled ? [dineroReviewNavItem] : []),
 				...(workspace?.enterprise ? [keysNavItem] : []),
 			],
 		},

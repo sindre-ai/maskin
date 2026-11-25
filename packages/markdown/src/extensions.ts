@@ -136,7 +136,8 @@ const OpenLinksOnTouch = Extension.create({
 export function buildExtensions(
 	variant: EditorVariant,
 	disallowedNodes: EditorDisallowedNode[] | undefined,
-	placeholder: string | undefined,
+	// A function is read each time the hint is drawn, so a host can change it without rebuilding.
+	placeholder: string | (() => string | undefined) | undefined,
 	extra: Extensions | undefined,
 	shortcutExtension?: Extension,
 	allowTables = false,
@@ -168,7 +169,10 @@ export function buildExtensions(
 			HTMLAttributes: { rel: 'noopener noreferrer', target: '_blank' },
 		}),
 		Placeholder.configure({
-			placeholder: placeholder ?? DEFAULT_PLACEHOLDER_BY_VARIANT[variant],
+			placeholder:
+				typeof placeholder === 'function'
+					? () => placeholder() ?? DEFAULT_PLACEHOLDER_BY_VARIANT[variant]
+					: (placeholder ?? DEFAULT_PLACEHOLDER_BY_VARIANT[variant]),
 		}),
 		// Round-trips markdown to a ProseMirror doc on load and back to markdown
 		// on save. Fenced code, GFM tables, task lists, strike all flow through.

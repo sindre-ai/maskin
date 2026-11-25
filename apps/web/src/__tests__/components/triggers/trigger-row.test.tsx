@@ -181,6 +181,21 @@ describe('describeTrigger schedules', () => {
 		)
 	})
 
+	it('puts a step or weekday range in plain words, with no raw cron text', () => {
+		vi.useFakeTimers({ now: new Date('2026-01-05T08:00:00Z') })
+		const every6 = describeTrigger({ type: 'cron', config: { expression: '0 */6 * * *' } })
+		const weekdays = describeTrigger({ type: 'cron', config: { expression: '0 8 * * 1-5' } })
+		expect(every6).toBe('Runs every 6 hours')
+		expect(weekdays).toBe('Runs Monday to Friday at 09:00')
+		expect(`${every6} ${weekdays}`).not.toMatch(/\*|\d-\d/)
+	})
+
+	it('reads "Runs on a schedule" for a schedule it cannot put into words, never the raw text', () => {
+		expect(describeTrigger({ type: 'cron', config: { expression: '*/15 9-17 * * 1-5' } })).toBe(
+			'Runs on a schedule',
+		)
+	})
+
 	it('shows a reminder in Copenhagen time whatever the browser zone is', () => {
 		vi.useFakeTimers({ now: new Date('2026-10-20T08:00:00Z') })
 		expect(

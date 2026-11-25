@@ -79,7 +79,7 @@ describe('createSentryDedupe', () => {
 	})
 
 	it('covers the top repeat errors', () => {
-		expect([...NOISY_MESSAGES]).toHaveLength(6)
+		expect([...NOISY_MESSAGES]).toHaveLength(9)
 		const { dedupe } = setup()
 		for (const message of NOISY_MESSAGES) {
 			expect(dedupe(event(message))).not.toBeNull()

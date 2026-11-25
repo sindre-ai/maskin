@@ -229,6 +229,9 @@ app.post('/', async (c) => {
 		// the helper to its sender. Only a uuid-shaped header counts, and it is
 		// still just a claim: POST /api/sessions checks it belongs to the caller.
 		maskinSessionId: session.source === 'maskin-session' ? session.id : undefined,
+		// A Maskin agent session draws no widgets, so the hero card would only be a second copy of
+		// the record in every reply. Other callers (a connector, Cursor) keep it.
+		omitHeroCard: session.source === 'maskin-session',
 		// Only a Claude connector token (mat_) needs it: the API accepts such a token solely on
 		// calls that carry this per-process secret, which keeps it usable through /mcp alone.
 		forwardMarker: apiKey.startsWith('mat_') ? getMcpForwardMarker() : undefined,

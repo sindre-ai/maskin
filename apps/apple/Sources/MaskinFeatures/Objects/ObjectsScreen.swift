@@ -138,6 +138,7 @@ public struct ObjectsScreen: View {
 				.navigationDestination(for: ObjectRoute.self) { route in
 					detail(route, onOpen: { path.append(ObjectRoute(id: $0)) }, onClose: { path.removeLast() })
 					.zoomDestination(id: route.id, in: zoom)
+					.hidesPadBar()
 				}
 		}
 	}

@@ -82,6 +82,7 @@ vi.mock('@/hooks/use-integrations', () => ({
 	// Agent access has its own tests; here it only has to render.
 	useSetAgentGrant: () => ({ mutate: vi.fn(), isPending: false }),
 	useRemoveAgentGrant: () => ({ mutate: vi.fn(), isPending: false }),
+	useRemoveChatGrant: () => ({ mutate: vi.fn(), isPending: false }),
 	useSetDefaultAgentAccess: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
@@ -618,7 +619,7 @@ describe('IntegrationsPage', () => {
 		})
 	})
 
-	describe('gmail label remains unchanged', () => {
+	describe('gmail accounts', () => {
 		const gmailProvider = {
 			name: 'gmail',
 			displayName: 'Gmail',
@@ -626,22 +627,79 @@ describe('IntegrationsPage', () => {
 			events: [{ entityType: 'gmail.message', actions: ['received'], label: 'Email' }],
 			externalIdDisplay: 'email' as const,
 		}
+		const gmailRow = (id: string, externalId: string) =>
+			buildIntegrationResponse({ id, provider: 'gmail', status: 'active', externalId })
 
-		it('shows "Connected as <email>" for Gmail when externalIdDisplay is email', async () => {
-			const integration = buildIntegrationResponse({
-				id: 'gm-1',
-				provider: 'gmail',
-				status: 'active',
-				externalId: 'user@gmail.com',
+		it('lists one connected account by its address, not as an installation', async () => {
+			const user = userEvent.setup()
+			mockUseIntegrations.mockReturnValue({
+				data: [gmailRow('gm-1', 'user@gmail.com')],
+				isLoading: false,
 			})
-			mockUseIntegrations.mockReturnValue({ data: [integration], isLoading: false })
 			mockUseProviders.mockReturnValue({ data: [gmailProvider], isLoading: false })
 
 			render(<IntegrationsPage />)
-			await expandCard('Gmail')
+			await user.click(screen.getByRole('button', { name: /Gmail · 1/ }))
 
-			expect(screen.getByText('Connected as user@gmail.com')).toBeInTheDocument()
+			expect(screen.getByText('1 connected account')).toBeInTheDocument()
+			expect(screen.getByText('user@gmail.com')).toBeInTheDocument()
 			expect(screen.queryByText(/Installation /)).not.toBeInTheDocument()
+			expect(screen.getByRole('button', { name: 'Connect another account' })).toBeInTheDocument()
+		})
+
+		it('shows every connected account by address, each with its own agent access and Disconnect', async () => {
+			const user = userEvent.setup()
+			mockUseIntegrations.mockReturnValue({
+				data: [
+					gmailRow('gm-1', 'sebastian@meshfirm.com'),
+					gmailRow('gm-2', 'krumhausen@gmail.com'),
+					gmailRow('gm-3', 'growth@vaerksted.ai'),
+				],
+				isLoading: false,
+			})
+			mockUseProviders.mockReturnValue({ data: [gmailProvider], isLoading: false })
+
+			render(<IntegrationsPage />)
+			await user.click(screen.getByRole('button', { name: /Gmail · 3/ }))
+
+			expect(screen.getByText('3 connected accounts')).toBeInTheDocument()
+			expect(screen.getByText('sebastian@meshfirm.com')).toBeInTheDocument()
+			expect(screen.getByText('krumhausen@gmail.com')).toBeInTheDocument()
+			expect(screen.getByText('growth@vaerksted.ai')).toBeInTheDocument()
+			expect(screen.getAllByRole('button', { name: 'Disconnect' })).toHaveLength(3)
+
+			const secondRow = screen.getByText('krumhausen@gmail.com').closest('div.flex') as HTMLElement
+			await user.click(within(secondRow).getByRole('button', { name: 'Disconnect' }))
+			const dialog = screen.getByRole('dialog', { name: 'Disconnect Gmail?' })
+			expect(within(dialog).getByText(/This removes krumhausen@gmail\.com\./)).toBeInTheDocument()
+			await user.click(within(dialog).getByRole('button', { name: 'Disconnect' }))
+			expect(mockDisconnect).toHaveBeenCalledWith('gm-2', expect.anything())
+		})
+
+		it('"Connect another account" starts the Google sign-in for gmail', async () => {
+			const user = userEvent.setup()
+			mockUseIntegrations.mockReturnValue({
+				data: [gmailRow('gm-1', 'user@gmail.com')],
+				isLoading: false,
+			})
+			mockUseProviders.mockReturnValue({ data: [gmailProvider], isLoading: false })
+
+			render(<IntegrationsPage />)
+			await user.click(screen.getByRole('button', { name: /Gmail · 1/ }))
+			await user.click(screen.getByRole('button', { name: 'Connect another account' }))
+
+			expect(mockConnect).toHaveBeenCalledWith({ provider: 'gmail' })
+		})
+
+		it('keeps the plain Connect button while no account is connected', async () => {
+			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+			mockUseProviders.mockReturnValue({ data: [gmailProvider], isLoading: false })
+
+			render(<IntegrationsPage />)
+			await openDiscover()
+
+			expect(screen.queryByText(/Gmail · /)).not.toBeInTheDocument()
+			expect(screen.getByRole('button', { name: 'Connect' })).toBeInTheDocument()
 		})
 	})
 
@@ -1109,6 +1167,26 @@ describe('IntegrationsPage tabs, search and categories', () => {
 		await openDiscover()
 		await userEvent.click(screen.getByRole('button', { name: 'Sales & payments' }))
 		expect(screen.getByText('No integration matches that filter')).toBeInTheDocument()
+	})
+
+	it('files the bookkeeping providers under the Accounting chip, not Sales & payments', async () => {
+		mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+		mockUseProviders.mockReturnValue({
+			data: [
+				{ name: 'numina', displayName: 'Numina', authType: 'api_key', events: [] },
+				{ name: 'dinero', displayName: 'Dinero', authType: 'oauth2', events: [] },
+				{ name: 'uniconta', displayName: 'Uniconta', authType: 'api_key', events: [] },
+				{ name: 'stripe', displayName: 'Stripe', authType: 'oauth2', events: [] },
+			],
+			isLoading: false,
+		})
+		render(<IntegrationsPage />)
+		await openDiscover()
+		await userEvent.click(screen.getByRole('button', { name: 'Accounting' }))
+		expect(screen.getByText('Numina')).toBeInTheDocument()
+		expect(screen.getByText('Dinero')).toBeInTheDocument()
+		expect(screen.getByText('Uniconta')).toBeInTheDocument()
+		expect(screen.queryByText('Stripe')).not.toBeInTheDocument()
 	})
 
 	it('still says everything is connected when nothing is filtered', async () => {

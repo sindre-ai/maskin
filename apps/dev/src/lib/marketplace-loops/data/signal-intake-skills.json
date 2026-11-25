@@ -1,0 +1,11 @@
+{
+	"d30f02d1-5782-4846-93b4-253ebfcc6935": {
+		"id": "d30f02d1-5782-4846-93b4-253ebfcc6935",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "source-health",
+		"description": "How the Signal Listener treats sources it cannot read: record them as unreachable, never as quiet, and say so at the top of the summary. Use on every sweep.",
+		"content": "---\nname: source-health\ndescription: How the Signal Listener treats sources it cannot read. Use on every sweep, before the summary comment.\n---\n\n# Source health\n\nAn unreadable source is not a quiet source. Follow these five rules on every sweep.\n\n1. If a search or fetch returns 401, 402, 403, 429, a block or a refusal, record it as source unreachable with the source name and the error.\n2. Never treat an unreadable source as a quiet one. A sweep that files nothing is only a good sweep if every source was readable.\n3. If any source was unreachable, post the summary comment anyway and start it with SOURCE UNREACHABLE: source, error, lanes affected.\n4. Do not retry a blocked source more than once.\n5. Some sites cannot be read at all. Say so in the comment rather than skipping them silently.\n\nA run where every source was unreachable is a failed run. Say so. Do not summarise it as quiet.\n",
+		"isValid": true,
+		"attachedActorIds": ["24a7ebfe-6054-4c73-8ba7-53e34b5881d9"]
+	}
+}

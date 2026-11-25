@@ -9,7 +9,7 @@ const { default: workspacesRoutes } = await import('../../routes/workspaces')
 
 describe('Workspaces Routes', () => {
 	describe('POST /api/workspaces', () => {
-		// Each of the 6 default agents does one actor insert + one
+		// Each of the 5 default agents does one actor insert + one
 		// workspaceMembers insert inside the create transaction (seedDefaultAgentActors);
 		// mockResults.insert is the static fallback once insertQueue is exhausted, so
 		// unconfigured agent/member inserts still resolve to a row with an id.
@@ -38,8 +38,8 @@ describe('Workspaces Routes', () => {
 			const body = await res.json()
 			expect(body.id).toBe(ws.id)
 			expect(body.name).toBe(ws.name)
-			// workspace + owner-member + 6 default agents × (actor + member) = 14.
-			expect(calls.inserts).toHaveLength(14)
+			// workspace + owner-member + 5 default agents × (actor + member) = 12.
+			expect(calls.inserts).toHaveLength(12)
 			expect(calls.inserts[1]).toMatchObject({ workspaceId: ws.id, role: 'owner' })
 		})
 
@@ -631,12 +631,13 @@ describe('Workspaces Routes', () => {
 			expect(body.onboardingEnabled).toBe(true)
 		})
 
-		it('returns 403 when caller is not the workspace owner', async () => {
+		it('returns 403 when caller is a member but not the workspace owner', async () => {
 			const ws = buildWorkspace()
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
 			mockResults.selectQueue = [
 				[ws], // workspace exists
-				[], // isWorkspaceOwner → no owner row (caller is member, not owner)
+				[], // isWorkspaceOwner → no owner row
+				[{ actorId: 'test-actor-id' }], // isWorkspaceMember → member row found
 			]
 
 			const res = await app.request(
@@ -646,6 +647,24 @@ describe('Workspaces Routes', () => {
 			expect(res.status).toBe(403)
 			const body = await res.json()
 			expect(body.error.code).toBe('FORBIDDEN')
+		})
+
+		it('returns 404, like a missing workspace, when caller is not a member', async () => {
+			const ws = buildWorkspace()
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [
+				[ws], // workspace exists
+				[], // isWorkspaceOwner → no owner row
+				[], // isWorkspaceMember → no member row
+			]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { onboarding_enabled: true }),
+			)
+
+			expect(res.status).toBe(404)
+			const body = await res.json()
+			expect(body.error.code).toBe('NOT_FOUND')
 		})
 
 		it('returns 404 when workspace does not exist', async () => {

@@ -185,6 +185,8 @@ services:
       # defaults to the web app origin. See docs/reference/mcp-oauth.md.
       MASKIN_MCP_OAUTH_ENABLED: ${MASKIN_MCP_OAUTH_ENABLED:-}
       MASKIN_OAUTH_ISSUER: ${MASKIN_OAUTH_ISSUER:-}
+      # Domain proof token for the ChatGPT app listing, served at /.well-known/openai-apps-challenge.
+      OPENAI_APPS_CHALLENGE: ${OPENAI_APPS_CHALLENGE:-}
     depends_on:
       postgres:
         condition: service_healthy

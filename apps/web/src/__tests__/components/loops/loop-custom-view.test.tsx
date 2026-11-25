@@ -606,6 +606,118 @@ describe('LoopCustomView', () => {
 				})
 				expect(latestFrame(container)).not.toBe(first)
 			})
+
+			/** Every frame that was ever in the box, so a swap storm shows as a long list. */
+			function watchFrames(container: HTMLElement) {
+				const seen = new Set<Element>()
+				let most = 0
+				return {
+					sample() {
+						const frames = container.querySelectorAll('iframe')
+						for (const f of frames) seen.add(f)
+						most = Math.max(most, frames.length)
+					},
+					get distinct() {
+						return seen.size
+					},
+					get most() {
+						return most
+					},
+				}
+			}
+
+			it('replaces the frame at most once per 30 seconds however often events change the answer', async () => {
+				const { container } = await withAnswer({})
+				let count = 3
+				vi.mocked(api.data.query).mockImplementation(async () => {
+					count += 1
+					return answer({ total: { count, value: count } })
+				})
+				const frames = watchFrames(container)
+				frames.sample()
+
+				// A busy workspace: an event every 2 seconds for a minute, each one changing the number.
+				let asked = latestFrame(container)
+				for (let t = 0; t < 60; t += 2) {
+					event()
+					await settle()
+					frames.sample()
+					// A replacement frame asks for its numbers as soon as it loads, like the first one did.
+					if (latestFrame(container) !== asked) {
+						asked = latestFrame(container)
+						await ask(container)
+					}
+				}
+
+				// The first frame, then at most the replacements at about 2s, 32s and 62s.
+				expect(frames.distinct).toBeLessThanOrEqual(3)
+				// Never more than the one on screen and the one loading behind it.
+				expect(frames.most).toBeLessThanOrEqual(2)
+			})
+
+			it('holds a replacement back until the wait is over, then shows the newest answer', async () => {
+				const { container } = await withAnswer({})
+				let count = 3
+				vi.mocked(api.data.query).mockImplementation(async () => {
+					count += 1
+					return answer({ total: { count, value: count } })
+				})
+				event()
+				await settle()
+				const second = latestFrame(container)
+
+				event()
+				await settle()
+				expect(latestFrame(container)).toBe(second)
+
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(30_000)
+				})
+				expect(latestFrame(container)).not.toBe(second)
+			})
+
+			it('stops following a view whose height grows with every report', async () => {
+				const { container } = await withAnswer({})
+				const { view, frame } = viewWindowOf(container)
+
+				// A view sized from the frame's own height is told a taller height after each report.
+				let h = 300
+				for (let i = 0; i < 400; i += 1) {
+					h += 16
+					await act(async () => {
+						window.dispatchEvent(
+							new MessageEvent('message', {
+								data: { type: VIEWER_DOC_SIZE_MESSAGE, h },
+								source: view as unknown as Window,
+							}),
+						)
+					})
+				}
+
+				const reached = Number.parseInt(frame.style.height, 10)
+				expect(reached).toBeLessThan(300 + 16 * 101)
+				expect(reached).toBeGreaterThan(300)
+			})
+
+			it('does not reload in a loop when the server keeps saying the answer changes right away', async () => {
+				vi.mocked(api.data.nextChange).mockResolvedValue({ in_ms: 0 })
+				vi.useFakeTimers()
+				const { container } = renderView()
+				const frames = watchFrames(container)
+				await act(async () => {})
+				frames.sample()
+
+				for (let t = 0; t < 60; t += 1) {
+					await act(async () => {
+						await vi.advanceTimersByTimeAsync(1_000)
+					})
+					frames.sample()
+				}
+
+				// Without the wait this is a new frame every second or two.
+				expect(frames.distinct).toBeLessThanOrEqual(4)
+				expect(frames.most).toBeLessThanOrEqual(2)
+			})
 		})
 
 		it('logs a failed next-change lookup and looks again instead of going without a timer', async () => {

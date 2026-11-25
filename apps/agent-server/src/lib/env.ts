@@ -88,6 +88,13 @@ const envSchema = z.object({
 	// override only when deploying on a different hypervisor or custom network setup.
 	AGENT_SERVER_INTERNAL_HOST: z.string().optional(),
 	AGENT_SESSION_ROOT: z.string().optional().default('/agent/sessions'),
+	// /health goes red (503 with a reason) when free space on the session directory's
+	// disk drops below EITHER floor, so apps/dev stops sending new starts here. 0
+	// turns that floor off. Defaults: 5 percent of the disk, 5 GB.
+	HEALTH_MIN_FREE_PERCENT: z.coerce.number().min(0).max(100).optional().default(5),
+	HEALTH_MIN_FREE_GB: z.coerce.number().min(0).optional().default(5),
+	// Longest /health waits for the small file-storage read before calling it down.
+	HEALTH_STORAGE_TIMEOUT_MS: z.coerce.number().int().min(100).optional().default(3000),
 	// Hard cap on a session microVM's lifetime, passed to `msb create --max-duration`.
 	// A `create`d sandbox is persistent: microsandbox does NOT power it off when its
 	// entrypoint exits (the guest's PID 1 is msb's agentd, not agent-run.sh). The

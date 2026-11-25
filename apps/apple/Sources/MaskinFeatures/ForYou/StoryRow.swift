@@ -11,6 +11,8 @@ struct StoryRow: View {
 	let open: (StoryCard) -> Void
 	/// Card size: 124 x 24 radius on iPhone; the wide For you feed passes its own.
 	var metrics = StoryCardMetrics.compact
+	/// Fades the last 36 pt at the right edge while more cards lie beyond it (the iPad's For you).
+	var fadesEdge = false
 
 	/// For you shows unseen cards first; a loop's own page keeps its newest-first order.
 	private var cards: [StoryCard] { loopID.map { stories.cards(forLoop: $0) } ?? stories.rowCards }
@@ -27,9 +29,60 @@ struct StoryRow: View {
 			}
 			.scrollTargetBehavior(.viewAligned)
 			.scrollClipDisabled()
+			.modifier(StoryEdgeFade(isOn: fadesEdge))
 			.accessibilityElement(children: .contain)
 			.accessibilityLabel("Briefings")
 		}
+	}
+}
+
+extension StoryRow {
+	/// How far the last card's edge fades into the page.
+	static let fadeWidth: CGFloat = 36
+
+	/// Whether the row can still scroll right: the content reaches past the visible edge.
+	static func hasMore(offset: CGFloat, visible: CGFloat, content: CGFloat) -> Bool {
+		offset + visible < content - 1
+	}
+}
+
+/// The right-hand edge of the story row fades to clear, so a cut-off card reads as scrollable. The
+/// fade goes when the row is scrolled to its end (iOS 18 and later; before that it stays on).
+private struct StoryEdgeFade: ViewModifier {
+	let isOn: Bool
+	@State private var hasMore = true
+
+	@ViewBuilder func body(content: Content) -> some View {
+		if !isOn {
+			content
+		} else if #available(iOS 18, macOS 15, *) {
+			content
+				.onScrollGeometryChange(for: Bool.self) { geometry in
+					StoryRow.hasMore(
+						offset: geometry.contentOffset.x, visible: geometry.containerSize.width, content: geometry.contentSize.width)
+				} action: { _, more in hasMore = more }
+				.mask { EdgeFadeMask(visible: hasMore) }
+		} else {
+			content.mask { EdgeFadeMask(visible: true) }
+		}
+	}
+}
+
+/// A mask that is solid except for the right-hand 36 pt, which fades to clear while `visible`.
+private struct EdgeFadeMask: View {
+	let visible: Bool
+
+	var body: some View {
+		GeometryReader { proxy in
+			HStack(spacing: 0) {
+				Rectangle().fill(Color.black)
+				LinearGradient(colors: [.black, visible ? .clear : .black], startPoint: .leading, endPoint: .trailing)
+					.frame(width: min(StoryRow.fadeWidth, proxy.size.width))
+			}
+		}
+		// A card's shadow must not be cut off above and below.
+		.padding(.vertical, -MaskinSpace.s14)
+		.animation(MaskinMotion.fade, value: visible)
 	}
 }
 

@@ -7,6 +7,10 @@
 //   BUILD_NUMBER    the build the workflow just uploaded. Empty on a manual run: the script then
 //                   takes the newest processed build of that version.
 //   DRY_RUN         "true" reads from App Store Connect and prints what it would do, creates nothing.
+//   SCHEDULED       "true" on the daily scheduled run: when App Store Connect has no build of the
+//                   version at all, the run ends quietly instead of waiting 45 minutes and failing.
+//                   It also ends quietly for a version Apple rejected (or that was pulled from
+//                   review), so a new build of it is never sent again by the schedule.
 //   RELEASE_NOTES_PATH  defaults to apps/apple/release-notes.md. First line "# <version>", the
 //                   what's-new text below it. A file for another version fails the step.
 //
@@ -53,6 +57,15 @@ const EDITABLE = new Set([
 	'METADATA_REJECTED',
 	'INVALID_BINARY',
 ])
+// A version Apple turned down, or one someone pulled out of review. The daily scheduled run leaves
+// these alone: attaching a newer build (for example a TestFlight-only upload) and sending it again
+// is a person's call, made by starting the workflow by hand with submit_version.
+const HELD_FOR_PERSON = new Set([
+	'REJECTED',
+	'METADATA_REJECTED',
+	'INVALID_BINARY',
+	'DEVELOPER_REJECTED',
+])
 const ALREADY_SENT = new Set([
 	'WAITING_FOR_REVIEW',
 	'IN_REVIEW',
@@ -75,6 +88,7 @@ const {
 	GITHUB_STEP_SUMMARY = '',
 } = process.env
 const DRY_RUN = process.env.DRY_RUN === 'true'
+const SCHEDULED = process.env.SCHEDULED === 'true'
 
 const plan = []
 const problems = []
@@ -426,6 +440,19 @@ async function main() {
 		`${DRY_RUN ? 'DRY RUN. ' : ''}Version ${SUBMIT_VERSION}, ${BUILD_NUMBER ? `build ${BUILD_NUMBER}` : 'newest processed build'}, release type ${RELEASE_TYPE}.`,
 	)
 
+	const app = await findApp()
+	console.log(`App: ${app.attributes.name} (${app.attributes.bundleId}), id ${app.id}.`)
+
+	// The daily run meets versions nobody has built yet (a bumped number before its merge uploads).
+	// Nothing to send, so end green without waiting for a build that is not coming.
+	if (SCHEDULED) {
+		const builds = await listBuilds(app.id)
+		if (builds.length === 0) {
+			console.log(`Nothing to do: App Store Connect has no build of ${SUBMIT_VERSION} yet.`)
+			return
+		}
+	}
+
 	let notes = ''
 	try {
 		notes = readReleaseNotes()
@@ -436,13 +463,16 @@ async function main() {
 		console.log(`WOULD FAIL: ${error.message}`)
 	}
 
-	const app = await findApp()
-	console.log(`App: ${app.attributes.name} (${app.attributes.bundleId}), id ${app.id}.`)
-
 	let version = await findVersion(app.id)
 	if (version) {
 		const state = stateOf(version)
 		console.log(`App Store version ${SUBMIT_VERSION} exists (${version.id}), state ${state}.`)
+		if (SCHEDULED && HELD_FOR_PERSON.has(state)) {
+			console.log(
+				`Nothing to do: ${SUBMIT_VERSION} is ${state}. The daily run does not send it again. To send it, run the workflow by hand with submit_version ${SUBMIT_VERSION}.`,
+			)
+			return
+		}
 		if (ALREADY_SENT.has(state)) {
 			console.log(`Nothing to do: ${SUBMIT_VERSION} is already past submission (${state}).`)
 			return

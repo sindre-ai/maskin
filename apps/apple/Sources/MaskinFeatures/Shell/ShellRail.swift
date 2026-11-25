@@ -84,7 +84,7 @@ private struct ShellRailItem: View {
 	static let height: CGFloat = 56
 }
 
-private struct RailBadge: View {
+struct RailBadge: View {
 	let badge: TabBadge
 
 	var body: some View {
@@ -106,18 +106,34 @@ private struct RailBadge: View {
 
 /// The avatar at the foot of the rail. It opens a small menu with the name and workspace, Switch
 /// workspace and Profile. The menu closes first, then the sheet opens, so the two do not fight.
-private struct ShellRailAccount: View {
+struct ShellRailAccount: View {
 	let environment: AppEnvironment
 	let runtime: AppRuntime
 	let switchWorkspace: () -> Void
+	/// The wide sidebar shows the person's name beside the avatar.
+	var showsName = false
 	@State private var showMenu = false
+
+	init(environment: AppEnvironment, runtime: AppRuntime, switchWorkspace: @escaping () -> Void, showsName: Bool = false) {
+		self.environment = environment
+		self.runtime = runtime
+		self.switchWorkspace = switchWorkspace
+		self.showsName = showsName
+	}
 
 	var body: some View {
 		if let session = environment.auth.session {
 			Button { showMenu = true } label: {
-				ShellNavAvatar(name: session.name, actorID: session.actorId)
-					.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
-					.contentShape(Circle())
+				HStack(spacing: MaskinSpace.s5) {
+					ShellNavAvatar(name: session.name, actorID: session.actorId)
+						.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
+					if showsName {
+						Text(session.name).maskinText(.body).foregroundStyle(MaskinColor.ink).lineLimit(1)
+						Spacer(minLength: 0)
+					}
+				}
+				.frame(maxWidth: showsName ? .infinity : nil, alignment: .leading)
+				.contentShape(Rectangle())
 			}
 			.buttonStyle(.plain)
 			.accessibilityLabel("Account")

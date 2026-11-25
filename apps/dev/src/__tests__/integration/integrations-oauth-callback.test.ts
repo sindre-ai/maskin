@@ -574,3 +574,89 @@ describe('GET /api/integrations/:provider/callback — integration_connected emi
 		expect(trackIntegrationConnected).not.toHaveBeenCalled()
 	})
 })
+
+// A workspace can connect several Gmail accounts. The first keeps the workspace default, so every
+// agent reads it as before. Each later one starts with no agent access: a person grants it, because
+// it is usually a personal inbox and the first account's open default must not carry over.
+describe('GET /api/integrations/gmail/callback — extra accounts', () => {
+	async function connect(workspaceId: string, actorId: string, email: string) {
+		vi.mocked(getProvider).mockReturnValue({
+			config: {
+				name: 'gmail',
+				displayName: 'Gmail',
+				auth: {
+					type: 'oauth2',
+					config: {
+						authorizationUrl: 'http://example.test/auth',
+						tokenUrl: 'http://example.test/token',
+						scopes: [],
+						clientIdEnv: 'TEST_CLIENT_ID',
+						clientSecretEnv: 'TEST_CLIENT_SECRET',
+					},
+				},
+			},
+			customAuth: {
+				getInstallUrl: () => 'http://example.test/auth',
+				handleCallback: async () => ({ accessToken: `token-${email}` }),
+				getAccessToken: async () => `token-${email}`,
+			},
+			resolveExternalId: async () => email,
+		} satisfies ResolvedProvider)
+		const nonce = randomBytes(16).toString('hex')
+		await db.insert(integrations).values({
+			workspaceId,
+			provider: 'gmail',
+			status: 'pending',
+			externalId: nonce,
+			credentials: '',
+			createdBy: actorId,
+		})
+		const state = encrypt(JSON.stringify({ workspaceId, actorId, ts: Date.now(), nonce }))
+		const res = await buildApp().request(
+			`/api/integrations/gmail/callback?state=${encodeURIComponent(state)}&code=irrelevant`,
+			{ headers: { cookie: `maskin_oauth_nonce_gmail=${nonce}` } },
+		)
+		expect(res.status).toBe(302)
+		const [row] = await db
+			.select()
+			.from(integrations)
+			.where(and(eq(integrations.workspaceId, workspaceId), eq(integrations.externalId, email)))
+		if (!row) throw new Error(`no integration for ${email}`)
+		return row
+	}
+
+	it('keeps the default for the first account and turns it off for a second and third', async () => {
+		const actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+
+		const first = await connect(ws.id, actorId, 'one@example.com')
+		const second = await connect(ws.id, actorId, 'two@example.com')
+		const third = await connect(ws.id, actorId, 'three@example.com')
+
+		expect(first.status).toBe('active')
+		expect(first.defaultAgentAccess).toBe('read')
+		expect(second.status).toBe('active')
+		expect(second.defaultAgentAccess).toBe('none')
+		expect(third.defaultAgentAccess).toBe('none')
+	})
+
+	it('leaves the setting alone when the first account reconnects', async () => {
+		const actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+
+		await connect(ws.id, actorId, 'one@example.com')
+		await connect(ws.id, actorId, 'two@example.com')
+		// A person changed the second account's default; reconnecting it must not reset that.
+		await db
+			.update(integrations)
+			.set({ defaultAgentAccess: 'read' })
+			.where(
+				and(eq(integrations.workspaceId, ws.id), eq(integrations.externalId, 'two@example.com')),
+			)
+		const again = await connect(ws.id, actorId, 'two@example.com')
+		const reconnectedFirst = await connect(ws.id, actorId, 'one@example.com')
+
+		expect(again.defaultAgentAccess).toBe('read')
+		expect(reconnectedFirst.defaultAgentAccess).toBe('read')
+	})
+})

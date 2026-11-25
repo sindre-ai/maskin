@@ -69,6 +69,7 @@ private struct LoopsContainer: View {
 					sidebar
 						.navigationDestination(item: $loopSelection) { id in
 							pushedDetail(id)
+								.hidesPadBar()
 						}
 				}
 			} else {

@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import oauthClientMetadataRoutes from '../../routes/oauth-client-metadata'
 
-const PATH = '/oauth/client-metadata/vercel.json'
+describe.each(['vercel', 'shopify'])('%s client metadata document', (provider) => {
+	const PATH = `/oauth/client-metadata/${provider}.json`
 
-describe('Vercel client metadata document', () => {
 	beforeEach(() => {
 		vi.stubEnv('CORS_ORIGIN', 'https://app.example.com')
 	})
@@ -21,7 +21,7 @@ describe('Vercel client metadata document', () => {
 			client_id: `https://app.example.com${PATH}`,
 			client_name: 'Maskin',
 			client_uri: 'https://app.example.com',
-			redirect_uris: ['https://app.example.com/api/integrations/vercel/callback'],
+			redirect_uris: [`https://app.example.com/api/integrations/${provider}/callback`],
 			grant_types: ['authorization_code', 'refresh_token'],
 			response_types: ['code'],
 			token_endpoint_auth_method: 'none',
@@ -34,6 +34,8 @@ describe('Vercel client metadata document', () => {
 			await oauthClientMetadataRoutes.request(`https://test.example.com${PATH}`)
 		).json()
 		expect(doc.client_id).toBe(`https://test.example.com${PATH}`)
-		expect(doc.redirect_uris).toEqual(['https://test.example.com/api/integrations/vercel/callback'])
+		expect(doc.redirect_uris).toEqual([
+			`https://test.example.com/api/integrations/${provider}/callback`,
+		])
 	})
 })

@@ -307,7 +307,10 @@ test.describe('Chat message box with formatting', () => {
 				async () => (await lastSent(account.api, conversation.id, account.workspaceId))?.content,
 			)
 			.toContain('https://example.com/docs')
-		const link = page.getByRole('link', { name: 'https://example.com/docs' })
+		// The sent message, not the box: until the send settles the box still holds the pasted link.
+		const link = page
+			.getByTestId('thread-messages')
+			.getByRole('link', { name: 'https://example.com/docs' })
 		await expect(link).toBeVisible()
 		await expect(link).toHaveAttribute('href', 'https://example.com/docs')
 		await expect(page.getByText('<https://example.com/docs>')).toHaveCount(0)

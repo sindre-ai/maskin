@@ -16,6 +16,7 @@ import {
 	updateCommentSchema,
 	validateDecisionProse,
 } from '@maskin/shared'
+import type { StorageProvider } from '@maskin/storage'
 import { and, asc, desc, eq, gt, gte, inArray, lt, lte, or, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import {
@@ -56,6 +57,9 @@ import { serializeArray } from '../lib/serialize'
 import { canReadSession } from '../lib/session-access'
 import { applyStatusTap, prepareStatusActions, resolveStatusTap } from '../lib/status-actions'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
+import { decideYoutubeAction } from '../lib/youtube/actions'
+import { resolveYoutubeActionTap } from '../lib/youtube/approval'
+import { scheduleYoutubeExecution } from '../lib/youtube/executor'
 import {
 	type CommentRoutingPlan,
 	deliverRoutedComment,
@@ -78,6 +82,7 @@ type Env = {
 		notifyBridge: PgNotifyBridge
 		sessionManager: SessionManager
 		maskinSessionId?: string
+		storageProvider?: StorageProvider
 	}
 }
 
@@ -526,6 +531,19 @@ app.openapi(createCommentRoute, (async (c) => {
 		: null
 	const doneWhenDraft = decision?.done_when
 
+	// A person tapping Approve or Reject on a YouTube change card decides that stored action as
+	// themselves, in the same transaction as their reply. Only a person's own client counts, as
+	// above: an agent replying with the same word decides nothing.
+	const youtubeTap = mayApprove
+		? await resolveYoutubeActionTap(db, {
+				workspaceId,
+				entityId: body.entity_id,
+				parentEventId: body.parent_event_id,
+				content: body.content,
+			})
+		: null
+	let youtubeDecision: Awaited<ReturnType<typeof decideYoutubeAction>> | undefined
+
 	const post = (writer: typeof db) =>
 		postComment(writer, {
 			workspaceId,
@@ -542,7 +560,7 @@ app.openapi(createCommentRoute, (async (c) => {
 			approvedSendHash,
 		})
 	const delivery = routing?.delivery
-	let result: Awaited<ReturnType<typeof post>>
+	let result: Awaited<ReturnType<typeof post>> | null
 	try {
 		result =
 			replyApprovals.length === 0 &&
@@ -551,6 +569,7 @@ app.openapi(createCommentRoute, (async (c) => {
 			!deletionTap &&
 			!flowCallTap &&
 			!doneWhenTap &&
+			!youtubeTap &&
 			!doneWhenDraft
 				? await post(db)
 				: await db.transaction(async (tx) => {
@@ -574,6 +593,18 @@ app.openapi(createCommentRoute, (async (c) => {
 								actorId,
 								cardEventId: doneWhenTap.cardEventId,
 							})
+						}
+						if (youtubeTap) {
+							youtubeDecision = await decideYoutubeAction(tx, {
+								workspaceId,
+								actionId: youtubeTap.actionId,
+								actor: { id: actorId, type: c.get('actorType') },
+								decision: youtubeTap.decision,
+								expectedHash: youtubeTap.payloadHash,
+							})
+							// A refused decision posts no reply, so the card stays and the person is told why.
+							// The transaction still commits, so the refusal's audit row is kept.
+							if (!youtubeDecision.ok) return null
 						}
 						if (statusTap) {
 							statusAction = await applyStatusTap(tx, {
@@ -625,7 +656,17 @@ app.openapi(createCommentRoute, (async (c) => {
 		}
 		throw err
 	}
+	if (!result) {
+		const refusal = youtubeDecision && !youtubeDecision.ok ? youtubeDecision.reason : 'not_pending'
+		const refused = YOUTUBE_TAP_REFUSALS[refusal]
+		return c.json(createApiError(refused.code, refused.message), refused.status as never)
+	}
 	const { comment, unresolvedMentions } = result
+
+	// The approval has committed: run the approved change from the server, once.
+	if (youtubeTap && youtubeDecision?.ok && youtubeDecision.decision === 'approve') {
+		scheduleYoutubeExecution(db, youtubeTap.actionId, c.get('storageProvider'))
+	}
 
 	// Auto-subscribe the thread OP when this is a reply, so they're notified of
 	// all follow-up messages — Slack participant model. Skip when the OP is the
@@ -774,6 +815,22 @@ app.openapi(createCommentRoute, (async (c) => {
 
 	return c.json(serialized, 201)
 }) as RouteHandler<typeof createCommentRoute, Env>)
+
+const YOUTUBE_TAP_REFUSALS = {
+	not_found: { status: 404, code: 'NOT_FOUND', message: 'That YouTube change no longer exists.' },
+	agent_actor: { status: 403, code: 'FORBIDDEN', message: 'Only a person can decide this.' },
+	not_pending: {
+		status: 409,
+		code: 'CONFLICT',
+		message: 'That YouTube change has already been decided.',
+	},
+	expired: { status: 409, code: 'CONFLICT', message: 'That YouTube change has expired.' },
+	payload_changed: {
+		status: 409,
+		code: 'CONFLICT',
+		message: 'That YouTube change no longer matches what the card showed, so it was not approved.',
+	},
+} as const
 
 // PATCH /api/events/:id - Edit the text of a comment you wrote
 const updateCommentRoute = createRoute({
