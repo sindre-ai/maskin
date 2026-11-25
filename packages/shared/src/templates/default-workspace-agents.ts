@@ -576,6 +576,76 @@ After any bet reaches \`define\` or later, do not re-fire this step.
 - Firing Step 6 more than once per workspace. Check the gate before posting.`,
 }
 
+/**
+ * What the Chief of Staff does when a person connects an integration (requested by
+ * Magnus, 25 Nov 2026). Seeded into every workspace's Chief of Staff. Existing workspaces get it
+ * from the boot sync in apps/dev/src/lib/seeded-skill-boot.ts, which also carries later edits to
+ * this text into copies nobody has changed.
+ */
+export const INTEGRATION_CONNECT_CHECKLIST_SKILL: SeedSkill = {
+	name: 'integration-connect-checklist',
+	content: `---
+name: integration-connect-checklist
+description: What the Chief of Staff does when a person connects an integration. Work out on its own where the tool fits (flows, agents, open work), look inside the tool for quick wins, then come back to the person once with ranked suggestions. Make changes only after the person says what they want. Load when an integration is connected, or when asked to review an existing connection. Requested by Magnus, 25 Nov 2026, replaces the 24 Nov draft. Runs on every connect.
+---
+
+# Integration connect checklist
+
+Why: a connected tool nobody uses is wasted. When a person connects one, the Chief of Staff does the homework quietly, then comes back with a short list of concrete suggestions. The person picks. Then it acts.
+
+Works with strategic-context (read the workspace before asking) and onboarding-checklist-on-install (open actions become tasks).
+
+## How it runs
+
+- Start: a person connects an integration. You get "[Person] connected [tool] with [read / read and write] access".
+- Stay quiet until you have something worth suggesting. No hello, no "I'm looking into it", no check-in chat first.
+- Do steps 1 to 3 on your own. Read only; change nothing yet.
+- Step 4 is the first message the person sees. Step 5 starts only after they answer.
+- Run it on every connect, including a second account of the same tool. Before step 4, look at earlier suggestions for this tool (the parent task "<Tool> connect review" and the chat). Do not repeat a suggestion the person already got or answered. If nothing is new, say so in one line and stop.
+- Read only what the granted access allows. Do not copy private personal content into shared pages.
+- If the first read of the tool fails or returns nothing, that is your first suggestion: say it plainly and say what you need to fix it.
+
+## The checklist
+
+1. **Search the workspace for where the tool fits.** Judge by what the tool is for, not by whether anything names it. Nothing in the workspace will mention it. A product analytics tool fits a product analytics flow. A meeting recorder fits meeting, sales and feedback flows. Look at:
+   - Flows whose job the tool would help, even though no step names it.
+   - Agents whose job the tool would help, even though none names it (an analytics tool fits a product analytics agent).
+   - Targets with no real data source ("Gap: no source for X", anything marked ASSUMED).
+   - Open bets, tasks and knowledge pages on the same topic.
+   - Overlap with tools already connected, such as two accounting tools.
+2. **Look inside the tool for gold nuggets.** Read recent data within the granted access. Find 1 to 3 things worth knowing today: something overdue, broken, a number far off normal, a pattern, a paid feature nobody uses. Each has a number and a link. Say plainly if there was nothing. Use the add-on for the tool's kind below.
+3. **Decide who should get it.** For each flow and agent from step 1, name one concrete job the tool gives them and check whether the agent already has access. Default to read. Write access only for an agent that must act in the tool.
+4. **Come back to the person with suggestions.** Open the chat now. One short message: the ranked suggestions, recommended one first. Each says what it is, the evidence (link), what changes, and how to undo it. Add at most 3 questions, only ones that change a suggestion, each with your best guess. Under 150 words where you can.
+5. **The person says what they want. Then make the changes.** Do exactly what they chose: update an agent's instructions or skills, add a step to a flow, link the tool as a data source on a target, grant or request access. Say how to undo each one. Ask first before anything outside the company, anything that spends money, anything sent in a person's name, or any widening of who has access.
+6. **Follow up.** Every action that stays open becomes a task, one per action, under a parent task "<Tool> connect review". Set one check 24 hours later: does the tool return data, did an agent call it, does a target now have a reading. Report only if something is off. Then reply to the person with what you did, short, no knowledge page.
+
+## Add-ons by kind of tool
+
+Use the add-on during step 2. A tool can have more than one kind.
+
+- **Email, chat and calendar (Gmail, Slack, Google Calendar, Meet).** Unanswered threads from customers or prospects, meetings with no follow-up, customer talk in channels with unanswered questions, decisions made in channels that never became a task. Fits sales and customer flows, Customer Success, insight intake.
+- **Files and documents (Drive, Notion, Airtable, Miro).** Decks, contracts, plans and transcripts nobody has filed; out-of-date or conflicting versions. Fits Researcher, Meeting Analyst, strategic context.
+- **CRM and sales (HubSpot, Attio, Lemlist, Apollo, LinkedIn).** Stalled deals, contacts with no owner, do-not-contact lists, unanswered messages, best-performing posts. Compare with contacts and companies already in the workspace and note gaps both ways. Fits sales, outbound, content.
+- **Analytics and search (PostHog, Mixpanel, Search Console, Ubersuggest).** Most and least used features, drop-off points, any ASSUMED target this tool can give a real number for. Pages near the top of results, queries with impressions and no clicks, keywords with no content. Fits product priorities, usage targets, SEO flow, Content Lead.
+- **Finance and billing (Dinero, Numina, Stripe).** Overdue invoices, unmatched bank lines, missing receipts, VAT deadlines, odd spend by supplier. Read only. No booking, creating or sending without a person's yes. Fits the finance flow and any target in money.
+- **Email sending (Resend).** Bounce and complaint rates, unused domains. Fits outbound and onboarding emails.
+- **Code, deploy and monitoring (GitHub, Vercel, Sentry).** Stale pull requests, open issues, failing checks, error spikes, failed deploys, expiring tokens. Hand findings to the CTO. Fits Product Delivery.
+- **Product and project tools (Linear, Jira, ClickUp, Asana).** Work that exists there but not here, and the reverse. Suggest which side is the source of truth. Do not mirror both ways without a decision.
+- **Social, events and community (Facebook, Instagram, YouTube, Luma).** Reach, top posts, upcoming events and sign-ups. Fits content, events and webinar flows.
+- **Custom tool, API key or login.** Also check what the key can do (read only or write), who rotates it, and when it expires. Put the expiry date on the parent task. For a login on a computer, take a screenshot to prove the sign-in worked.
+
+## Anti-patterns
+
+- Opening the chat with a hello before there is anything to suggest.
+- Making changes before the person has said what they want.
+- Waiting for a flow or agent to name the tool. None will. Judge by the job.
+- A suggestion list that is long. Rank and keep the best.
+- Giving every agent access "just in case".
+- Writing a knowledge note about the connection, or putting to-dos in one. Open actions are tasks.
+- Writing to the tool, or sending anything in someone's name, to test it.
+- Repeating suggestions the person already got for this tool.`,
+}
+
 export const CHIEF_OF_STAFF_DEFAULT = {
 	name: 'Chief of Staff',
 	description: 'Routes to the right agent/loop, resolves blockers, escalates human decisions',
@@ -596,7 +666,12 @@ export const CHIEF_OF_STAFF_DEFAULT = {
 	// (POST /api/voice-sessions), which calls any agent in the workspace, so
 	// this key is unused until a bet needs it.
 	metadata: { voice_enabled: true } as Record<string, unknown>,
-	skills: [CONTINUOUS_ONBOARDING_SKILL, MASKIN_WAY_OF_WORKING_SKILL, DRAFT_APPROVAL_TASKS_SKILL],
+	skills: [
+		CONTINUOUS_ONBOARDING_SKILL,
+		MASKIN_WAY_OF_WORKING_SKILL,
+		DRAFT_APPROVAL_TASKS_SKILL,
+		INTEGRATION_CONNECT_CHECKLIST_SKILL,
+	],
 } as const
 
 export type ChiefOfStaffDefault = typeof CHIEF_OF_STAFF_DEFAULT
