@@ -55,6 +55,26 @@ struct IntegrationsView: View {
 			PageFootnote(text: SettingsRowRules.integrationsFootnote(canManage: store.canManage))
 		}
 		.searchable(text: $query, prompt: "Search integrations and tools")
+		.toolbar {
+			if services != nil, store.canManage {
+				ToolbarItem(placement: .primaryAction) {
+					Button {
+						addYourOwn()
+					} label: {
+						Image(systemName: "plus")
+					}
+					.accessibilityLabel("Add your own")
+				}
+			}
+		}
+	}
+
+	/// Opens the add form with the search and pill cleared and Your integrations expanded, so
+	/// nothing hides where the new tool lands.
+	private func addYourOwn() {
+		clearFilters()
+		showAllYours = true
+		showAddToolServer = true
 	}
 
 	/// All, Google, Microsoft, then one pill per category, in the order the web shows them.
@@ -167,10 +187,7 @@ struct IntegrationsView: View {
 				Button(isSearching ? "Clear search" : "Clear filter") { clearFilters() }
 					.buttonStyle(.secondaryAction)
 				if services != nil, store.canManage {
-					Button("Add your own") {
-						clearFilters()
-						showAddToolServer = true
-					}
+					Button("Add your own") { addYourOwn() }
 					.buttonStyle(.secondaryAction)
 				}
 			}
@@ -280,15 +297,12 @@ struct IntegrationsView: View {
 
 	private var isSearching: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
 
-	/// "Add your own MCP server" and the Claude import, hidden while searching.
+	/// The Claude import, hidden while searching. Adding a tool server is the Add your own button.
 	private var addRows: [PageRowModel] {
-		SettingsRowRules.addRows(canManage: store.canManage, hasServices: services != nil).map { (row) -> PageRowModel in
+		SettingsRowRules.addRows(canManage: store.canManage, hasServices: services != nil).compactMap { (row) -> PageRowModel? in
 			switch row {
 			case .toolServer:
-				PageRowModel(
-					id: "add-tool-server", title: "Add your own MCP server",
-					subtitle: "Paste a server URL and choose what your agents can use.",
-					showsChevron: true, action: { showAddToolServer = true })
+				nil
 			case .importFromClaude:
 				PageRowModel(
 					id: "claude", title: "Import from Claude",
@@ -412,19 +426,20 @@ struct IntegrationsView: View {
 		}
 	}
 
-	/// A tool the workspace has not connected: its category under Popular, New and the filtered
-	/// list, nothing inside a category group (the heading already says it).
+	/// A tool the workspace has not connected: its written line, else its category under Popular,
+	/// New and the filtered list, else nothing inside a category group (the heading says it).
 	private func availableRow(_ provider: IntegrationProvider, showsCategory: Bool) -> PageRowModel {
 		PageRowModel(
 			id: "available-\(provider.id)", title: provider.displayName,
-			subtitle: showsCategory ? IntegrationCategory.category(for: provider.id).label : nil,
+			subtitle: IntegrationCatalog.description(for: provider.id)
+				?? (showsCategory ? IntegrationCategory.category(for: provider.id).label : nil),
 			accessory: .state(
 				isConnecting(provider.id)
 					? WorkspacePageState.integrationConnecting : WorkspacePageState.integrationAvailable),
 			action: availableAction(provider))
 	}
 
-	/// Tool servers a person added. Adding one is the "Add your own MCP server" card; the server
+	/// Tool servers a person added. Adding one is the Add your own button; the server
 	/// only accepts people, which the add page reports if an agent key is signed in.
 	private func serverRows(_ servers: [ConnectedIntegration]) -> [PageRowModel] {
 		servers.map { server in

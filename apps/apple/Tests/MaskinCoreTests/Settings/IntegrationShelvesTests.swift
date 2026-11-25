@@ -51,6 +51,23 @@ struct IntegrationCatalogTests {
 		#expect(IntegrationCatalog.newProviderIDs(now: Date(timeIntervalSince1970: 0)).isEmpty)
 	}
 
+	@Test("day 30 is still new and day 31 is not")
+	func newWindowEdge() {
+		// Shipped on 1 Nov 2026: 1 Dec is 30 days later, 2 Dec is 31.
+		let dec1 = Date(timeIntervalSince1970: 1_796_083_200)
+		let dec2 = Date(timeIntervalSince1970: 1_796_169_600)
+		#expect(IntegrationCatalog.isNew(addedOn: "2026-11-01", now: dec1))
+		#expect(!IntegrationCatalog.isNew(addedOn: "2026-11-01", now: dec2))
+		#expect(!IntegrationCatalog.isNew(addedOn: nil, now: dec1))
+		#expect(!IntegrationCatalog.isNew(addedOn: "not a date", now: dec1))
+	}
+
+	@Test("a written line is kept for the tools that have one")
+	func descriptions() {
+		#expect(IntegrationCatalog.description(for: "slack") == "Channels and triggers")
+		#expect(IntegrationCatalog.description(for: "box") == nil)
+	}
+
 	@Test("a tool the catalog does not know sits under Docs & data")
 	func unknownTool() {
 		#expect(IntegrationCategory.category(for: "brand-new") == .docsAndData)

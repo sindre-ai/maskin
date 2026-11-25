@@ -81,15 +81,18 @@ public enum IntegrationCatalog {
 		var featured: Int?
 		/// Day the tool first shipped (YYYY-MM-DD).
 		var addedOn: String?
+		/// One line on what the tool is for. Left out means the page shows the category instead.
+		var description: String?
 
 		init(
 			category: IntegrationCategory, vendor: IntegrationVendor? = nil, featured: Int? = nil,
-			addedOn: String? = nil
+			addedOn: String? = nil, description: String? = nil
 		) {
 			self.category = category
 			self.vendor = vendor
 			self.featured = featured
 			self.addedOn = addedOn
+			self.description = description
 		}
 	}
 
@@ -103,6 +106,7 @@ public enum IntegrationCatalog {
 		"box": Entry(category: .files, addedOn: "2026-11-22"),
 		"brevo": Entry(category: .salesAndPayments, addedOn: "2026-11-24"),
 		"brex": Entry(category: .salesAndPayments, addedOn: "2026-11-24"),
+		"business-central": Entry(category: .accounting, addedOn: "2026-11-24"),
 		"calendly": Entry(category: .emailAndCalendar, addedOn: "2026-11-22"),
 		"clay": Entry(category: .salesAndPayments, addedOn: "2026-11-22"),
 		"cloudflare": Entry(category: .code, addedOn: "2026-11-21"),
@@ -118,11 +122,11 @@ public enum IntegrationCatalog {
 		"fireflies": Entry(category: .chatAndSocial, addedOn: "2026-11-21"),
 		"framer": Entry(category: .design, addedOn: "2026-11-24"),
 		"freshbooks": Entry(category: .salesAndPayments, addedOn: "2026-11-24"),
-		"github": Entry(category: .code, featured: 4),
-		"gmail": Entry(category: .emailAndCalendar, vendor: .google, featured: 1),
+		"github": Entry(category: .code, featured: 4, description: "Pull requests"),
+		"gmail": Entry(category: .emailAndCalendar, vendor: .google, featured: 1, description: "Drafts and sending"),
 		"gong": Entry(category: .salesAndPayments, addedOn: "2026-11-22"),
 		"google-calendar": Entry(category: .emailAndCalendar, vendor: .google, featured: 2),
-		"google-drive": Entry(category: .files, vendor: .google, featured: 5),
+		"google-drive": Entry(category: .files, vendor: .google, featured: 5, description: "Files"),
 		"google-meet": Entry(category: .chatAndSocial, vendor: .google),
 		"google-search-console": Entry(category: .analytics, vendor: .google),
 		"granola": Entry(category: .chatAndSocial, addedOn: "2026-11-21"),
@@ -133,13 +137,13 @@ public enum IntegrationCatalog {
 		"intercom": Entry(category: .chatAndSocial, addedOn: "2026-11-22"),
 		"klaviyo": Entry(category: .salesAndPayments, addedOn: "2026-11-24"),
 		"lattice": Entry(category: .docsAndData, addedOn: "2026-11-22"),
-		"linear": Entry(category: .code, featured: 7),
-		"linkedin-unipile": Entry(category: .chatAndSocial),
+		"linear": Entry(category: .code, featured: 7, description: "Issues"),
+		"linkedin-unipile": Entry(category: .chatAndSocial, description: "Posting and outreach"),
 		"looker": Entry(category: .analytics, addedOn: "2026-11-22"),
 		"mailchimp": Entry(category: .salesAndPayments, addedOn: "2026-11-24"),
 		"make": Entry(category: .docsAndData, addedOn: "2026-11-22"),
 		"mercury": Entry(category: .salesAndPayments, addedOn: "2026-11-24"),
-		"microsoft": Entry(category: .chatAndSocial, vendor: .microsoft),
+		"microsoft": Entry(category: .chatAndSocial, vendor: .microsoft, description: "Teams transcripts"),
 		"miro": Entry(category: .design),
 		"monday": Entry(category: .docsAndData, addedOn: "2026-11-22"),
 		"mural": Entry(category: .design, addedOn: "2026-11-24"),
@@ -153,14 +157,14 @@ public enum IntegrationCatalog {
 		"pagerduty": Entry(category: .analytics, addedOn: "2026-11-21"),
 		"pipedrive": Entry(category: .salesAndPayments, addedOn: "2026-11-22"),
 		"planetscale": Entry(category: .docsAndData, addedOn: "2026-11-21"),
-		"posthog": Entry(category: .analytics),
+		"posthog": Entry(category: .analytics, description: "Product analytics"),
 		"power-bi": Entry(category: .analytics, vendor: .microsoft, addedOn: "2026-11-22"),
 		"ramp": Entry(category: .salesAndPayments, addedOn: "2026-11-22"),
-		"resend": Entry(category: .emailAndCalendar),
+		"resend": Entry(category: .emailAndCalendar, description: "Email sending"),
 		"retool": Entry(category: .docsAndData, addedOn: "2026-11-21"),
 		"salesforce": Entry(category: .salesAndPayments, addedOn: "2026-11-22"),
 		"skjald": Entry(category: .docsAndData),
-		"slack": Entry(category: .chatAndSocial, featured: 3),
+		"slack": Entry(category: .chatAndSocial, featured: 3, description: "Channels and triggers"),
 		"squarespace": Entry(category: .docsAndData, addedOn: "2026-11-22"),
 		"stripe": Entry(category: .salesAndPayments),
 		"supabase": Entry(category: .docsAndData, addedOn: "2026-11-21"),
@@ -177,6 +181,11 @@ public enum IntegrationCatalog {
 
 	public static func vendor(for providerID: String) -> IntegrationVendor? {
 		entries[providerID]?.vendor
+	}
+
+	/// One line on what the tool is for, when someone has written it.
+	public static func description(for providerID: String) -> String? {
+		entries[providerID]?.description
 	}
 
 	/// Featured tools in shelf order. Empty when nothing is featured, so the shelf stays hidden.
