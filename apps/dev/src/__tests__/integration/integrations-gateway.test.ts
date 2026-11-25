@@ -824,7 +824,7 @@ describe('Dinero is limited to a fixed list of tools through the gateway (Integr
 		expect(body.report.lines).toEqual([])
 		expect(body.check.findings).toEqual([])
 		expect(body.check.clean_kinds).toEqual(['foreign_supplier', 'odd_rate', 'private_cost'])
-		expect(body.check.notice).toContain('Nothing was filed')
+		expect(body.check.notice).toContain('files nothing')
 
 		const bad = await toolText(
 			await post(s.app, s.ws.id, call({ from: 'soon', to: '2026-10-31' }), 'dinero'),

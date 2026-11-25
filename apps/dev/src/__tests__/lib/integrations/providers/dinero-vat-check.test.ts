@@ -116,7 +116,7 @@ describe('VAT return check on the made-up month', () => {
 	it('never says anything was filed', () => {
 		const all = JSON.stringify(check)
 		expect(all.toLowerCase()).not.toMatch(/\b(was|has been|is|are) filed\b/)
-		expect(VAT_CHECK_NOTICE).toContain('Nothing was filed')
+		expect(VAT_CHECK_NOTICE).toContain('files nothing')
 	})
 })
 

@@ -8,7 +8,7 @@ import type { VatReport, VatReportEntry, VatReportLine } from './vat-report'
  */
 
 export const VAT_CHECK_NOTICE =
-	'A draft check, not the VAT return. The findings say what looks off: the owner decides in Dinero. Nothing was filed.'
+	'A draft check, not the VAT return. The findings say what looks off: the owner decides in Dinero. This check files nothing.'
 
 /**
  * VAT codes that are a purchase from abroad (reverse charge, or import). The report does not

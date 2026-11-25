@@ -363,7 +363,7 @@ describe('Accounting loop definition', () => {
 		it('writes one note titled by the period, linked to the flow, and never says filed', () => {
 			expect(skill()).toMatch(/titled exactly VAT check, the period start, the word to/)
 			expect(skill()).toMatch(/in_loop relationship from the flow/)
-			expect(skill()).toMatch(/Nothing was filed/)
+			expect(skill()).toMatch(/This check files nothing/)
 			expect(skill().toLowerCase()).not.toMatch(/\b(was|has been|is|are) filed\b/)
 			const prompt = actorTexts().join('\n')
 			expect(prompt).toMatch(/# VAT return check/)
