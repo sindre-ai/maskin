@@ -605,6 +605,70 @@ function registerWriteTools(server: McpServer, ctx: YoutubeMcpContext): void {
 			propose(client, { object_id, note }, { tool: 'like', args }),
 		write,
 	)
+
+	const deleted =
+		'Deleting cannot be undone. The server reads the real title from YouTube for the card, so what a person approves is what gets deleted.'
+
+	registerTool(
+		server,
+		ctx,
+		'delete_video',
+		`Ask to PERMANENTLY delete one of your own videos. It cannot be undone, and its comments and statistics go with it. The card says so in capitals and shows the video's real title and id. At most 3 a day for the workspace. ${deleted} ${held}`,
+		{
+			object_id: objectIdField,
+			video_id: videoIdField,
+			note: noteField,
+		},
+		({ object_id, note, ...args }, client) =>
+			propose(client, { object_id, note }, { tool: 'delete_video', args }),
+		write,
+	)
+
+	registerTool(
+		server,
+		ctx,
+		'delete_comment',
+		`Ask to delete a comment: one on your own videos, or one you wrote. The card shows the comment's author and text as YouTube holds them. At most 20 a day for the workspace. ${deleted} ${held}`,
+		{
+			object_id: objectIdField,
+			comment_id: z.string().min(1).max(128).describe('The id of the comment to delete.'),
+			note: noteField,
+		},
+		({ object_id, note, ...args }, client) =>
+			propose(client, { object_id, note }, { tool: 'delete_comment', args }),
+		write,
+	)
+
+	registerTool(
+		server,
+		ctx,
+		'delete_playlist',
+		`Ask to delete one of your own playlists. The videos in it stay on the channel. The card shows the playlist's real title and id. At most 3 a day for the workspace. ${deleted} ${held}`,
+		{
+			object_id: objectIdField,
+			playlist_id: z.string().min(1).max(64).describe('The id of one of your playlists.'),
+			note: noteField,
+		},
+		({ object_id, note, ...args }, client) =>
+			propose(client, { object_id, note }, { tool: 'delete_playlist', args }),
+		write,
+	)
+
+	registerTool(
+		server,
+		ctx,
+		'remove_from_playlist',
+		`Ask to remove a video from one of your own playlists. Only the playlist entry goes: the video stays on the channel. The server finds the entry, and the call is refused if the video is not in the playlist. At most 20 a day for the workspace. ${held}`,
+		{
+			object_id: objectIdField,
+			playlist_id: z.string().min(1).max(64).describe('The id of one of your playlists.'),
+			video_id: videoIdField,
+			note: noteField,
+		},
+		({ object_id, note, ...args }, client) =>
+			propose(client, { object_id, note }, { tool: 'remove_from_playlist', args }),
+		write,
+	)
 }
 
 /** Caption writes. Each only asks: the change goes out after a person approves the card. */

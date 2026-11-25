@@ -10,7 +10,12 @@ import { and, eq } from 'drizzle-orm'
 import { vi } from 'vitest'
 import { YoutubeError } from '../../lib/integrations/providers/youtube/errors'
 import { decideYoutubeAction } from '../../lib/youtube/actions'
-import { COMMENTS_PER_DAY, COMMENTS_PER_VIDEO_PER_DAY, LIKES_PER_DAY } from '../../lib/youtube/caps'
+import {
+	COMMENTS_PER_DAY,
+	COMMENTS_PER_VIDEO_PER_DAY,
+	DELETES_PER_DAY,
+	LIKES_PER_DAY,
+} from '../../lib/youtube/caps'
 import { insertActor, insertObject, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
@@ -212,6 +217,179 @@ describe('YouTube write tools', () => {
 			await expect(edit({ title: 'Old title' })).rejects.toMatchObject({ code: 'INVALID_INPUT' })
 			await expect(edit({})).rejects.toMatchObject({ code: 'INVALID_INPUT' })
 			expect(await db.select().from(youtubePendingActions)).toHaveLength(0)
+		})
+	})
+
+	describe('deleting', () => {
+		const OWN = { channelId: 'UC_own' }
+		/** Answers each read by its path, like Google would. */
+		const reads = (answers: Partial<Record<string, unknown>>) =>
+			youtubeRead.mockImplementation(async (_ctx: unknown, read: { path: string }) =>
+				read.path === 'channels' ? OWN_CHANNEL : (answers[read.path] ?? { items: [] }),
+			)
+		const ask = (request: Parameters<typeof proposeYoutubeWrite>[2]) =>
+			proposeYoutubeWrite(ctx(), common(), request)
+		const deleteVideo = (video_id = 'vid1') => ask({ tool: 'delete_video', args: { video_id } })
+
+		it('holds a video delete with the title read from YouTube, and sends exactly that id once approved', async () => {
+			reads({ videos: { items: [{ snippet: { ...OWN, title: 'Launch day' } }] } })
+			const held = await deleteVideo()
+
+			const row = await rowOf(held.action_id)
+			expect(row?.kind).toBe('delete_video')
+			expect(row?.payload).toEqual({ id: 'vid1', title: 'Launch day' })
+			expect(row?.targetVideoId).toBe('vid1')
+			// The title is read fresh, not from the cache, so it is the title the video has now.
+			const read = youtubeRead.mock.calls.find(([, r]) => r.path === 'videos')?.[1]
+			expect(read).toMatchObject({ params: { id: 'vid1' }, cache: false })
+			expect(execute).not.toHaveBeenCalled()
+
+			await approve(held.action_id)
+			expect(await run(held.action_id)).toEqual({ ran: true, status: 'executed', resultCode: 'ok' })
+			expect(execute).toHaveBeenCalledOnce()
+			expect(execute.mock.calls[0]?.[0]).toMatchObject({
+				kind: 'delete_video',
+				payload: row?.payload,
+			})
+			const [card] = await db
+				.select()
+				.from(events)
+				.where(and(eq(events.entityId, objectId), eq(events.action, 'commented')))
+			expect(JSON.stringify(card?.data)).toContain('PERMANENT')
+		})
+
+		it('refuses a video on another channel and a video that is not there', async () => {
+			reads({ videos: { items: [{ snippet: { channelId: 'UC_other', title: 'Theirs' } }] } })
+			await expect(deleteVideo()).rejects.toMatchObject({ code: 'PERMISSION_DENIED' })
+			reads({ videos: { items: [] } })
+			await expect(deleteVideo()).rejects.toMatchObject({ code: 'NOT_FOUND' })
+			expect(await db.select().from(youtubePendingActions)).toHaveLength(0)
+		})
+
+		it('refuses a video delete when the connected channel cannot be read', async () => {
+			youtubeRead.mockRejectedValue(new YoutubeError({ code: 'PROVIDER_ERROR', message: 'x' }))
+			await expect(deleteVideo()).rejects.toMatchObject({ code: 'PROVIDER_ERROR' })
+			expect(await db.select().from(youtubePendingActions)).toHaveLength(0)
+		})
+
+		it('holds a comment delete with the author and text read from YouTube', async () => {
+			reads({
+				comments: {
+					items: [
+						{ snippet: { videoId: 'vid1', authorDisplayName: 'Ann', textOriginal: 'Great video' } },
+					],
+				},
+			})
+			const held = await ask({ tool: 'delete_comment', args: { comment_id: 'c1' } })
+			const row = await rowOf(held.action_id)
+			expect(row?.kind).toBe('delete_comment')
+			expect(row?.payload).toEqual({ id: 'c1', author: 'Ann', text: 'Great video' })
+			expect(row?.targetVideoId).toBe('vid1')
+
+			await approve(held.action_id)
+			await run(held.action_id)
+			expect(execute.mock.calls[0]?.[0]).toMatchObject({
+				kind: 'delete_comment',
+				payload: { id: 'c1' },
+			})
+		})
+
+		it('refuses a comment that is not there', async () => {
+			reads({ comments: { items: [] } })
+			await expect(
+				ask({ tool: 'delete_comment', args: { comment_id: 'c1' } }),
+			).rejects.toMatchObject({ code: 'NOT_FOUND' })
+		})
+
+		it('holds a playlist delete with its real title, only for one of our playlists', async () => {
+			reads({ playlists: { items: [{ snippet: { ...OWN, title: 'Best of' } }] } })
+			const held = await ask({ tool: 'delete_playlist', args: { playlist_id: 'PL1' } })
+			expect((await rowOf(held.action_id))?.payload).toEqual({ id: 'PL1', title: 'Best of' })
+
+			await approve(held.action_id)
+			await run(held.action_id)
+			expect(execute.mock.calls[0]?.[0]).toMatchObject({
+				kind: 'delete_playlist',
+				payload: { id: 'PL1', title: 'Best of' },
+			})
+
+			reads({ playlists: { items: [{ snippet: { channelId: 'UC_other', title: 'Theirs' } }] } })
+			await expect(
+				ask({ tool: 'delete_playlist', args: { playlist_id: 'PL2' } }),
+			).rejects.toMatchObject({ code: 'PERMISSION_DENIED' })
+		})
+
+		it('finds the playlist entry itself, so the request carries the entry id and not the video id', async () => {
+			reads({
+				playlists: { items: [{ snippet: { ...OWN, title: 'Best of' } }] },
+				playlistItems: { items: [{ id: 'entry9', snippet: { title: 'Launch day' } }] },
+			})
+			const held = await ask({
+				tool: 'remove_from_playlist',
+				args: { playlist_id: 'PL1', video_id: 'vid1' },
+			})
+			const row = await rowOf(held.action_id)
+			expect(row?.payload).toEqual({
+				id: 'entry9',
+				playlistId: 'PL1',
+				playlistTitle: 'Best of',
+				videoId: 'vid1',
+				videoTitle: 'Launch day',
+			})
+			const lookup = youtubeRead.mock.calls.find(([, r]) => r.path === 'playlistItems')?.[1]
+			expect(lookup.params).toMatchObject({ playlistId: 'PL1', videoId: 'vid1' })
+
+			await approve(held.action_id)
+			await run(held.action_id)
+			expect(execute.mock.calls[0]?.[0]).toMatchObject({
+				kind: 'remove_from_playlist',
+				payload: row?.payload,
+			})
+		})
+
+		it('refuses to remove a video that is not in the playlist', async () => {
+			reads({
+				playlists: { items: [{ snippet: { ...OWN, title: 'Best of' } }] },
+				playlistItems: { items: [] },
+			})
+			await expect(
+				ask({ tool: 'remove_from_playlist', args: { playlist_id: 'PL1', video_id: 'vid1' } }),
+			).rejects.toMatchObject({ code: 'NOT_FOUND' })
+		})
+
+		it('allows 3 video deletes a day and holds the 4th', async () => {
+			reads({ videos: { items: [{ snippet: { ...OWN, title: 'A video' } }] } })
+			for (let i = 0; i < DELETES_PER_DAY.delete_video; i++) await deleteVideo(`vid${i}`)
+			await expect(deleteVideo('vid99')).rejects.toMatchObject({ code: 'CAP_REACHED' })
+		})
+
+		it('counts each kind of delete on its own', async () => {
+			reads({
+				videos: { items: [{ snippet: { ...OWN, title: 'A video' } }] },
+				playlists: { items: [{ snippet: { ...OWN, title: 'A playlist' } }] },
+			})
+			for (let i = 0; i < DELETES_PER_DAY.delete_playlist; i++) {
+				await ask({ tool: 'delete_playlist', args: { playlist_id: `PL${i}` } })
+			}
+			await expect(
+				ask({ tool: 'delete_playlist', args: { playlist_id: 'PL99' } }),
+			).rejects.toMatchObject({ code: 'CAP_REACHED' })
+			await expect(deleteVideo()).resolves.toBeDefined()
+		})
+
+		it('gives the place back when a person rejects a delete', async () => {
+			reads({ videos: { items: [{ snippet: { ...OWN, title: 'A video' } }] } })
+			const held: string[] = []
+			for (let i = 0; i < DELETES_PER_DAY.delete_video; i++) {
+				held.push((await deleteVideo(`vid${i}`)).action_id)
+			}
+			await decideYoutubeAction(db, {
+				workspaceId,
+				actionId: held[0] as string,
+				actor: { id: humanId, type: 'human' },
+				decision: 'reject',
+			})
+			await expect(deleteVideo('vid99')).resolves.toBeDefined()
 		})
 	})
 
