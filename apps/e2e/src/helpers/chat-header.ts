@@ -5,7 +5,7 @@ import type { Locator, Page } from '@playwright/test'
  * Close behind its `···` menu (web v11). Opens the menu and returns the item, so a spec can
  * click it or assert its state; the menu closes on its own when an item is chosen.
  */
-export async function headerMenuItem(page: Page, name: string): Promise<Locator> {
+export async function headerMenuItem(page: Page, name: string | RegExp): Promise<Locator> {
 	const item = page.getByRole('menuitem', { name })
 	if (!(await item.isVisible().catch(() => false))) {
 		await page.getByRole('button', { name: 'More actions' }).click()

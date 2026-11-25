@@ -348,7 +348,7 @@ export function ThreadHeader({
 						}
 					>
 						<Pin size={14} fill={conversation.pinned ? 'currentColor' : 'none'} />
-						<span>{conversation.pinned ? 'Unpin conversation' : 'Pin conversation'}</span>
+						<span>{conversation.pinned ? 'Unpin' : 'Pin'}</span>
 					</DropdownMenuItem>
 					<DropdownMenuItem onSelect={handleMarkUnread}>
 						<EyeOff size={14} />
