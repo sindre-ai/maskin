@@ -917,6 +917,24 @@ export const api = {
 				body,
 				workspaceId,
 			}),
+		vatReport: (workspaceId: string, from: string, to: string) =>
+			request<DineroVatReport>(`/dinero-review/vat-report?from=${from}&to=${to}`, { workspaceId }),
+		vatReportCsv: async (workspaceId: string, from: string, to: string): Promise<Blob> => {
+			const apiKey = getApiKey()
+			const res = await fetch(`${API_BASE}/dinero-review/vat-report/csv?from=${from}&to=${to}`, {
+				headers: {
+					...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+					'X-Workspace-Id': workspaceId,
+				},
+			})
+			if (!res.ok) {
+				const data = await res.json().catch(() => ({ error: res.statusText }))
+				const message =
+					typeof data.error === 'object' ? data.error.message : data.error || res.statusText
+				throw new ApiError(res.status, message)
+			}
+			return res.blob()
+		},
 	},
 	sendPermissions: {
 		get: (workspaceId: string) =>
@@ -4006,6 +4024,48 @@ export interface DineroReviewLine {
 	vat_code: string | null
 }
 
+export interface DineroReceipt {
+	file_name: string | null
+	file_guid: string | null
+	reference: string | null
+}
+
+export interface DineroVatEntry {
+	event_id: number
+	voucher_date: string | null
+	description: string | null
+	account: number | null
+	amount_incl_vat: number
+	vat_amount: number | null
+	net_amount: number | null
+	receipt: DineroReceipt | null
+}
+
+export interface DineroVatLine {
+	vat_code: string | null
+	direction: 'input' | 'output' | 'none' | 'unknown'
+	rate: number | null
+	lines: number
+	amount_incl_vat: number
+	vat_amount: number | null
+	net_amount: number | null
+	entries: DineroVatEntry[]
+}
+
+export interface DineroVatReport {
+	from: string
+	to: string
+	lines: DineroVatLine[]
+	totals: {
+		input_vat: number
+		output_vat: number
+		complete: boolean
+		uncalculated_lines: number
+	}
+	figures_hash: string
+	notice: string
+}
+
 export interface DineroReviewItem {
 	event_id: number
 	at: string | null
@@ -4014,6 +4074,7 @@ export interface DineroReviewItem {
 	booked: boolean
 	voucher_date: string | null
 	lines: DineroReviewLine[]
+	receipt: DineroReceipt | null
 	result: string | null
 	reverses_event_id: number | null
 	reversed_by_event_id: number | null
@@ -4036,7 +4097,7 @@ export interface DineroFilingHandoff {
 	approved_by: string
 	approved_at: string
 	figures_hash: string
-	figures: Array<{ vat_code: string | null; lines: number; amount_incl_vat: number }>
+	figures: DineroVatLine[]
 	figures_note: string
 	steps: string[]
 	year_end_steps: string[]
