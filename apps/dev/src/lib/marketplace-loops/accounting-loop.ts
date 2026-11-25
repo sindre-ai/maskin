@@ -25,7 +25,7 @@ const ACCOUNTING_LOOP_SETTINGS: LoopSettings = {
 	entryCondition:
 		"A person uploads a receipt, a photo or a PDF, in the flow's chat, and Dinero is connected.",
 	closeCondition:
-		'The receipt is saved as a draft voucher in Dinero, or it is on the adviser list with the reason. Nothing is booked, changed or deleted by the flow.',
+		'The receipt is saved as a draft voucher in Dinero, or it is on the owner list with the reason. Nothing is booked, changed or deleted by the flow.',
 	tags: ['Finance'],
 }
 

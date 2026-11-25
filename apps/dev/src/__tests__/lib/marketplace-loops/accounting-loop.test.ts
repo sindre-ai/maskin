@@ -196,13 +196,13 @@ describe('Accounting loop definition', () => {
 			for (const row of rows) {
 				const parts = row.split(' | ')
 				expect(['flag', 'note']).toContain(parts[1])
-				expect(['sourced', 'confirm with adviser']).toContain(parts[2])
+				expect(['sourced', 'unsourced']).toContain(parts[2])
 				expect(row).toMatch(/Source: .+\. \| Owner line: .+/)
 			}
 		})
 
-		it('flags confirm-with-adviser rules instead of passing them', () => {
-			const unsourced = ruleRows().filter((r) => r.includes(' | confirm with adviser | '))
+		it('flags unsourced rules instead of passing them', () => {
+			const unsourced = ruleRows().filter((r) => r.includes(' | unsourced | '))
 			expect(unsourced.length).toBe(5)
 			expect(ruleCheck()).toMatch(/flags whenever the situation it describes is present/)
 			expect(ruleCheck()).toMatch(/not flagged by a rule just because the rule is unsourced/)
