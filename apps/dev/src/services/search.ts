@@ -259,6 +259,7 @@ export const SEARCH_SOURCES: SearchSource[] = [
 			SELECT c.id AS id,
 				'chat'::text AS type,
 				c.title AS title,
+				(CASE WHEN lower(btrim(c.title)) = ${DEFAULT_CHAT_TITLE} THEN '' ELSE c.title END) AS rank_title,
 				(SELECT string_agg(a.name, ', ' ORDER BY a.name)
 					FROM conversation_participants cp2
 					INNER JOIN actors a ON a.id = cp2.actor_id

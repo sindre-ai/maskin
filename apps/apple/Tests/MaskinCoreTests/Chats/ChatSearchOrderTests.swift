@@ -44,7 +44,7 @@ struct ChatSearchOrderTests {
 
 	private static func summary(_ chat: Fixture.Chat) -> ConversationSummary {
 		let date = now.addingTimeInterval(-chat.minutesAgo * 60)
-		ConversationSummary(
+		return ConversationSummary(
 			id: chat.id, title: chat.title, lastMessageAt: date, createdAt: date, archived: chat.archived,
 			unreadCount: chat.unread ? 1 : 0, snippet: chat.message,
 			participants: [me] + chat.people.map { ChatParticipant(id: $0, name: $0, kind: .human) })
