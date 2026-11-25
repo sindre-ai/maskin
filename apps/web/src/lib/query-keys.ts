@@ -92,6 +92,8 @@ export const queryKeys = {
 			['dinero-review', workspaceId, from, to] as const,
 		vatReport: (workspaceId: string, from: string, to: string) =>
 			['dinero-review', workspaceId, 'vat-report', from, to] as const,
+		vatCheckNote: (workspaceId: string, from: string, to: string) =>
+			['dinero-review', workspaceId, 'vat-check-note', from, to] as const,
 		all: (workspaceId: string) => ['dinero-review', workspaceId] as const,
 	},
 	dineroBooking: {

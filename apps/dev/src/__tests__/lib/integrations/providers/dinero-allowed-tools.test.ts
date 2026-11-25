@@ -27,8 +27,8 @@ const LISTING_16 = [
 describe('Dinero allowed tools', () => {
 	it('starts with the 16 names the accounting flow listing promises, then the rest of the draft tools', () => {
 		expect(DINERO_DRAFT_ONLY_TOOLS.slice(0, 16)).toEqual(LISTING_16)
-		expect(DINERO_DRAFT_ONLY_TOOLS).toHaveLength(38)
-		expect(new Set(DINERO_DRAFT_ONLY_TOOLS).size).toBe(38)
+		expect(DINERO_DRAFT_ONLY_TOOLS).toHaveLength(39)
+		expect(new Set(DINERO_DRAFT_ONLY_TOOLS).size).toBe(39)
 		for (const tool of [
 			'CreateFinanceVoucher',
 			'get_report',
@@ -51,6 +51,7 @@ describe('Dinero allowed tools', () => {
 			'list_posted_entries',
 			'update_purchase_voucher_draft',
 			'delete_finance_voucher_draft',
+			'get_vat_report',
 		]) {
 			expect(DINERO_DRAFT_ONLY_TOOLS).toContain(tool)
 		}
