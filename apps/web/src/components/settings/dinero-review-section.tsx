@@ -42,6 +42,10 @@ const TOOL_LABELS: Record<string, string> = {
 	BookVoucher: 'Booked a purchase voucher',
 	add_purchase_payment: 'Registered a payment on a bill',
 	add_invoice_payment: 'Registered a payment on an invoice',
+	book_finance_voucher: 'Booked a finance voucher',
+	create_trade_offer: 'Created a quote',
+	send_trade_offer: 'Emailed a quote to the customer',
+	generate_invoice_from_trade_offer: 'Turned a quote into an invoice',
 }
 
 function actionLabel(item: DineroReviewItem): string {
@@ -51,7 +55,7 @@ function actionLabel(item: DineroReviewItem): string {
 }
 
 /** Only a person who is an admin or owner can open the review; the server refuses everyone else. */
-function useCanReview(): boolean {
+export function useCanReview(): boolean {
 	const { workspace } = useWorkspace()
 	const canWrite = useCanWrite()
 	const me = getStoredActor()

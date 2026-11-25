@@ -307,6 +307,14 @@ export const FLAGS = {
 	 * real sign-in has worked for each and the providers are on for everyone.
 	 */
 	WORK_INTEGRATIONS: 'work-integrations',
+	/**
+	 * Gates the ChatGPT tab in Settings, MCP (task
+	 * [Add ChatGPT tab to MCP settings](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/ed2ca427-6de9-46fe-8054-d42941bdab1e)).
+	 * Frontend only: read once in McpConnectionSection with useFeatureFlag. Off means Settings looks
+	 * as it does today. The sign-in behind it is merged and not gated. Retire once the tab is on for
+	 * everyone.
+	 */
+	CHATGPT_MCP_TAB: 'chatgpt-mcp-tab',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

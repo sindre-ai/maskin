@@ -35,6 +35,7 @@ import {
 	cardHeadline,
 	classifyCardKind,
 	decisionOf,
+	sendsWithoutMessage,
 } from '@/lib/foryou-card-kind'
 import { bylineName, heldNote, isObjectlessCard } from '@/lib/foryou-feed'
 import { markImpressed } from '@/lib/foryou-impressions'
@@ -158,6 +159,10 @@ export function FeedCard({
 
 	// A card with nothing to tap still gives the reader a way to act on it.
 	const openTheTask = !objectless && options.length === 0
+	// A card that asks to send something must show the message. When the agent attached none, say
+	// so and point at the task, so the card is never only a question and buttons.
+	const messageMissing = !objectless && sendsWithoutMessage(item)
+	const noun = object?.type === 'task' ? 'task' : 'item'
 	// The message box names who a reply goes to, so it needs an author. Without one it would say
 	// "the agent", which is not an answer.
 	const showComposer = !objectless && Boolean(senderId)
@@ -380,6 +385,24 @@ export function FeedCard({
 							/>
 						</div>
 					)
+				)}
+
+				{messageMissing && (
+					<div
+						data-testid="message-not-attached"
+						className="flex flex-col items-start gap-3 text-[14px] leading-[1.5] text-foreground"
+					>
+						<p>{`The message is not attached. Open the ${noun} to read it.`}</p>
+						<Button
+							asChild
+							variant="outline"
+							className="h-11 w-full rounded-xl text-[14px] sm:w-auto"
+						>
+							<Link to="/$workspaceId/objects/$objectId" params={{ workspaceId, objectId }}>
+								{`Open the ${noun}`}
+							</Link>
+						</Button>
+					</div>
 				)}
 
 				{options.length > 0 && (

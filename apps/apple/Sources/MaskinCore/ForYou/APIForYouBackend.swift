@@ -189,6 +189,8 @@ struct FeedDraftDTO: Decodable {
 		var recipients: [Recipient]?
 		var subject: String?
 		var details: [Detail]?
+		/// The message the draft answers. Read-only, not part of what is approved.
+		var context: String?
 		var body: String
 		var missing: [String]?
 		var warnings: [String]?
@@ -225,6 +227,7 @@ struct FeedDraftDTO: Decodable {
 				},
 				subject: p.subject,
 				details: (p.details ?? []).map { .init(label: $0.label, value: $0.value) },
+				context: p.context,
 				body: p.body, missing: p.missing ?? [], warnings: p.warnings ?? [],
 				contentHash: p.content_hash,
 				delivery: p.delivery.flatMap { ObjectPreview.Delivery(rawValue: $0.state) })

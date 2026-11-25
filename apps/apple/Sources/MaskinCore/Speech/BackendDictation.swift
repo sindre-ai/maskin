@@ -4,9 +4,10 @@ import os
 /// Speech to text on the Maskin server (`POST /api/transcriptions`), as a seam so dictation logic
 /// tests without a network.
 public protocol SpeechTranscribing: Sendable {
-	/// Text for one WAV recording (16 kHz mono). Empty when no speech was heard. `language` is an
-	/// optional hint such as "da" or "en".
-	func transcribe(wav: Data, language: String?) async throws -> String
+	/// Text for one WAV recording (16 kHz mono). Empty when no speech was heard. No language hint is
+	/// sent: on real recordings the model did as well or better without one, and a Danish hint made
+	/// it spell an English invoice number as words.
+	func transcribe(wav: Data) async throws -> String
 }
 
 /// Where the dictation code finds the server service. Set once by the real app wiring; nil in
@@ -14,18 +15,6 @@ public protocol SpeechTranscribing: Sendable {
 @MainActor
 public enum DictationBackend {
 	public static var service: (any SpeechTranscribing)?
-}
-
-public enum DictationLanguage {
-	/// The language hint to send: the first entry of the phone's language order, as a bare code
-	/// ("da-DK" gives "da"). Nil when it isn't a plain two or three letter code, so the route's
-	/// hint check can't reject the request.
-	public static func hint(preferredLanguages: [String]) -> String? {
-		guard let first = preferredLanguages.first else { return nil }
-		let code = first.split(whereSeparator: { $0 == "-" || $0 == "_" }).first.map { $0.lowercased() } ?? ""
-		guard (2...3).contains(code.count), code.allSatisfy({ $0 >= "a" && $0 <= "z" }) else { return nil }
-		return code
-	}
 }
 
 /// A transcription request that got no answer within the time `PhraseTranscriptionQueue` allows.
@@ -117,7 +106,6 @@ public final class PhraseTranscriptionQueue {
 	public var onPhraseDelivered: (@MainActor () -> Void)?
 
 	private let transcriber: any SpeechTranscribing
-	private let language: String?
 	private let onText: @MainActor (String) -> Void
 	private let onFailure: @MainActor (Error) -> Void
 	private let requestTimeout: Duration
@@ -126,14 +114,13 @@ public final class PhraseTranscriptionQueue {
 	private var cancelled = false
 
 	public init(
-		transcriber: any SpeechTranscribing, language: String?,
+		transcriber: any SpeechTranscribing,
 		onText: @escaping @MainActor (String) -> Void,
 		onFailure: @escaping @MainActor (Error) -> Void,
 		requestTimeout: Duration = .seconds(20)
 	) {
 		self.requestTimeout = requestTimeout
 		self.transcriber = transcriber
-		self.language = language
 		self.onText = onText
 		self.onFailure = onFailure
 	}
@@ -142,14 +129,13 @@ public final class PhraseTranscriptionQueue {
 	public func submit(wav: Data) {
 		guard !cancelled, !hasFailed else { return }
 		let transcriber = transcriber
-		let language = language
 		let timeout = requestTimeout
 		submitted += 1
 		DictationFallback.log.info("dictation phrase \(self.submitted) sent: \(wav.count) bytes")
 		let number = submitted
 		let request = Task<String, Error> {
 			let started = ContinuousClock.now
-			let text = try await Self.transcribe(transcriber, wav: wav, language: language, timeout: timeout)
+			let text = try await Self.transcribe(transcriber, wav: wav, timeout: timeout)
 			let took = started.duration(to: .now).description
 			DictationFallback.log.info(
 				"dictation phrase \(number) answered: \(text.count) characters after \(took, privacy: .public)")
@@ -167,10 +153,10 @@ public final class PhraseTranscriptionQueue {
 	/// One request, given up on after `timeout`. Without it a request that hangs keeps the session
 	/// silent until the URL session's own 60 seconds are up.
 	private nonisolated static func transcribe(
-		_ transcriber: any SpeechTranscribing, wav: Data, language: String?, timeout: Duration
+		_ transcriber: any SpeechTranscribing, wav: Data, timeout: Duration
 	) async throws -> String {
 		try await withThrowingTaskGroup(of: String.self) { group in
-			group.addTask { try await transcriber.transcribe(wav: wav, language: language) }
+			group.addTask { try await transcriber.transcribe(wav: wav) }
 			group.addTask {
 				try await Task.sleep(for: timeout)
 				throw TranscriptionTimeout()

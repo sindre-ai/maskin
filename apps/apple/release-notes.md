@@ -1,3 +1,14 @@
+# 1.3.2
+
+- iPad: the chat list stays beside the open chat.
+- iPad portrait: a bottom tab bar, with your avatar on every screen.
+- iPad landscape: the sidebar folds to icons when you open a chat.
+- Chat: touch and hold a message to open a menu from the bottom of the screen.
+- Scan a document with the camera and attach it to a message.
+- Quick actions: touch and hold the app icon to start a new message or open For you.
+- Preview files right in the chat.
+- Fixes: Settings rows open inside your profile.
+
 # 1.3.1
 
 - iPad: a new navigation rail on the left side of the screen.

@@ -80,9 +80,9 @@ describe('Accounting loop definition', () => {
 		expect(settings.checklist?.body).toContain('at most 3 questions at a time')
 	})
 
-	it('ships one actor, three triggers and four skills, no duplicates', () => {
+	it('ships one actor, four triggers and four skills, no duplicates', () => {
 		expect(ACCOUNTING_LOOP_ACTOR_IDS).toEqual([ACCOUNTING_LOOP_ACTOR_BOOKKEEPER])
-		expect(ACCOUNTING_LOOP_TRIGGER_IDS.length).toBe(3)
+		expect(ACCOUNTING_LOOP_TRIGGER_IDS.length).toBe(4)
 		expect(ACCOUNTING_LOOP_SKILL_IDS.length).toBe(4)
 		expect(new Set(ACCOUNTING_LOOP_SKILL_IDS).size).toBe(ACCOUNTING_LOOP_SKILL_IDS.length)
 		expect(ACCOUNTING_LOOP_SKILL_IDS.map((id) => getSkillData(id).name).sort()).toEqual([
@@ -105,13 +105,19 @@ describe('Accounting loop definition', () => {
 		}
 	})
 
-	// The daily check reads the checklist every day and keeps the connection check to Mondays, so the
-	// checklist never waits more than a day.
-	it('runs the daily check, reading the checklist first and the connection check on Mondays', () => {
-		const trigger = ACCOUNTING_LOOP_TRIGGER_IDS.map((id) => getTriggerData(id)).find(
-			(t) => t.name === 'Daily check (06:00 UTC)',
+	const triggerByName = (name: string) => {
+		const found = ACCOUNTING_LOOP_TRIGGER_IDS.map((id) => getTriggerData(id)).find(
+			(t) => t.name === name,
 		)
-		if (!trigger) throw new Error('daily check trigger not shipped')
+		if (!found) throw new Error(`trigger ${name} not found in the accounting bundle`)
+		return found
+	}
+
+	// The daily check reads the checklist every day and keeps the connection check to Mondays, so
+	// the checklist never waits more than a day.
+	it('runs the daily check, reading the checklist first and the connection check on Mondays', () => {
+		const trigger = triggerByName('Daily check (06:00 UTC)')
+		expect(trigger.name).toBe('Daily check (06:00 UTC)')
 		expect(trigger.config).toMatchObject({ expression: '0 6 * * *' })
 		const prompt = trigger.actionPrompt ?? ''
 		expect(prompt).toMatch(/^First read the flow's setup checklist/)
@@ -127,6 +133,40 @@ describe('Accounting loop definition', () => {
 		expect(prompt.indexOf('only if today is Monday (UTC)')).toBeLessThan(
 			prompt.indexOf('weekly connection check'),
 		)
+	})
+
+	// The briefing runs an hour after the daily check, so a lapsed sign-in is found first. It reads
+	// the Dinero reports and posted entries first, falls back to bank lines and vouchers only when
+	// a report cannot be read, and never estimates.
+	it('posts a weekly money briefing on Mondays, flagging missing data and never estimating', () => {
+		const trigger = triggerByName('Weekly money briefing (Mon 07:00 UTC)')
+		expect(trigger.config).toMatchObject({ expression: '0 7 * * 1' })
+		expect(trigger.targetActorId).toBe(ACCOUNTING_LOOP_ACTOR_BOOKKEEPER)
+		expect(trigger.enabled).toBe(true)
+		const prompt = trigger.actionPrompt ?? ''
+		expect(prompt).toContain('flow named Accounting')
+		expect(prompt).toContain('more than 1 hour after its scheduled time')
+		expect(prompt).toContain('Line one of the page is the data line')
+		expect(prompt).toContain('Never estimate')
+		expect(prompt).toContain('Read the reports first')
+		expect(prompt).toContain('get_report')
+		expect(prompt).toContain('list_posted_entries')
+		expect(prompt).toContain('Only when a report cannot be read')
+		expect(prompt).toContain('rebuild every figure from the bank lines and vouchers')
+		expect(prompt).toContain('say so on the data line')
+		expect(prompt).toContain('Never book, post, file, pay, send or change anything')
+		expect(prompt).toContain('in_loop')
+		for (const part of [
+			'Runway in months',
+			'Customers by profit',
+			'three biggest money moves',
+			'Books status',
+			'Deadlines in the next 30 days',
+			'at most 3',
+		]) {
+			expect(prompt).toContain(part)
+		}
+		expect(ACCOUNTING_LOOP.description).toMatch(/Every Monday it also posts a short money briefing/)
 	})
 
 	it('tells the Bookkeeper about its checklist and the three-question limit', () => {
@@ -191,12 +231,17 @@ describe('Accounting loop definition', () => {
 			'list_voucher_file_cards',
 			'get_purchase_drafts_for_file',
 			'SearchBankTransactions',
+			'get_report',
+			'list_posted_entries',
 		]
 		const check =
 			skillTexts().find((t) => t.startsWith('---\nname: accounting-connection-check')) ?? ''
 		const prompt = actorTexts().join('\n')
 		expect(check).toMatch(/PUT \/api\/custom-mcp-servers\/\{id\}/)
 		expect(check).toMatch(/add allowed_tools to the server/)
+		expect(check).toMatch(/exactly these 18 names/)
+		expect(ACCOUNTING_LOOP.description).toMatch(/exactly these 18 names/)
+		expect(prompt).not.toMatch(/\b16\b/)
 		for (const name of allowed) {
 			expect(check).toContain(name)
 			expect(prompt).toContain(name)

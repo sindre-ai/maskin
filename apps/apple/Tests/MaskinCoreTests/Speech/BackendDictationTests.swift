@@ -182,21 +182,6 @@ struct WAVEncodingTests {
 	}
 }
 
-@Suite("DictationLanguage")
-struct DictationLanguageTests {
-	@Test func usesTheFirstLanguageAsABareCode() {
-		#expect(DictationLanguage.hint(preferredLanguages: ["da-DK", "en-US"]) == "da")
-		#expect(DictationLanguage.hint(preferredLanguages: ["en_GB"]) == "en")
-		#expect(DictationLanguage.hint(preferredLanguages: ["zh-Hans-CN"]) == "zh")
-	}
-
-	@Test func sendsNothingWhenThereIsNoUsableCode() {
-		#expect(DictationLanguage.hint(preferredLanguages: []) == nil)
-		#expect(DictationLanguage.hint(preferredLanguages: ["x"]) == nil)
-		#expect(DictationLanguage.hint(preferredLanguages: ["1234"]) == nil)
-	}
-}
-
 /// Answers each call from a script; a phrase's `delay` makes it finish after later ones.
 private final class ScriptedTranscriber: SpeechTranscribing, @unchecked Sendable {
 	struct Reply: Sendable {
@@ -207,16 +192,14 @@ private final class ScriptedTranscriber: SpeechTranscribing, @unchecked Sendable
 
 	private let lock = NSLock()
 	private let replies: [Reply]
-	private(set) var calls: [String?] = []
 
 	init(_ replies: [Reply]) { self.replies = replies }
 
-	func transcribe(wav: Data, language: String?) async throws -> String {
+	func transcribe(wav: Data) async throws -> String {
 		// The reply belongs to the phrase (its first byte, 1 for the first one submitted), not to the order
 		// the calls happen to start in: the queue starts each request as its own concurrent task.
 		let index = Int(wav.first ?? 1) - 1
 		let reply: Reply = lock.withLock {
-			calls.append(language)
 			return replies.indices.contains(index) ? replies[index] : Reply(text: "")
 		}
 		if reply.delay > .zero { try await Task.sleep(for: reply.delay) }
@@ -234,12 +217,12 @@ struct PhraseTranscriptionQueueTests {
 	}
 
 	private func makeQueue(
-		_ replies: [ScriptedTranscriber.Reply], language: String? = nil, requestTimeout: Duration = .seconds(20)
+		_ replies: [ScriptedTranscriber.Reply], requestTimeout: Duration = .seconds(20)
 	) -> (PhraseTranscriptionQueue, Sink, ScriptedTranscriber) {
 		let sink = Sink()
 		let transcriber = ScriptedTranscriber(replies)
 		let queue = PhraseTranscriptionQueue(
-			transcriber: transcriber, language: language,
+			transcriber: transcriber,
 			onText: { sink.texts.append($0) }, onFailure: { _ in sink.failures += 1 },
 			requestTimeout: requestTimeout)
 		return (queue, sink, transcriber)
@@ -257,13 +240,6 @@ struct PhraseTranscriptionQueueTests {
 		await queue.drain(timeout: .seconds(300))
 		#expect(sink.texts == ["first", "first second"])
 		#expect(queue.text == "first second")
-	}
-
-	@Test func sendsTheLanguageHint() async {
-		let (queue, _, transcriber) = makeQueue([.init(text: "hej")], language: "da")
-		queue.submit(wav: Data([1]))
-		await queue.drain(timeout: .seconds(300))
-		#expect(transcriber.calls == ["da"])
 	}
 
 	@Test func aPhraseWithNoSpeechAddsNothing() async {

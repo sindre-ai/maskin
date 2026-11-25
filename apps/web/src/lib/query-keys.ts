@@ -96,6 +96,9 @@ export const queryKeys = {
 			['dinero-review', workspaceId, 'vat-check-note', from, to] as const,
 		all: (workspaceId: string) => ['dinero-review', workspaceId] as const,
 	},
+	dineroBooking: {
+		all: (workspaceId: string) => ['dinero-booking', workspaceId] as const,
+	},
 	sendPermissions: {
 		all: (workspaceId: string) => ['send-permissions', workspaceId] as const,
 	},

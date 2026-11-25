@@ -25,6 +25,7 @@ struct EditableDraftCard: View {
 		VStack(alignment: .leading, spacing: 0) {
 			head
 			Rectangle().fill(MaskinSurface.separator).frame(height: 1)
+			if let original = draft.originalMessage { originalMessage(original) }
 			if draft.isEmail { emailRows }
 			bodyEditor
 			hintRow
@@ -62,6 +63,15 @@ struct EditableDraftCard: View {
 		}
 		.padding(.horizontal, MaskinSpace.s8)
 		.padding(.vertical, MaskinSpace.s6)
+	}
+
+	// MARK: Original message
+
+	/// What the draft answers, read before the draft. Not part of what Approve sends.
+	private func originalMessage(_ text: String) -> some View {
+		OriginalMessageView(label: draft.originalMessageLabel, text: text)
+			.padding(.horizontal, MaskinSpace.s8)
+			.padding(.vertical, MaskinSpace.s5)
 	}
 
 	// MARK: Email fields

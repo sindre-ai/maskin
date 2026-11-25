@@ -29,7 +29,6 @@ struct WatchHome: View {
 		_listening = State(
 			initialValue: WatchListeningStore(
 				transcriber: environment.auth.session == nil ? nil : APIBackendDictation(client: client),
-				language: DictationLanguage.hint(preferredLanguages: Locale.preferredLanguages),
 				makeMicrophone: {
 					// A wrist microphone is quiet: count a lower level as speech than on the iPhone.
 					var options = PhraseSegmenter.Options()
