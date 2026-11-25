@@ -831,6 +831,9 @@ describe('Dinero is limited to a fixed list of tools through the gateway (Integr
 		)
 		expect(bad.isError).toBe(true)
 		expect(fetchMock).not.toHaveBeenCalled()
+		// It reads and never writes: no Dinero action is logged for it.
+		const logged = await db.select().from(events).where(eq(events.workspaceId, s.ws.id))
+		expect(logged.filter((e) => e.action === 'dinero_action')).toEqual([])
 	})
 
 	it('saves an invoice or credit note as a draft only, and refuses a call that asks to book or send', async () => {
@@ -1101,6 +1104,9 @@ describe('Dinero booking is stamped and logged through the gateway (Integration)
 		expect(
 			result.tools.find((t) => t.name === 'list_posted_entries')?.annotations.readOnlyHint,
 		).toBe(true)
+		expect(result.tools.find((t) => t.name === 'get_vat_report')?.annotations.readOnlyHint).toBe(
+			true,
+		)
 	})
 
 	it('refuses a bridge call with no version stamp, before Dinero', async () => {
