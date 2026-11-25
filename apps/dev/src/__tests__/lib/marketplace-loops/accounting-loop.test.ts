@@ -27,7 +27,7 @@ describe('Accounting loop definition', () => {
 		expect(ACCOUNTING_LOOP.slug).toBe('accounting-loop')
 		expect(ACCOUNTING_LOOP.name).toBe('Accounting')
 		expect(ACCOUNTING_LOOP.useCase).toBe('Finance')
-		expect(ACCOUNTING_LOOP.version).toBe('1.0.1')
+		expect(ACCOUNTING_LOOP.version).toBe('1.1.0')
 		expect(ACCOUNTING_LOOP.description.length).toBeGreaterThan(0)
 	})
 
@@ -59,9 +59,9 @@ describe('Accounting loop definition', () => {
 		expect(settings.checklist?.body).toContain('at most 3 questions at a time')
 	})
 
-	it('ships one actor, one trigger and two skills, no duplicates', () => {
+	it('ships one actor, two triggers and two skills, no duplicates', () => {
 		expect(ACCOUNTING_LOOP_ACTOR_IDS).toEqual([ACCOUNTING_LOOP_ACTOR_BOOKKEEPER])
-		expect(ACCOUNTING_LOOP_TRIGGER_IDS.length).toBe(1)
+		expect(ACCOUNTING_LOOP_TRIGGER_IDS.length).toBe(2)
 		expect(ACCOUNTING_LOOP_SKILL_IDS.length).toBe(2)
 		expect(new Set(ACCOUNTING_LOOP_SKILL_IDS).size).toBe(ACCOUNTING_LOOP_SKILL_IDS.length)
 		expect(ACCOUNTING_LOOP_SKILL_IDS.map((id) => getSkillData(id).name).sort()).toEqual([
@@ -82,11 +82,18 @@ describe('Accounting loop definition', () => {
 		}
 	})
 
-	// The one trigger is the daily check: it reads the checklist every day and keeps the connection
-	// check to Mondays, so no second trigger is needed and the checklist never waits more than a day.
+	const triggerByName = (name: string) => {
+		const found = ACCOUNTING_LOOP_TRIGGER_IDS.map((id) => getTriggerData(id)).find(
+			(t) => t.name === name,
+		)
+		if (!found) throw new Error(`trigger ${name} not found in the accounting bundle`)
+		return found
+	}
+
+	// The daily check reads the checklist every day and keeps the connection check to Mondays, so
+	// the checklist never waits more than a day.
 	it('runs the daily check, reading the checklist first and the connection check on Mondays', () => {
-		const [id] = ACCOUNTING_LOOP_TRIGGER_IDS
-		const trigger = getTriggerData(id as string)
+		const trigger = triggerByName('Daily check (06:00 UTC)')
 		expect(trigger.name).toBe('Daily check (06:00 UTC)')
 		expect(trigger.config).toMatchObject({ expression: '0 6 * * *' })
 		const prompt = trigger.actionPrompt ?? ''
@@ -103,6 +110,34 @@ describe('Accounting loop definition', () => {
 		expect(prompt.indexOf('only if today is Monday (UTC)')).toBeLessThan(
 			prompt.indexOf('weekly connection check'),
 		)
+	})
+
+	// The briefing runs an hour after the daily check, so a lapsed sign-in is found first. It has no
+	// report tool, so it rebuilds figures from bank lines and vouchers and never estimates.
+	it('posts a weekly money briefing on Mondays, flagging missing data and never estimating', () => {
+		const trigger = triggerByName('Weekly money briefing (Mon 07:00 UTC)')
+		expect(trigger.config).toMatchObject({ expression: '0 7 * * 1' })
+		expect(trigger.targetActorId).toBe(ACCOUNTING_LOOP_ACTOR_BOOKKEEPER)
+		expect(trigger.enabled).toBe(true)
+		const prompt = trigger.actionPrompt ?? ''
+		expect(prompt).toContain('flow named Accounting')
+		expect(prompt).toContain('more than 1 hour after its scheduled time')
+		expect(prompt).toContain('Line one of the page is the data line')
+		expect(prompt).toContain('Never estimate')
+		expect(prompt).toContain('rebuild every figure from the bank lines and vouchers')
+		expect(prompt).toContain('Never book, post, file, pay, send or change anything')
+		expect(prompt).toContain('in_loop')
+		for (const part of [
+			'Runway in months',
+			'Customers by profit',
+			'three biggest money moves',
+			'Books status',
+			'Deadlines in the next 30 days',
+			'at most 3',
+		]) {
+			expect(prompt).toContain(part)
+		}
+		expect(ACCOUNTING_LOOP.description).toMatch(/Every Monday it also posts a short money briefing/)
 	})
 
 	it('tells the Bookkeeper about its checklist and the three-question limit', () => {
