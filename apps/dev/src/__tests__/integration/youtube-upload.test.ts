@@ -374,7 +374,7 @@ describe('YouTube upload and publish', () => {
 					)
 			)[0]?.n
 
-		it('allows 5 uploads a day in a workspace and counts them in the global bucket', async () => {
+		it('allows 20 uploads a day in a workspace and counts them in the global bucket', async () => {
 			const ws = crypto.randomUUID()
 			await db.delete(youtubeQuotaUsage).where(eq(youtubeQuotaUsage.scope, UPLOAD_GLOBAL_SCOPE))
 			for (let i = 0; i < UPLOAD_WORKSPACE_DAILY_CAP; i++)

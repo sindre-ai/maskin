@@ -161,9 +161,9 @@ describe('chargeYoutubeQuota', () => {
 	describe('buckets', () => {
 		it('holds the caps the spec names', () => {
 			expect(BUCKET_CAPS).toEqual({
-				data: { global: 5000, workspace: 1000 },
+				data: { global: 5000, workspace: 2000 },
 				search: { global: 60, workspace: 20 },
-				upload: { global: 20, workspace: 5 },
+				upload: { global: 80, workspace: 20 },
 				analytics: { global: 200, workspace: 50 },
 			})
 		})
