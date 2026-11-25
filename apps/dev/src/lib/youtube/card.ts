@@ -3,7 +3,7 @@ import type { youtubePendingActions } from '@maskin/db/schema'
 import type { CommentDecision } from '@maskin/shared'
 import { postComment } from '../comments'
 import { sortKeys } from './hash'
-import { describeStoredRequest } from './upload'
+import { describeStoredRequest, uploadVisibilityWord } from './upload'
 
 /**
  * The For You card for one pending YouTube action, drawn from the stored row. Nothing here reads
@@ -28,7 +28,7 @@ const KIND_PHRASES: Record<string, string> = {
 	post_comment: 'post a comment',
 	reply_to_comment: 'reply to a comment',
 	like: 'like a video or a comment',
-	upload_video: 'upload a video as private',
+	upload_video: 'upload a video',
 	publish_video: 'change who can watch a video',
 	upload_caption: 'add a caption track to a video',
 	replace_caption: 'replace a caption track of a video',
@@ -44,10 +44,6 @@ const KIND_TITLES: Record<string, string> = {
 }
 
 const APPROVE_CONSEQUENCES: Record<string, string[]> = {
-	upload_video: [
-		'The video uploads to YouTube as private',
-		'Nobody can watch it until a second approval',
-	],
 	publish_video: [
 		'The video changes visibility on YouTube',
 		'Viewers can see it once it is public',
@@ -69,6 +65,32 @@ const APPROVE_CONSEQUENCES: Record<string, string[]> = {
 	delete_comment: ['The comment is removed from YouTube', 'It cannot be restored'],
 	delete_playlist: ['The playlist is deleted from YouTube', 'The videos in it stay on the channel'],
 	remove_from_playlist: ['The video leaves the playlist', 'The video itself stays on the channel'],
+}
+
+/** What approving an upload does, read from the stored request: its visibility is the one that is sent. */
+function uploadConsequences(payload: Record<string, unknown>): [string, string] {
+	switch (uploadVisibilityWord(payload)) {
+		case 'PUBLIC':
+			return [
+				'The video uploads to YouTube as PUBLIC',
+				'Everyone can watch it once YouTube has processed it',
+			]
+		case 'UNLISTED':
+			return [
+				'The video uploads to YouTube as UNLISTED',
+				'Anyone with the link can watch it once YouTube has processed it',
+			]
+		case 'SCHEDULED':
+			return [
+				'The video uploads to YouTube as private',
+				`It becomes PUBLIC at ${String(payload.publishAt)} (UTC)`,
+			]
+		default:
+			return [
+				'The video uploads to YouTube as private',
+				'Nobody can watch it until a second approval',
+			]
+	}
 }
 
 const DRAFT_LABEL = 'YouTube change'
@@ -95,7 +117,11 @@ export function renderYoutubeActionCard(action: ActionCardSource): {
 	decision: CommentDecision
 } {
 	const channel = action.channelLabel ?? 'the connected channel'
-	const phrase = KIND_PHRASES[action.kind] ?? 'make a change'
+	const payload = (action.payload ?? {}) as Record<string, unknown>
+	const phrase =
+		action.kind === 'upload_video'
+			? `upload a video (visibility ${uploadVisibilityWord(payload)})`
+			: (KIND_PHRASES[action.kind] ?? 'make a change')
 	return {
 		content: action.agentNote
 			? `A YouTube change is waiting for approval.\n\n${NOTE_LABEL}: ${action.agentNote}`
@@ -107,10 +133,13 @@ export function renderYoutubeActionCard(action: ActionCardSource): {
 				{
 					label: YOUTUBE_APPROVE_LABEL,
 					destructive: true,
-					consequences: APPROVE_CONSEQUENCES[action.kind] ?? [
-						'The change goes to YouTube right away',
-						'Viewers can see it',
-					],
+					consequences:
+						action.kind === 'upload_video'
+							? uploadConsequences(payload)
+							: (APPROVE_CONSEQUENCES[action.kind] ?? [
+									'The change goes to YouTube right away',
+									'Viewers can see it',
+								]),
 				},
 				{
 					label: YOUTUBE_REJECT_LABEL,

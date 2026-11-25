@@ -36,13 +36,48 @@ function ruleOf(fn: () => unknown): string | undefined {
 }
 
 describe('buildUploadPayload', () => {
-	it('is always private and carries the synthetic media flag only when marked', () => {
+	it('is private unless asked otherwise and carries the synthetic media flag only when marked', () => {
 		const plain = buildUploadPayload(FILE, { title: ' Launch ' })
 		expect(plain).toMatchObject({ title: 'Launch', privacyStatus: 'private', fileId: FILE.id })
 		expect(plain).not.toHaveProperty('containsSyntheticMedia')
 		expect(buildUploadPayload(FILE, { title: 'Launch', aiGenerated: true })).toMatchObject({
 			containsSyntheticMedia: true,
 		})
+	})
+
+	it('holds the visibility that was asked for, and a schedule as private with an exact UTC time', () => {
+		expect(buildUploadPayload(FILE, { title: 'T', visibility: 'private' }).privacyStatus).toBe(
+			'private',
+		)
+		const unlisted = buildUploadPayload(FILE, { title: 'T', visibility: 'unlisted' })
+		expect(unlisted.privacyStatus).toBe('unlisted')
+		expect(unlisted).not.toHaveProperty('publishAt')
+		const pub = buildUploadPayload(FILE, { title: 'T', visibility: 'public' })
+		expect(pub.privacyStatus).toBe('public')
+		expect(pub).not.toHaveProperty('publishAt')
+		expect(
+			buildUploadPayload(
+				FILE,
+				{ title: 'T', visibility: 'public', publishAt: '2026-12-01T12:00:00+02:00' },
+				NOW,
+			),
+		).toMatchObject({ privacyStatus: 'private', publishAt: '2026-12-01T10:00:00.000Z' })
+	})
+
+	it('refuses a schedule that is not public, has no zone or has passed, and an unknown visibility', () => {
+		const rule = (input: Parameters<typeof buildUploadPayload>[1]) =>
+			ruleOf(() => buildUploadPayload(FILE, input, NOW))
+		expect(rule({ title: 'T', publishAt: '2026-12-02T10:00:00Z' })).toBe('bad_visibility')
+		expect(rule({ title: 'T', visibility: 'unlisted', publishAt: '2026-12-02T10:00:00Z' })).toBe(
+			'bad_visibility',
+		)
+		expect(rule({ title: 'T', visibility: 'public', publishAt: '2026-12-02T10:00:00' })).toBe(
+			'bad_publish_time',
+		)
+		expect(rule({ title: 'T', visibility: 'public', publishAt: '2026-12-01T08:00:00Z' })).toBe(
+			'publish_time_passed',
+		)
+		expect(rule({ title: 'T', visibility: 'everyone' as never })).toBe('bad_visibility')
 	})
 
 	it('refuses a file that is not a video, is empty or is over the limit', () => {
@@ -86,6 +121,25 @@ describe('buildUploadPayload', () => {
 		expect(lines.join('\n')).toContain('PRIVATE')
 		expect(lines.join('\n')).toContain('yes, marked by the requester')
 		expect(lines.join('\n')).toContain('launch.mp4')
+	})
+
+	it('says the visibility in capitals, and for public that everyone can watch', () => {
+		const lines = (input: Parameters<typeof buildUploadPayload>[1]) =>
+			describeStoredRequest(
+				'upload_video',
+				buildUploadPayload(FILE, input, NOW) as unknown as Record<string, unknown>,
+			)[0]
+		expect(lines({ title: 'T', visibility: 'public' })).toBe(
+			'Visibility: PUBLIC. The video is visible to everyone as soon as YouTube has processed it.',
+		)
+		expect(lines({ title: 'T', visibility: 'unlisted' })).toContain('Visibility: UNLISTED')
+		expect(
+			lines({ title: 'T', visibility: 'public', publishAt: '2026-12-01T12:00:00Z' }),
+		).toContain('PUBLIC at exactly: 2026-12-01T12:00:00.000Z (UTC)')
+		// A stored request from before visibility existed is shown as private.
+		expect(describeStoredRequest('upload_video', { fileName: 'a.mp4' })[0]).toContain(
+			'Visibility: PRIVATE',
+		)
 	})
 })
 
@@ -159,21 +213,50 @@ describe('the upload client', () => {
 
 	const payload = buildUploadPayload(FILE, { title: 'T', tags: ['a'] })
 
-	it('writes private into the insert body whatever the request held', () => {
-		const body = buildInsertBody({ ...payload, privacyStatus: 'public' } as never)
-		expect(body.status).toEqual({ privacyStatus: 'private' })
+	it('writes the approved visibility into the insert body, private by default', () => {
+		expect(buildInsertBody(payload).status).toEqual({ privacyStatus: 'private' })
 		expect(buildInsertBody({ ...payload, containsSyntheticMedia: true }).status).toEqual({
 			privacyStatus: 'private',
 			containsSyntheticMedia: true,
 		})
+		for (const visibility of ['private', 'unlisted', 'public'] as const) {
+			const held = buildUploadPayload(FILE, { title: 'T', visibility })
+			expect(buildInsertBody(held).status).toEqual({ privacyStatus: visibility })
+		}
+		const scheduled = buildUploadPayload(
+			FILE,
+			{ title: 'T', visibility: 'public', publishAt: '2026-12-01T12:00:00Z' },
+			NOW,
+		)
+		expect(buildInsertBody(scheduled).status).toEqual({
+			privacyStatus: 'private',
+			publishAt: '2026-12-01T12:00:00.000Z',
+		})
 	})
 
-	it('fails an insert whose status is unset or not private, without calling Google', async () => {
+	it('writes private when a stored request holds a privacy it does not know, and drops a time on a public one', () => {
+		expect(buildInsertBody({ ...payload, privacyStatus: 'everyone' } as never).status).toEqual({
+			privacyStatus: 'private',
+		})
+		expect(buildInsertBody({ ...payload } as never).status).toEqual({ privacyStatus: 'private' })
+		expect(
+			buildInsertBody({
+				...payload,
+				privacyStatus: 'public',
+				publishAt: '2026-12-01T12:00:00.000Z',
+			}).status,
+		).toEqual({ privacyStatus: 'public' })
+	})
+
+	it('fails an insert whose status is unset or unknown, or has a time on a public video, without calling Google', async () => {
 		for (const body of [
 			{ snippet: { title: 'T' } },
 			{ snippet: { title: 'T' }, status: {} },
-			{ snippet: { title: 'T' }, status: { privacyStatus: 'public' } },
-			{ snippet: { title: 'T' }, status: { privacyStatus: 'unlisted' } },
+			{ snippet: { title: 'T' }, status: { privacyStatus: 'everyone' } },
+			{
+				snippet: { title: 'T' },
+				status: { privacyStatus: 'public', publishAt: '2026-12-01T12:00:00Z' },
+			},
 		]) {
 			const result = await startUploadSession({
 				accessToken: 't',
@@ -181,9 +264,24 @@ describe('the upload client', () => {
 				sizeBytes: 10,
 				mimeType: 'video/mp4',
 			})
-			expect(result).toEqual({ ok: false, code: 'privacy_not_private', retryable: false })
+			expect(result).toEqual({ ok: false, code: 'privacy_not_set', retryable: false })
 		}
 		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('opens a session for a public body, because the body names its privacy', async () => {
+		fetchMock.mockResolvedValue(
+			new Response(null, { status: 200, headers: { location: 'https://upload.example/s2' } }),
+		)
+		const result = await startUploadSession({
+			accessToken: 't',
+			body: buildInsertBody(buildUploadPayload(FILE, { title: 'T', visibility: 'public' })),
+			sizeBytes: 1_000,
+			mimeType: 'video/mp4',
+		})
+		expect(result).toEqual({ ok: true, sessionUri: 'https://upload.example/s2' })
+		const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+		expect(JSON.parse(init.body as string).status.privacyStatus).toBe('public')
 	})
 
 	it('opens the session with the private body and returns the session address', async () => {

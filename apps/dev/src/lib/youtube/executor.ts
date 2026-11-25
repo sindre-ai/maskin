@@ -349,10 +349,10 @@ async function runPublish(
 }
 
 /**
- * Uploads the stored file as a private video. The upload is a resumable session: the address and
- * the confirmed byte count are written back to the row, so a run that is cut off carries on from
- * what Google holds (see `resumeInterruptedYoutubeUploads`). Privacy is set to private by the
- * upload client whatever the request held.
+ * Uploads the stored file with the privacy the person approved. The upload is a resumable session:
+ * the address and the confirmed byte count are written back to the row, so a run that is cut off
+ * carries on from what Google holds (see `resumeInterruptedYoutubeUploads`). The upload client
+ * writes that privacy explicitly, and private when the stored request holds anything unknown.
  */
 async function runUpload(
 	db: Database,
@@ -373,6 +373,10 @@ async function runUpload(
 		return finish(db, row, 'failed', 'file_changed')
 	}
 	if (file.sizeBytes > YOUTUBE_UPLOAD_MAX_BYTES) return finish(db, row, 'failed', 'file_too_large')
+	// A schedule that has gone by before the upload starts would publish at once: not what was approved.
+	if (!row.uploadSessionUri && publishTimeHasPassed(payload)) {
+		return finish(db, row, 'failed', 'publish_time_passed')
+	}
 
 	const getAccessToken = () => deps.getAccessToken(db, row.integrationId)
 	let sessionUri = row.uploadSessionUri

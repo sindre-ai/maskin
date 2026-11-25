@@ -157,6 +157,35 @@ describe('YouTube action card', () => {
 		expect(entry).toContain('Only the entry in this playlist is removed')
 	})
 
+	it('shows the visibility of an upload on the card, in capitals, from the stored request', () => {
+		const card = (payload: Record<string, unknown>) =>
+			renderYoutubeActionCard({
+				...base,
+				kind: 'upload_video',
+				payload: { fileName: 'launch.mp4', sizeBytes: 5000, ...payload },
+				targetVideoId: null,
+			})
+		const pub = card({ privacyStatus: 'public' })
+		expect(pub.decision.summary).toContain('visibility PUBLIC')
+		expect(pub.decision.options[0]?.consequences).toEqual([
+			'The video uploads to YouTube as PUBLIC',
+			'Everyone can watch it once YouTube has processed it',
+		])
+		expect(pub.decision.draft?.body).toContain(
+			'Visibility: PUBLIC. The video is visible to everyone',
+		)
+		expect(card({ privacyStatus: 'unlisted' }).decision.options[0]?.consequences[0]).toContain(
+			'UNLISTED',
+		)
+		const scheduled = card({ privacyStatus: 'private', publishAt: '2026-12-01T09:00:00.000Z' })
+		expect(scheduled.decision.options[0]?.consequences[1]).toBe(
+			'It becomes PUBLIC at 2026-12-01T09:00:00.000Z (UTC)',
+		)
+		expect(card({ privacyStatus: 'private' }).decision.options[0]?.consequences[1]).toBe(
+			'Nobody can watch it until a second approval',
+		)
+	})
+
 	it('marks Approve as the destructive option and recommends Reject', () => {
 		const { decision } = renderYoutubeActionCard({ ...base, kind: 'like' })
 		const approve = decision.options.find((o) => o.label === 'Approve')
