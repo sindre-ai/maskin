@@ -71,7 +71,7 @@ const vatReport = (over: Record<string, unknown> = {}) => ({
 	lines: [vatLine],
 	totals: { input_vat: 250, output_vat: 0, complete: true, uncalculated_lines: 0 },
 	figures_hash: 'a'.repeat(64),
-	notice: 'A draft for checking, not the VAT return. Nothing has been filed.',
+	notice: 'A draft for checking, not the VAT return. This report files nothing.',
 	...over,
 })
 
