@@ -87,6 +87,23 @@ describe('Settings > Dinero booking', () => {
 		})
 	})
 
+	it('asks for a new tick after booking was switched on and off again', async () => {
+		let enabled = false
+		mockGet.mockImplementation(async () => state({ enabled }))
+		mockSet.mockImplementation(async (_ws: string, body: { enabled: boolean }) => {
+			enabled = body.enabled
+			return state({ enabled })
+		})
+		const user = userEvent.setup()
+		renderCard()
+		await user.click(await screen.findByRole('checkbox', { name: 'I have read this' }))
+		await user.click(screen.getByRole('button', { name: 'Switch booking on' }))
+		await user.click(await screen.findByRole('button', { name: 'Switch booking off' }))
+		const again = await screen.findByRole('button', { name: 'Switch booking on' })
+		expect(screen.getByRole('checkbox', { name: 'I have read this' })).not.toBeChecked()
+		expect(again).toBeDisabled()
+	})
+
 	it('switches on to off with one click and no tick', async () => {
 		mockGet.mockResolvedValue(state({ enabled: true, set_at: '2026-11-25T10:00:00.000Z' }))
 		const user = userEvent.setup()

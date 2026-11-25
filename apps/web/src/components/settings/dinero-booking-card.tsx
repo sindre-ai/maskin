@@ -60,7 +60,7 @@ function BookingBody({ workspaceId, state }: { workspaceId: string; state: Diner
 					<Button
 						variant="outline"
 						disabled={set.isPending}
-						onClick={() => set.mutate({ enabled: false })}
+						onClick={() => set.mutate({ enabled: false }, { onSuccess: () => setRead(false) })}
 					>
 						Switch booking off
 					</Button>
@@ -79,7 +79,9 @@ function BookingBody({ workspaceId, state }: { workspaceId: string; state: Diner
 					</div>
 					<Button
 						disabled={!read || set.isPending}
-						onClick={() => set.mutate({ enabled: true, acknowledged: true })}
+						onClick={() =>
+							set.mutate({ enabled: true, acknowledged: true }, { onSuccess: () => setRead(false) })
+						}
 					>
 						Switch booking on
 					</Button>
