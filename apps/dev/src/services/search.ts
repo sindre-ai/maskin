@@ -15,6 +15,9 @@ import {
 import { type SQL, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import {
+	FRECENCY_HALF_LIFE_DAYS,
+	FRECENCY_MAX_BONUS,
+	FRECENCY_POINTS_PER_OPEN,
 	NAME_WHOLE_WORD_BONUS,
 	NAME_WORD_PREFIX_BONUS,
 	TITLE_COVERAGE_SCALE,
@@ -474,7 +477,12 @@ function tierExpression(tokens: string[], source: SearchSource): SQL {
  * bonus when the word starts a word of the title. It reads the candidate row `s` and runs for the
  * matched rows only, so the second look at the title and body costs next to nothing.
  */
-function scoreExpression(tokens: string[], source: SearchSource, hasDeep: boolean): SQL {
+function scoreExpression(
+	tokens: string[],
+	source: SearchSource,
+	hasDeep: boolean,
+	ctx: SearchContext,
+): SQL {
 	if (tokens.length === 0) return sql`0`
 	const perToken = tokens.map((token) => {
 		const pattern = tokenIlikePattern(token)
@@ -485,7 +493,23 @@ function scoreExpression(tokens: string[], source: SearchSource, hasDeep: boolea
 		const wordStart = wordPatterns(token).start
 		return sql`((case when s.title ilike ${pattern} then ${TITLE_HIT_WEIGHT}::int + floor(${TITLE_COVERAGE_SCALE}::int * ${token.length}::int / greatest(length(s.title), 1)) + (case when s.title ~* ${wordStart} then ${TITLE_PHRASE_PREFIX_BONUS}::int else 0 end) else 0 end) + ${name} + (case when ${body} then 1 else 0 end))`
 	})
-	return sql.join(perToken, sql` + `)
+	return sql`${sql.join(perToken, sql` + `)} + ${frecencyBonus(ctx)}`
+}
+
+/**
+ * The bonus for a result the caller opened from search before: their own decayed open count for
+ * the candidate row `s`, times the points per open, capped. Only the caller's rows are read, and
+ * only for a typed query (an empty query has no score at all).
+ */
+function frecencyBonus({ workspaceId, callerId }: SearchContext): SQL {
+	const ageDays = sql`extract(epoch from (now() - so.last_opened_at)) / 86400.0`
+	return sql`coalesce((
+		SELECT floor(least(${FRECENCY_MAX_BONUS}::double precision,
+			so.decayed_opens * power(0.5, ${ageDays} / ${FRECENCY_HALF_LIFE_DAYS}::double precision)
+				* ${FRECENCY_POINTS_PER_OPEN}::double precision))::int
+		FROM search_opens so
+		WHERE so.workspace_id = ${workspaceId} AND so.actor_id = ${callerId} AND so.entity_id = s.id
+	), 0)`
 }
 
 /**
@@ -736,7 +760,7 @@ async function runSource(
 				SELECT s.id, s.type, s.title, s.sub, ${SNIPPET} AS snippet, ${statusExpr(source, ctx)} AS status,
 					s.updated_at, (${participantsOk}) AS p_ok,
 					${hasDeep ? sql`s.deep,` : sql``}
-					${scoreExpression(tokens, source, hasDeep)} AS score,
+					${scoreExpression(tokens, source, hasDeep, ctx)} AS score,
 					${tierExpression(tokens, source)} AS tier,
 					${inWindow} AS in_window
 				FROM (${candidates}) s

@@ -3809,6 +3809,28 @@ export const ownerApprovals = pgTable(
 	],
 )
 
+// ── Search opens (frecency) ────────────────────────────────────────────────
+
+// One row per person and result they opened from a search. decayed_opens is the open count with
+// age folded in: each open adds 1 to the old value halved per 14 days, last_opened_at says when
+// the value was current. Search reads it back decayed to now. Only the caller's own rows are read.
+// entity_id has no foreign key: it points at a chat, object, agent or person. See 0176_search_opens.sql.
+export const searchOpens = pgTable(
+	'search_opens',
+	{
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		entityId: uuid('entity_id').notNull(),
+		decayedOpens: doublePrecision('decayed_opens').notNull().default(0),
+		lastOpenedAt: timestamp('last_opened_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [primaryKey({ columns: [t.workspaceId, t.actorId, t.entityId] })],
+)
+
 // ── YouTube approval gate ──────────────────────────────────────────────────
 
 // One write an agent wants to make on YouTube, held until a person approves it. A tool call only

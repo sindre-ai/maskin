@@ -20,7 +20,10 @@ vi.mock('@tanstack/react-router', () => ({
 vi.mock('@/components/layout/page-header', () => ({ PageHeader: () => null }))
 
 vi.mock('@/lib/api', () => ({
-	api: { search: { query: vi.fn() }, actors: { list: vi.fn() } },
+	api: {
+		search: { query: vi.fn(), recordOpen: vi.fn().mockResolvedValue(undefined) },
+		actors: { list: vi.fn() },
+	},
 }))
 
 vi.mock('@/hooks/use-objects', () => ({ useObjects: () => ({ data: [] }) }))
@@ -671,6 +674,7 @@ describe('SearchPageV2 keyboard and analytics', () => {
 				ui_version: 'v2',
 			}),
 		)
+		expect(api.search.recordOpen).toHaveBeenCalledWith(expect.any(String), ROW_IDS.loop)
 		// The search is remembered with its words and pills.
 		const key = Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i)).find(
 			(k) => k?.startsWith('maskin-recent-searches-'),
