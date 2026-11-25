@@ -93,12 +93,12 @@ struct LoopAboutSection: View {
 	}
 }
 
-/// "Starts when" and "Done when", as the flow states them. Nothing when neither is set.
+/// "Starts when" and "Ends when", as the flow states them. Nothing when neither is set.
 struct LoopConditionsSection: View {
 	let loop: LoopSummary
 
 	var body: some View {
-		let rows = [("Starts when", loop.entryCondition), ("Done when", loop.closeCondition)]
+		let rows = [("Starts when", loop.entryCondition), ("Ends when", loop.closeCondition)]
 			.compactMap { label, value in value.flatMap { $0.isEmpty ? nil : (label, $0) } }
 		if !rows.isEmpty {
 			VStack(alignment: .leading, spacing: MaskinSpace.s5) {
@@ -157,133 +157,6 @@ struct LoopScheduleSection: View {
 				.padding(.horizontal, MaskinSpace.s8)
 				.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
 			}
-		}
-	}
-}
-
-/// LAST 7 DAYS: runs per day from the flow's activity feed, failed ones in ink over Patina.
-struct LoopRunChart: View {
-	let activity: [LoopActivityEntry]
-	let loaded: Bool
-
-	private static let barHeight: CGFloat = MaskinSpace.s14 + MaskinSpace.s14 + MaskinSpace.s4
-
-	var body: some View {
-		let now = Date()
-		let days = LoopRunHistory.days(from: activity, now: now)
-		let peak = max(days.map(\.runs).max() ?? 0, 1)
-		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-			HStack(alignment: .firstTextBaseline) {
-				Text("LAST 7 DAYS")
-					.maskinText(.microLabel)
-					.foregroundStyle(MaskinColor.ink5)
-				Spacer(minLength: MaskinSpace.s4)
-				Text(loaded ? summaryText(days, now: now) : "")
-					.font(MaskinTypeface.sans(MaskinFontSize.t13, relativeTo: .footnote))
-					.foregroundStyle(MaskinColor.ink4)
-			}
-			HStack(alignment: .bottom, spacing: MaskinSpace.s3) {
-				ForEach(days) { day in
-					VStack(spacing: MaskinSpace.s3) {
-						bar(day, peak: peak).frame(height: Self.barHeight, alignment: .bottom)
-						Text(day.day.formatted(.dateTime.weekday(.narrow)))
-							.font(MaskinTypeface.sans(MaskinFontSize.t10, weight: day.isToday ? .bold : .regular, relativeTo: .caption2))
-							.foregroundStyle(day.isToday ? MaskinColor.ink : MaskinColor.ink5)
-					}
-					.frame(maxWidth: .infinity)
-					.accessibilityElement(children: .ignore)
-					.accessibilityLabel(
-						"\(day.day.formatted(.dateTime.weekday(.wide))), \(day.runs) \(day.runs == 1 ? "run" : "runs")"
-							+ (day.failures > 0 ? ", \(day.failures) failed" : ""))
-				}
-			}
-			if LoopRunHistory.mayBeTruncated(activity, now: now) {
-				Text("Counted from the latest \(LoopRunHistory.feedLimit) events, so busy days may read low.")
-					.maskinText(.caption).foregroundStyle(MaskinColor.ink5)
-			}
-		}
-		.padding(.vertical, MaskinSpace.s8)
-		.padding(.horizontal, MaskinSpace.s9)
-		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
-	}
-
-	/// "12 runs, 1 failed", then how completed runs compare with the week before when that can be told.
-	private func summaryText(_ days: [LoopRunDay], now: Date) -> String {
-		let base = LoopRunHistory.summary(days)
-		guard let delta = FlowHealth.completedDelta(activity, now: now) else { return base }
-		return base + " · " + FlowHealth.deltaText(delta)
-	}
-
-	@ViewBuilder
-	private func bar(_ day: LoopRunDay, peak: Int) -> some View {
-		if day.runs == 0 {
-			RoundedRectangle(cornerRadius: MaskinRadius.tag2 + MaskinRadius.tag, style: .continuous)
-				.fill(MaskinSurface.fillStrong)
-				.frame(maxWidth: .infinity)
-				.frame(height: MaskinSpace.s2)
-		} else {
-			let height = Self.barHeight * CGFloat(day.runs) / CGFloat(peak)
-			let failedHeight = height * CGFloat(day.failures) / CGFloat(day.runs)
-			VStack(spacing: 0) {
-				if day.failures > 0 { Rectangle().fill(MaskinColor.ink).frame(height: failedHeight) }
-				Rectangle().fill(MaskinGradient.ring)
-			}
-			.frame(maxWidth: .infinity)
-			.frame(height: max(height, MaskinSpace.s3))
-			.clipShape(RoundedRectangle(cornerRadius: MaskinRadius.tag2 + MaskinRadius.tag, style: .continuous))
-		}
-	}
-}
-
-/// IS IT WORKING: Runs ok, Needs you and Failed, a dot and one line each. Counted from the newest
-/// 50 events, so the page says so when a busy flow may have older days missing.
-struct LoopHealthSection: View {
-	let loop: LoopSummary
-	let activity: [LoopActivityEntry]
-	let loaded: Bool
-
-	var body: some View {
-		let now = Date()
-		let rows = FlowHealth.rows(loop: loop, activity: activity, now: now)
-		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-			FlowSectionHeader("Is it working")
-			VStack(spacing: 0) {
-				ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-					HStack(alignment: .top, spacing: MaskinSpace.s6) {
-						Circle().fill(color(row.tone))
-							.frame(width: MaskinSpace.s4 + MaskinSpace.s1, height: MaskinSpace.s4 + MaskinSpace.s1)
-							.padding(.top, MaskinSpace.s3)
-							.accessibilityHidden(true)
-						VStack(alignment: .leading, spacing: MaskinSpace.s1) {
-							Text(row.label)
-								.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: MaskinFontWeight.w650, relativeTo: .subheadline))
-								.foregroundStyle(MaskinColor.ink)
-							Text(loaded ? row.note : "")
-								.font(MaskinTypeface.sans(MaskinFontSize.t13, relativeTo: .footnote))
-								.foregroundStyle(MaskinColor.ink4)
-						}
-						Spacer(minLength: 0)
-					}
-					.padding(.vertical, MaskinSpace.s6)
-					.accessibilityElement(children: .combine)
-					if index < rows.count - 1 { Divider().overlay(MaskinSurface.separator) }
-				}
-			}
-			.padding(.horizontal, MaskinSpace.s8)
-			.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
-			if LoopRunHistory.mayBeTruncated(activity, now: now) {
-				Text("Counted from the latest \(LoopRunHistory.feedLimit) events, so busy days may read low.")
-					.maskinText(.caption).foregroundStyle(MaskinColor.ink5)
-			}
-		}
-	}
-
-	private func color(_ tone: FlowHealth.Tone) -> Color {
-		switch tone {
-		case .ok: MaskinColor.sig
-		case .warn: MaskinColor.sigInk
-		case .bad: MaskinColor.warning
-		case .idle: MaskinColor.ink5
 		}
 	}
 }

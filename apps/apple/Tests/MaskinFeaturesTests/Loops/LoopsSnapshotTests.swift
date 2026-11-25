@@ -172,7 +172,7 @@ struct LoopsSnapshotTests {
 	func detailWhenReadsFail(dark: Bool) async throws {
 		let modes: [(BrokenLoopsAPI.Mode, String)] = [(.failing, "failing"), (.hanging, "hanging")]
 		let tabs: [(LoopDetailTab, String)] = [
-			(.overview, "overview"), (.performance, "performance"), (.activity, "activity"), (.setup, "setup"),
+			(.overview, "overview"), (.activity, "activity"), (.setup, "setup"),
 		]
 		for (mode, name) in modes {
 			let store = LoopDetailStore(

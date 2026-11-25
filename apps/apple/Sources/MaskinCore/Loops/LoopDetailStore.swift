@@ -134,9 +134,6 @@ public final class LoopDetailStore {
 			loop: loop, steps: steps, activity: activity, runs: runs, posts: posts, now: now)
 	}
 
-	/// Steps that failed in the last seven days, for the Quality tile.
-	public func failedSteps(now: Date = Date()) -> Int { FlowHealth.failedCount(activity, now: now) }
-
 	/// Who an activity entry belongs to, by name.
 	public func actorName(_ entry: LoopActivityEntry) -> String? { directory.name(entry.actorID) }
 
