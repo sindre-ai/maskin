@@ -28,6 +28,15 @@
 // first step of introducing a new flag.
 export const FLAGS = {
 	/**
+	 * Gates the "Ways to send receipts" panel on an Accounting flow's page: the receiving email
+	 * address and the command key (task: Let owners send receipts three ways). Frontend only: the
+	 * flow route reads it once and mounts the panel. Off means the flow page looks as it does today.
+	 * The tables and routes behind it are additive and inert until an owner switches a way on, and
+	 * the email route does nothing until the receiving domain is set in the environment. Retire once
+	 * the panel is on for everyone.
+	 */
+	RECEIPT_INTAKE: 'receipt-intake',
+	/**
 	 * Gates the Daily budget setting in Settings, Billing (bet [A daily token budget,
 	 * spent on the right work first](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/0f3ae096-7efc-4412-aba0-7a21a91ba040),
 	 * slice 1a). UI only: the route layout reads it once and mounts the section

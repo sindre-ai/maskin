@@ -47,6 +47,11 @@ import {
 	DINERO_LOCKED_MESSAGE,
 	isDineroPeriodLocked,
 } from '../lib/integrations/providers/dinero/review'
+import {
+	DINERO_APP_TOOLS,
+	answerDineroAppTool,
+	isDineroAppTool,
+} from '../lib/integrations/providers/dinero/vat-check-tool'
 import { assertPublicHost } from '../lib/integrations/public-host'
 import { getProvider } from '../lib/integrations/registry'
 import type { ToolAnnotationsLike } from '../lib/integrations/tool-kinds'
@@ -456,6 +461,25 @@ export async function proxyMcp(
 		})
 	}
 
+	// get_vat_report reads our own review log, not Dinero: answered here, no sign-in token needed.
+	if (provider === 'dinero' && toolName && allowed && isDineroAppTool(toolName)) {
+		const done = await answerDineroAppTool(
+			db,
+			{ workspaceId, integrationId: integration.id },
+			toolName,
+			rpc?.params?.arguments,
+		)
+		countToolCall(done.isError ? 'API_ERROR' : null)
+		return new Response(
+			JSON.stringify({
+				jsonrpc: '2.0',
+				id: rpc?.id ?? null,
+				result: { isError: done.isError, content: [{ type: 'text', text: done.text }] },
+			}),
+			{ status: 200, headers: { 'content-type': 'application/json' } },
+		)
+	}
+
 	let upstreamHeaders: Record<string, string>
 	try {
 		upstreamHeaders = await ctx.upstreamHeaders()
@@ -588,7 +612,7 @@ export async function proxyMcp(
 			provider === 'dinero'
 				? {
 						...upstreamResult,
-						tools: [...(upstreamResult.tools ?? []), ...DINERO_BRIDGE_TOOLS],
+						tools: [...(upstreamResult.tools ?? []), ...DINERO_BRIDGE_TOOLS, ...DINERO_APP_TOOLS],
 					}
 				: upstreamResult
 		const out = annotateToolsList(withBridge as Parameters<typeof annotateToolsList>[0], {

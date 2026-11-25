@@ -41,11 +41,7 @@ const ACCOUNTING_CHECKLIST: LoopChecklist = {
 		},
 		{
 			title: 'Upload one test receipt',
-			body: "Needed: one real receipt, a photo or a PDF, uploaded in the flow's chat. Save it as a draft voucher by the skill bookkeeping-draft-method, then show the owner the draft in Dinero and what is on the adviser list. Nothing is booked. Done once the owner has seen the draft and said it looks right or what to change.",
-		},
-		{
-			title: 'Name the adviser',
-			body: 'Needed: who the list of doubts goes to, the accountant or bookkeeper who reviews the drafts, and how the owner wants it passed on. This is a private fact only the owner holds. Ask the owner, with a best guess if the workspace already names an adviser.',
+			body: "Needed: one real receipt, a photo or a PDF, uploaded in the flow's chat. Save it as a draft voucher by the skill bookkeeping-draft-method, then show the owner the draft in Dinero and what is on the owner list. Nothing is booked. Done once the owner has seen the draft and said it looks right or what to change.",
 		},
 		{
 			title: 'Confirm the financial year end',
@@ -65,7 +61,7 @@ const ACCOUNTING_LOOP_SETTINGS: LoopSettings = {
 	entryCondition:
 		"A person uploads a receipt, a photo or a PDF, in the flow's chat, and Dinero is connected.",
 	closeCondition:
-		'The receipt is saved as a draft voucher in Dinero, or it is on the adviser list with the reason. Nothing is booked, changed or deleted by the flow.',
+		'The receipt is saved as a draft voucher in Dinero, or it is on the owner list with the reason. Nothing is booked, changed or deleted by the flow.',
 	tags: ['Finance'],
 }
 

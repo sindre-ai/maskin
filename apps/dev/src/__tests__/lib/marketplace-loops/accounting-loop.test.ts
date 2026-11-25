@@ -20,6 +20,14 @@ const actorTexts = () =>
 	})
 const triggerTexts = () =>
 	ACCOUNTING_LOOP_TRIGGER_IDS.map((id) => getTriggerData(id).actionPrompt ?? '')
+const checklistTexts = () => {
+	const checklist = ACCOUNTING_LOOP.settings.checklist
+	return [
+		checklist?.title,
+		checklist?.body,
+		...(checklist?.items ?? []).map((i) => `${i.title} ${i.body}`),
+	]
+}
 const skillTexts = () => ACCOUNTING_LOOP_SKILL_IDS.map((id) => getSkillData(id).content ?? '')
 
 describe('Accounting loop definition', () => {
@@ -27,7 +35,7 @@ describe('Accounting loop definition', () => {
 		expect(ACCOUNTING_LOOP.slug).toBe('accounting-loop')
 		expect(ACCOUNTING_LOOP.name).toBe('Accounting')
 		expect(ACCOUNTING_LOOP.useCase).toBe('Finance')
-		expect(ACCOUNTING_LOOP.version).toBe('1.2.0')
+		expect(ACCOUNTING_LOOP.version).toBe('1.4.0')
 		expect(ACCOUNTING_LOOP.description.length).toBeGreaterThan(0)
 	})
 
@@ -39,7 +47,21 @@ describe('Accounting loop definition', () => {
 		expect(settings.targets).toBeUndefined()
 	})
 
-	it('ships a setup checklist of seven children, driven by the Bookkeeper', () => {
+	it('names no adviser or accountant gate anywhere in the shipped text', () => {
+		const settings = loopSettingsSchema.parse(ACCOUNTING_LOOP.settings)
+		const all = [
+			ACCOUNTING_LOOP.description,
+			settings.entryCondition,
+			settings.closeCondition,
+			...checklistTexts(),
+			...actorTexts(),
+			...triggerTexts(),
+			...skillTexts(),
+		].join('\n')
+		expect(all).not.toMatch(/advis[eo]r|accountant/i)
+	})
+
+	it('ships a setup checklist of six children, driven by the Bookkeeper', () => {
 		const settings = loopSettingsSchema.parse(ACCOUNTING_LOOP.settings)
 		expect(settings.checklist?.title).toBe('Accounting setup checklist')
 		expect(settings.checklist?.driverSourceItemId).toBe(ACCOUNTING_LOOP_ACTOR_BOOKKEEPER)
@@ -49,7 +71,6 @@ describe('Accounting loop definition', () => {
 			'Run the first connection check',
 			'Say which Dinero plan you have',
 			'Upload one test receipt',
-			'Name the adviser',
 			'Confirm the financial year end',
 			'Confirm the VAT period',
 		])
@@ -59,14 +80,16 @@ describe('Accounting loop definition', () => {
 		expect(settings.checklist?.body).toContain('at most 3 questions at a time')
 	})
 
-	it('ships one actor, two triggers and two skills, no duplicates', () => {
+	it('ships one actor, four triggers and four skills, no duplicates', () => {
 		expect(ACCOUNTING_LOOP_ACTOR_IDS).toEqual([ACCOUNTING_LOOP_ACTOR_BOOKKEEPER])
-		expect(ACCOUNTING_LOOP_TRIGGER_IDS.length).toBe(2)
-		expect(ACCOUNTING_LOOP_SKILL_IDS.length).toBe(2)
+		expect(ACCOUNTING_LOOP_TRIGGER_IDS.length).toBe(4)
+		expect(ACCOUNTING_LOOP_SKILL_IDS.length).toBe(4)
 		expect(new Set(ACCOUNTING_LOOP_SKILL_IDS).size).toBe(ACCOUNTING_LOOP_SKILL_IDS.length)
 		expect(ACCOUNTING_LOOP_SKILL_IDS.map((id) => getSkillData(id).name).sort()).toEqual([
 			'accounting-connection-check',
+			'accounting-rule-check',
 			'bookkeeping-draft-method',
+			'vat-return-check',
 		])
 	})
 
@@ -232,6 +255,8 @@ describe('Accounting loop definition', () => {
 		// The check still stops on a tool that books, and on any Dinero tool off the list.
 		expect(check).toMatch(/every Dinero tool you have is on the list/)
 		expect(check).toMatch(/A tool that books, changes or deletes is offered, or a Dinero tool/)
+		// get_vat_report is the gateway's own read, not a Dinero tool, so the check must not count it.
+		expect(check).toMatch(/get_vat_report is not a Dinero tool and does not count here/)
 	})
 
 	it('has no key-based install step left', () => {
@@ -273,6 +298,128 @@ describe('Accounting loop definition', () => {
 			expect(text).not.toMatch(/https?:\/\//)
 			expect(text).not.toMatch(/@[a-z0-9-]+\.[a-z]{2,}/i)
 		}
+	})
+
+	// The rule check: a written, sourced rule list and a clear or flagged result for every entry,
+	// in a fixed table another step (such as a booking step) can read.
+	describe('rule check', () => {
+		const ruleCheck = () =>
+			skillTexts().find((t) => t.startsWith('---\nname: accounting-rule-check')) ?? ''
+		const ruleRows = () =>
+			ruleCheck()
+				.split('\n')
+				.filter((l) => /^R\d+ \| /.test(l))
+
+		it('lists 32 rules, each with a severity, a status, a source and an owner line', () => {
+			const rows = ruleRows()
+			expect(rows.length).toBe(32)
+			expect(rows.map((r) => r.split(' | ')[0])).toEqual(
+				Array.from({ length: 32 }, (_, i) => `R${i + 1}`),
+			)
+			for (const row of rows) {
+				const parts = row.split(' | ')
+				expect(['flag', 'note']).toContain(parts[1])
+				expect(['sourced', 'unsourced']).toContain(parts[2])
+				expect(row).toMatch(/Source: .+\. \| Owner line: .+/)
+			}
+		})
+
+		it('flags unsourced rules instead of passing them', () => {
+			const unsourced = ruleRows().filter((r) => r.includes(' | unsourced | '))
+			expect(unsourced.length).toBe(5)
+			expect(ruleCheck()).toMatch(/flags whenever the situation it describes is present/)
+			expect(ruleCheck()).toMatch(/not flagged by a rule just because the rule is unsourced/)
+			for (const row of unsourced) expect(row.split(' | ')[1]).toBe('flag')
+		})
+
+		it('flags a missing receipt once and an odd amount by its own rule', () => {
+			const text = ruleCheck()
+			expect(text).toMatch(/write R5 and say the rules that need the receipt/)
+			expect(ruleRows().find((r) => r.startsWith('R32 | '))).toMatch(
+				/usual amount for the same payee/,
+			)
+			expect(ruleRows().find((r) => r.startsWith('R21 | '))).toMatch(/within 14 days/)
+		})
+
+		it('writes one clear or flagged row per entry in a fixed table', () => {
+			const text = ruleCheck()
+			expect(text).toContain('| entry | result | rules | why |')
+			expect(text).toMatch(/exactly clear or flagged/)
+			expect(text).toMatch(/treats every entry that is not exactly clear as flagged/)
+			expect(text).toMatch(/An entry on that list is never clear/)
+		})
+
+		it('never changes a draft to make it pass and never books', () => {
+			const text = ruleCheck()
+			expect(text).toMatch(/never changes a voucher and never books one/)
+			expect(text).toMatch(/Never change an amount, an account or a VAT code to make an entry pass/)
+			expect(text).toMatch(/clear does not mean approved/)
+		})
+
+		it('is run by the Bookkeeper after every draft', () => {
+			const prompt = actorTexts().join('\n')
+			const method =
+				skillTexts().find((t) => t.startsWith('---\nname: bookkeeping-draft-method')) ?? ''
+			expect(prompt).toMatch(/Run the rule check on the draft \(skill accounting-rule-check\)/)
+			expect(method).toMatch(/Step 3: run the rule check/)
+			expect(method).toMatch(
+				/Never save a second draft, or change the first, to make an entry pass/,
+			)
+			expect(ACCOUNTING_LOOP.description).toMatch(/clear or flagged with the rule it broke/)
+		})
+	})
+
+	// The VAT return check: reads the flow's own VAT report, never builds a second set of figures,
+	// never guesses a date, and never says anything was filed.
+	describe('VAT return check', () => {
+		const skill = () => skillTexts().find((t) => t.startsWith('---\nname: vat-return-check')) ?? ''
+		const trigger = () => {
+			const t = ACCOUNTING_LOOP_TRIGGER_IDS.map((id) => getTriggerData(id)).find((x) =>
+				x.name.startsWith('VAT return check'),
+			)
+			if (!t) throw new Error('VAT return check trigger not shipped')
+			return t
+		}
+
+		it('runs on Mondays at 07:00 UTC, with a late-start guard, silent until a return is near', () => {
+			expect(trigger().name).toBe('VAT return check (Monday 07:00 UTC)')
+			expect(trigger().config).toMatchObject({ expression: '0 7 * * 1' })
+			const prompt = trigger().actionPrompt ?? ''
+			expect(prompt).toContain('flow named Accounting')
+			expect(prompt).toContain('more than 1 hour after its scheduled time, do nothing')
+			expect(prompt).toContain('vat-return-check')
+			expect(prompt).toContain('more than 28 days away')
+		})
+
+		it('reads figures only from get_vat_report and never builds a second set', () => {
+			expect(skill()).toMatch(/figures come from the tool get_vat_report and from nothing else/)
+			expect(skill()).toMatch(/do not build a second set of figures/)
+			expect(skill()).toMatch(/Both amounts on every finding/)
+		})
+
+		it('reads dates from Skat at run time, cites them and never guesses', () => {
+			expect(skill()).toMatch(/Every date comes from Skat at run time/)
+			expect(skill()).toMatch(/Never guess a date/)
+			expect(skill()).toMatch(/due date not confirmed/)
+			expect(skill()).toMatch(/more than 28 days away: stay silent/)
+			expect(skill()).toMatch(/within 20 days: run the short version/)
+		})
+
+		it('writes one note titled by the period, linked to the flow, and never says filed', () => {
+			expect(skill()).toMatch(/titled exactly VAT check, the period start, the word to/)
+			expect(skill()).toMatch(/in_loop relationship from the flow/)
+			expect(skill()).toMatch(/This check files nothing/)
+			expect(skill().toLowerCase()).not.toMatch(/\b(was|has been|is|are) filed\b/)
+			const prompt = actorTexts().join('\n')
+			expect(prompt).toMatch(/# VAT return check/)
+			expect(prompt).toMatch(/get_vat_report, is not a Dinero tool/)
+			expect(prompt).toMatch(/never files/)
+		})
+
+		it('stops and names the owner when the report tool is not there', () => {
+			expect(skill()).toMatch(/If the tool is not among your tools, say so in the first line/)
+			expect(skill()).toMatch(/Dinero connected by sign-in/)
+		})
 	})
 
 	it('says flow, not loop, in the text a person reads', () => {

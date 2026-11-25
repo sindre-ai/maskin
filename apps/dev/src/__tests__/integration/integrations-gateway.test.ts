@@ -804,6 +804,38 @@ describe('Dinero is limited to a fixed list of tools through the gateway (Integr
 		}
 	})
 
+	it('answers get_vat_report from the review log without calling Dinero', async () => {
+		const s = await dinero()
+		const call = (args: Record<string, unknown>) => ({
+			jsonrpc: '2.0',
+			id: 1,
+			method: 'tools/call',
+			params: { name: 'get_vat_report', arguments: args },
+		})
+		const ok = await toolText(
+			await post(s.app, s.ws.id, call({ from: '2026-10-01', to: '2026-10-31' }), 'dinero'),
+		)
+		expect(ok.isError).toBe(false)
+		const body = JSON.parse(ok.content[0].text) as {
+			report: { from: string; lines: unknown[]; notice: string }
+			check: { findings: unknown[]; clean_kinds: string[]; notice: string }
+		}
+		expect(body.report.from).toBe('2026-10-01')
+		expect(body.report.lines).toEqual([])
+		expect(body.check.findings).toEqual([])
+		expect(body.check.clean_kinds).toEqual(['foreign_supplier', 'odd_rate', 'private_cost'])
+		expect(body.check.notice).toContain('files nothing')
+
+		const bad = await toolText(
+			await post(s.app, s.ws.id, call({ from: 'soon', to: '2026-10-31' }), 'dinero'),
+		)
+		expect(bad.isError).toBe(true)
+		expect(fetchMock).not.toHaveBeenCalled()
+		// It reads and never writes: no Dinero action is logged for it.
+		const logged = await db.select().from(events).where(eq(events.workspaceId, s.ws.id))
+		expect(logged.filter((e) => e.action === 'dinero_action')).toEqual([])
+	})
+
 	it('saves an invoice or credit note as a draft only, and refuses a call that asks to book or send', async () => {
 		const s = await dinero()
 		const sales = (name: string, args: Record<string, unknown>) => ({
@@ -920,6 +952,7 @@ describe('Dinero is limited to a fixed list of tools through the gateway (Integr
 			'list_posted_entries',
 			'update_purchase_voucher_draft',
 			'delete_finance_voucher_draft',
+			'get_vat_report',
 		])
 	})
 })
@@ -1062,12 +1095,18 @@ describe('Dinero booking is stamped and logged through the gateway (Integration)
 			'list_posted_entries',
 			'update_purchase_voucher_draft',
 			'delete_finance_voucher_draft',
+			'get_vat_report',
 		])
-		const writes = result.tools.slice(1).filter((t) => t.name !== 'list_posted_entries')
+		const writes = result.tools
+			.slice(1)
+			.filter((t) => t.name !== 'list_posted_entries' && t.name !== 'get_vat_report')
 		expect(writes.every((t) => t.annotations.readOnlyHint === false)).toBe(true)
 		expect(
 			result.tools.find((t) => t.name === 'list_posted_entries')?.annotations.readOnlyHint,
 		).toBe(true)
+		expect(result.tools.find((t) => t.name === 'get_vat_report')?.annotations.readOnlyHint).toBe(
+			true,
+		)
 	})
 
 	it('refuses a bridge call with no version stamp, before Dinero', async () => {

@@ -1,4 +1,4 @@
-import type { ReviewItem } from './review'
+import type { VatReport, VatReportLine } from './vat-report'
 
 /**
  * The filing hand-off: what the owner needs in hand to file in Dinero themselves, after the final
@@ -18,22 +18,14 @@ export const FILING_FIGURES_CHANGED_MESSAGE =
 export const FILING_NOT_FILED_NOTICE =
 	'Nothing has been filed. Maskin does not file anything. You file in Dinero with your own MitID.'
 
-export interface FilingFigure {
-	/** The VAT code on the lines, or null for lines with none. */
-	vat_code: string | null
-	/** Lines the flow booked under this code, counted once if reversed (a reversed item drops out). */
-	lines: number
-	/** Sum of the booked line amounts including VAT, as the flow booked them. */
-	amount_incl_vat: number
-}
-
 export interface FilingHandoff {
 	from: string
 	to: string
 	approved_by: string
 	approved_at: string
 	figures_hash: string
-	figures: FilingFigure[]
+	/** The lines of the VAT report, the one set of figures. Same as the report on the review screen. */
+	figures: VatReportLine[]
 	/** What the figures are, in a sentence, so nobody reads them as the VAT return. */
 	figures_note: string
 	steps: string[]
@@ -41,35 +33,10 @@ export interface FilingHandoff {
 	notice: string
 }
 
-const round2 = (n: number) => Math.round(n * 100) / 100
-
-/**
- * The figures the flow booked in the approved period, summed per VAT code. A booked item that was
- * reversed drops out, and so does its counter-posting, so a mistake the owner undid is not
- * counted. Drafts are not counted: they are not in the books.
- */
-export function bookedFiguresByVatCode(items: ReviewItem[]): FilingFigure[] {
-	const sums = new Map<string | null, FilingFigure>()
-	for (const item of items) {
-		if (!item.booked || item.reversed_by_event_id !== null || item.reverses_event_id !== null) {
-			continue
-		}
-		for (const line of item.lines) {
-			if (line.amount === null) continue
-			const key = line.vat_code ?? null
-			const row = sums.get(key) ?? { vat_code: key, lines: 0, amount_incl_vat: 0 }
-			row.lines += 1
-			row.amount_incl_vat = round2(row.amount_incl_vat + line.amount)
-			sums.set(key, row)
-		}
-	}
-	return [...sums.values()].sort((a, b) => (a.vat_code ?? '').localeCompare(b.vat_code ?? ''))
-}
-
 export function buildFilingHandoff(p: {
 	from: string
 	to: string
-	items: ReviewItem[]
+	report: VatReport
 	approvedBy: string
 	approvedAt: Date
 	figuresHash: string
@@ -80,9 +47,9 @@ export function buildFilingHandoff(p: {
 		approved_by: p.approvedBy,
 		approved_at: p.approvedAt.toISOString(),
 		figures_hash: p.figuresHash,
-		figures: bookedFiguresByVatCode(p.items),
+		figures: p.report.lines,
 		figures_note:
-			'These are the lines the flow booked in this period, summed per VAT code, including VAT. They are not the VAT return. The amounts to report are the ones Dinero shows in its own VAT filing for the same period: compare the two before you file.',
+			'These are the lines the flow booked in this period, summed per VAT code: the same VAT report you can check and download on this screen. They are not the VAT return. The amounts to report are the ones Dinero shows in its own VAT filing for the same period: compare the two before you file.',
 		steps: [
 			`Open Dinero and go to its own VAT filing (moms) for ${p.from} to ${p.to}.`,
 			'Check that the period and the figures Dinero shows match your books and the list above.',

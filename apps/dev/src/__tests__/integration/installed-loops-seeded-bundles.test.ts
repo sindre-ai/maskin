@@ -392,7 +392,7 @@ describe('Marketplace install — seeded bundle end-to-end', () => {
 		expect(after).toHaveLength(9)
 	})
 
-	// The Accounting flow ships a setup checklist: one parent task and seven children, driven by
+	// The Accounting flow ships a setup checklist: one parent task and six children, driven by
 	// the installed Bookkeeper, each moved from backlog to todo. A second call creates nothing.
 	it('installs the accounting-loop setup checklist as tasks driven by the Bookkeeper', async () => {
 		const actorId = getTestActorId()
@@ -417,7 +417,7 @@ describe('Marketplace install — seeded bundle end-to-end', () => {
 		const parent = tasks.find((t) => t.title === 'Accounting setup checklist')
 		if (!parent) throw new Error('checklist parent task not found')
 		const children = tasks.filter((t) => t.id !== parent.id)
-		expect(children).toHaveLength(7)
+		expect(children).toHaveLength(6)
 		for (const task of tasks) expect(task.status).toBe('todo')
 
 		const bookkeeperIds = (await db.select({ id: actors.id, name: actors.name }).from(actors))
@@ -436,10 +436,10 @@ describe('Marketplace install — seeded bundle end-to-end', () => {
 				),
 			)
 		const breaksInto = edges.filter((e) => e.type === 'breaks_into')
-		expect(breaksInto).toHaveLength(7)
+		expect(breaksInto).toHaveLength(6)
 		for (const edge of breaksInto) expect(edge.sourceId).toBe(parent.id)
 		const inLoop = edges.filter((e) => e.type === 'in_loop')
-		expect(inLoop).toHaveLength(8)
+		expect(inLoop).toHaveLength(7)
 		for (const edge of inLoop) expect(edge.sourceId).toBe(body.objectId)
 
 		const [install] = await db
@@ -462,7 +462,7 @@ describe('Marketplace install — seeded bundle end-to-end', () => {
 			.select({ id: objects.id })
 			.from(objects)
 			.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'task')))
-		expect(after).toHaveLength(8)
+		expect(after).toHaveLength(7)
 	})
 
 	// Every sweep trigger finds the flow by its name, and the first sweep files a note into it with an
