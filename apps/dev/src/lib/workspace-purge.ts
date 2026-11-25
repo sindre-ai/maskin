@@ -145,6 +145,7 @@ export const WORKSPACE_PURGE_CASCADE = [
 	'plan_limit_emails',
 	'readings',
 	'saved_views',
+	'search_opens',
 	'send_permissions',
 	'session_dispatch_attempts',
 	'slack_user_links',
