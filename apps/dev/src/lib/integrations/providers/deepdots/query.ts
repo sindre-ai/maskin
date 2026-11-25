@@ -81,19 +81,14 @@ export const LIST_SPECS: Record<DeepdotsList, ListSpec> = {
 		],
 	},
 	topics: {
-		path: '/dimensions/topics',
+		// Not /dimensions/topics: that route answered 406 "Company not found" for a user whose
+		// insights read fine, so it wants a company we cannot name (no test login to find out how).
+		// This one sits in the insights family, which works with the same sign-in.
+		path: '/feedbacks/insight/topics',
 		dateField: null,
 		tiebreaker: 'topic',
 		searchable: false,
-		fields: [
-			'topic',
-			'severity',
-			'num_feedback',
-			'num_issues',
-			'num_values',
-			'change_7d',
-			'change_30d',
-		],
+		fields: ['topic', 'total_issues', 'total_values', 'total_combined'],
 	},
 }
 

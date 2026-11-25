@@ -216,6 +216,31 @@ describe('Deepdots MCP server', () => {
 		expect(payload(cut).error.message.length).toBeLessThan(400)
 	})
 
+	it('reads topics from the insights-family route and keeps only the offered fields', async () => {
+		const { client, fetchImpl } = await connect({
+			fetchImpl: vi.fn(
+				async () =>
+					new Response(
+						JSON.stringify([
+							{
+								company: 'c-1',
+								topic: 'Login',
+								total_issues: 4,
+								total_values: 2,
+								total_combined: 6,
+							},
+						]),
+					),
+			) as unknown as typeof fetch,
+		})
+		const res = await client.callTool({ name: 'deepdots_list_topics', arguments: {} })
+		const [url] = (fetchImpl as unknown as { mock: { calls: [string][] } }).mock.calls[0]
+		expect(new URL(url).pathname).toBe('/feedbacks/insight/topics')
+		expect(payload(res).items).toEqual([
+			{ topic: 'Login', total_issues: 4, total_values: 2, total_combined: 6 },
+		])
+	})
+
 	it('keeps the reason Deepdots gives for a 406, and for a bare message body', async () => {
 		const nested = await connect({
 			fetchImpl: (async () =>
