@@ -13,6 +13,10 @@ import {
 import { config as boxConfig } from './providers/box/config'
 import { config as brevoConfig } from './providers/brevo/config'
 import { config as brexConfig } from './providers/brex/config'
+import {
+	config as businessCentralConfig,
+	parseTokenResponse as businessCentralParseTokenResponse,
+} from './providers/business-central/config'
 import { config as calendlyConfig } from './providers/calendly/config'
 import { config as canvaConfig } from './providers/canva/config'
 import { config as clayConfig } from './providers/clay/config'
@@ -449,6 +453,11 @@ providers.set('make', {
 
 providers.set('uniconta', {
 	config: unicontaConfig,
+})
+
+providers.set('business-central', {
+	config: businessCentralConfig,
+	parseTokenResponse: businessCentralParseTokenResponse,
 })
 
 providers.set('dinero', {
