@@ -15,6 +15,7 @@ import {
 	fillCustomerValue,
 	hasCustomerValueToken,
 } from '../lib/integrations/customer-value'
+import { checkGoogleToken } from '../lib/integrations/google-token-check'
 import {
 	GATEWAY_BODY_LIMIT_BYTES,
 	GATEWAY_PROVIDERS,
@@ -556,12 +557,21 @@ export async function proxyMcp(
 	// list in the body, so passing it on made the agent's client drop every tool while the server
 	// still showed as connected. Say what happened instead, and log the vendor's reason (never the token).
 	if (upstream.status === 401) {
+		// For a Google server, also what Google's own token check says about this token.
+		const googleTokenCheck = await checkGoogleToken({
+			connectionKey: integration.id,
+			upstreamUrl: server.url,
+			authorization: upstreamHeaders.Authorization ?? upstreamHeaders.authorization,
+		})
 		logger.warn('Gateway upstream refused the provider token', {
 			workspaceId,
 			integrationId: integration.id,
 			provider,
 			method: rpc?.method ?? method,
 			wwwAuthenticate: upstream.headers.get('www-authenticate')?.slice(0, 300) ?? null,
+			...(googleTokenCheck.checked || googleTokenCheck.reason === 'rate_limited'
+				? { googleTokenCheck }
+				: {}),
 		})
 		await upstream.body?.cancel().catch(() => {})
 		return jsonRpcError(
