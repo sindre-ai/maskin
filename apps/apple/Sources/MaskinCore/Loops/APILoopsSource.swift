@@ -126,9 +126,16 @@ public struct APILoopsSource: LoopsAPI {
 	/// Read from the loop object itself: the app's object model keeps scalar metadata only, and the
 	/// views are a list.
 	public func views(loopID: String) async throws -> [LoopView] {
-		let output = try await client.get_sol_api_sol_objects_sol__lcub_id_rcub_(.init(path: .init(id: loopID)))
-		guard case .ok(let ok) = output else { throw AutomationError("Couldn't load this flow's views.") }
-		return LoopViews.read(metadata: try Self.decode(ObjectMetadataWire.self, from: ok.body.json).metadata)
+		do {
+			let output = try await client.get_sol_api_sol_objects_sol__lcub_id_rcub_(.init(path: .init(id: loopID)))
+			guard case .ok(let ok) = output else { throw AutomationError("Couldn't load this flow's views.") }
+			return LoopViews.read(metadata: try Self.decode(ObjectMetadataWire.self, from: ok.body.json).metadata)
+		} catch {
+			// The screen says the views did not load; this makes the same failure reach Sentry when the
+			// reply could not be read (a read that threw here used to leave no trace anywhere).
+			ErrorReporter.shared.reportThrown(error)
+			throw error
+		}
 	}
 
 	public func actors() async throws -> [AutomationActor] {
