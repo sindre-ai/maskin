@@ -451,8 +451,8 @@ final class MustKeepMoreTests: XCTestCase {
 
 	// MARK: MK-17 Connect an integration with a key
 
-	/// Profile sheet → Settings → Integrations → Discover → PostHog (connects with a pasted key) → paste a key →
-	/// Connect: PostHog is in the Connected list. OAuth providers open a system sign-in sheet that the demo cannot
+	/// Profile sheet → Settings → Integrations → search PostHog (connects with a pasted key) → paste a key →
+	/// Connect: PostHog is under Your integrations. OAuth providers open a system sign-in sheet that the demo cannot
 	/// finish, so this row uses the one provider that connects inside the app.
 	func testMK17_ConnectIntegrationWithKey() throws {
 		openProfile()
@@ -464,17 +464,18 @@ final class MustKeepMoreTests: XCTestCase {
 		for _ in 0..<6 where !integrations.exists { app.swipeUp() }
 		expectExists(integrations, "Settings lists Integrations", dump: "mk17-row", timeout: 5)
 		scrollToHittable(integrations)
-		// The segments read "Connected 2" and "Discover 12". A tap that lands while the list is still settling
-		// highlights the row without opening it: tap again if the page did not open.
-		let discover = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Discover'")).firstMatch
-		for _ in 0..<3 where !discover.exists {
+		// A tap that lands while the list is still settling highlights the row without opening it: tap again if
+		// the page did not open. The page is one long list with a search field, so PostHog is found by search.
+		let search = app.searchFields.firstMatch
+		for _ in 0..<3 where !search.exists {
 			integrations.tap()
-			_ = discover.waitForExistence(timeout: 5)
+			_ = search.waitForExistence(timeout: 5)
 		}
-		expectExists(discover, "Integrations has a Discover tab", dump: "mk17-discover", timeout: 5)
-		discover.tap()
+		expectExists(search, "Integrations has a search field", dump: "mk17-search", timeout: 5)
+		search.tap()
+		search.typeText("PostHog")
 		let posthog = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'PostHog'")).firstMatch
-		expectExists(posthog, "Discover lists PostHog", dump: "mk17-posthog", timeout: 10)
+		expectExists(posthog, "Integrations lists PostHog", dump: "mk17-posthog", timeout: 10)
 		posthog.tap()
 		let keyField = app.descendants(matching: .any).matching(NSPredicate(format: "placeholderValue == 'Paste your key'")).firstMatch
 		expectExists(keyField, "PostHog asks for a key", dump: "mk17-key", timeout: 10)
@@ -483,12 +484,9 @@ final class MustKeepMoreTests: XCTestCase {
 		let connect = app.buttons["Connect"].firstMatch
 		XCTAssertTrue(connect.waitForExistence(timeout: 5), "the key page has a Connect button")
 		connect.tap()
-		// Back on the list: the Connected tab now has PostHog.
-		let connected = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Connected'")).firstMatch
-		expectExists(connected, "Integrations has a Connected tab", dump: "mk17-back", timeout: 15)
-		connected.tap()
+		// Back on the list, still searching for PostHog: it is now under Your integrations.
 		let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'PostHog'")).firstMatch
-		expectExists(row, "PostHog is in the Connected list", dump: "mk17-connected", timeout: 15)
+		expectExists(row, "PostHog is under Your integrations", dump: "mk17-connected", timeout: 15)
 	}
 
 	// MARK: MK-20 The profile sheet's Switch workspace row is iPad only

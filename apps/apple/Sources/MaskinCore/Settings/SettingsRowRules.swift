@@ -173,37 +173,19 @@ public enum SettingsRowRules {
 		return actions
 	}
 
-	/// The empty line on the Connected tab, or nil when there are rows. While searching, an empty
-	/// list says nothing matches; otherwise it follows the load.
-	public static func connectedEmptyText(
-		hasRows: Bool, isSearching: Bool, phase: IntegrationsStore.Phase
-	) -> String? {
-		if hasRows { return nil }
-		if isSearching { return "No integration matches that search." }
-		switch phase {
-		case .failed(let message): return message
-		case .loaded: return "Nothing connected yet."
-		case .idle, .loading: return "Loading integrations"
-		}
-	}
-
-	/// The empty line on the Discover tab, or nil when there are rows.
-	public static func discoverEmptyText(hasRows: Bool, isSearching: Bool) -> String? {
-		if hasRows { return nil }
-		return isSearching ? "No integration matches that search." : "Nothing to discover."
-	}
-
-	/// The Drive folder watches card: for a connected Drive, when not searching, under All or Files.
+	/// The Drive folder watches card: for a connected Drive, when not searching, under All, Google
+	/// or Files.
 	public static func showsDriveWatches(
-		hasServices: Bool, hasConnectedDrive: Bool, isSearching: Bool, category: IntegrationCategory?
+		hasServices: Bool, hasConnectedDrive: Bool, isSearching: Bool, pill: IntegrationPill
 	) -> Bool {
-		hasServices && hasConnectedDrive && !isSearching && (category == nil || category == .files)
+		hasServices && hasConnectedDrive && !isSearching
+			&& (pill == .all || pill == .vendor(.google) || pill == .category(.files))
 	}
 
 	/// The Add your own MCP server and Import from Claude card: not while searching, and only under
 	/// All or Custom.
-	public static func showsAddCard(isSearching: Bool, category: IntegrationCategory?) -> Bool {
-		!isSearching && (category == nil || category == .custom)
+	public static func showsAddCard(isSearching: Bool, pill: IntegrationPill) -> Bool {
+		!isSearching && (pill == .all || pill == .category(.custom))
 	}
 
 	/// A row on the add card.

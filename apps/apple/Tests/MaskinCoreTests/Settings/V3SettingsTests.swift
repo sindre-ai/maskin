@@ -266,7 +266,7 @@ struct ToolServerTests {
 	}
 }
 
-@Suite("Integration tabs, search and categories")
+@Suite("Integration search and categories")
 struct IntegrationFilterTests {
 	@MainActor private func loadedStore() async -> IntegrationsStore {
 		let fake = FakeSettings()
@@ -286,27 +286,23 @@ struct IntegrationFilterTests {
 		return store
 	}
 
-	@MainActor @Test func tabsCountConnectedAndUnconnected() async {
+	@MainActor @Test func searchAndPillNarrowTheFilteredList() async {
 		let store = await loadedStore()
-		#expect(store.connectedCount == 2)
-		#expect(store.discoverCount == 2)
-	}
-
-	@MainActor @Test func discoverFiltersBySearchAndCategory() async {
-		let store = await loadedStore()
-		#expect(store.availableProviders(query: "hub", category: nil).map(\.id) == ["github"])
-		#expect(store.availableProviders(query: "", category: .code).map(\.id) == ["github"])
-		#expect(store.availableProviders(query: "", category: .emailAndCalendar).map(\.id) == ["gmail"])
-		#expect(store.availableProviders(query: "zzz", category: nil).isEmpty)
+		#expect(store.shelves(query: "hub", pill: .all).results.map(\.id) == ["github"])
+		#expect(store.shelves(query: "", pill: .category(.code)).results.map(\.id) == ["github"])
+		#expect(store.shelves(query: "", pill: .category(.emailAndCalendar)).results.map(\.id) == ["gmail"])
+		#expect(store.shelves(query: "", pill: .vendor(.google)).results.map(\.id) == ["gmail"])
+		#expect(store.shelves(query: "zzz", pill: .all).results.isEmpty)
 	}
 
 	@MainActor @Test func toolServersSitUnderAllAndCustomOnly() async {
 		let store = await loadedStore()
-		#expect(store.connectedToolServers(query: "", category: nil).count == 1)
-		#expect(store.connectedToolServers(query: "", category: .custom).count == 1)
-		#expect(store.connectedToolServers(query: "", category: .code).isEmpty)
-		#expect(store.connectedToolServers(query: "crm", category: nil).count == 1)
-		#expect(store.connectedToolServers(query: "nope", category: nil).isEmpty)
+		#expect(store.shelves(query: "", pill: .all).servers.count == 1)
+		#expect(store.shelves(query: "", pill: .category(.custom)).servers.count == 1)
+		#expect(store.shelves(query: "", pill: .category(.code)).servers.isEmpty)
+		#expect(store.shelves(query: "", pill: .vendor(.google)).servers.isEmpty)
+		#expect(store.shelves(query: "crm", pill: .all).servers.count == 1)
+		#expect(store.shelves(query: "nope", pill: .all).servers.isEmpty)
 	}
 
 	@Test func bookkeepingProvidersFallUnderAccounting() {

@@ -231,48 +231,19 @@ struct SettingsIntegrationsRulesTests {
 		#expect(actions(.disconnected, toolServer: true) == [.remove])
 	}
 
-	@Test("the Connected tab says why it is empty, and nothing when there are rows")
-	func connectedEmpty() {
-		#expect(SettingsRowRules.connectedEmptyText(hasRows: true, isSearching: false, phase: .loaded) == nil)
-		#expect(SettingsRowRules.connectedEmptyText(hasRows: true, isSearching: true, phase: .loaded) == nil)
-		#expect(
-			SettingsRowRules.connectedEmptyText(hasRows: false, isSearching: false, phase: .loaded)
-				== "Nothing connected yet.")
-		#expect(
-			SettingsRowRules.connectedEmptyText(hasRows: false, isSearching: false, phase: .loading)
-				== "Loading integrations")
-		#expect(
-			SettingsRowRules.connectedEmptyText(hasRows: false, isSearching: false, phase: .idle)
-				== "Loading integrations")
-		#expect(
-			SettingsRowRules.connectedEmptyText(hasRows: false, isSearching: false, phase: .failed("Offline"))
-				== "Offline")
-		// A search that finds nothing is a search result, whatever the load did.
-		#expect(
-			SettingsRowRules.connectedEmptyText(hasRows: false, isSearching: true, phase: .failed("Offline"))
-				== "No integration matches that search.")
-	}
-
-	@Test("the Discover tab says why it is empty")
-	func discoverEmpty() {
-		#expect(SettingsRowRules.discoverEmptyText(hasRows: true, isSearching: false) == nil)
-		#expect(SettingsRowRules.discoverEmptyText(hasRows: false, isSearching: false) == "Nothing to discover.")
-		#expect(
-			SettingsRowRules.discoverEmptyText(hasRows: false, isSearching: true)
-				== "No integration matches that search.")
-	}
-
-	@Test("Drive watches show for a connected Drive under All or Files, and not while searching")
+	@Test("Drive watches show for a connected Drive under All, Google or Files, and not while searching")
 	func driveWatches() {
 		func shows(
-			services: Bool = true, drive: Bool = true, searching: Bool = false, category: IntegrationCategory? = nil
+			services: Bool = true, drive: Bool = true, searching: Bool = false, pill: IntegrationPill = .all
 		) -> Bool {
 			SettingsRowRules.showsDriveWatches(
-				hasServices: services, hasConnectedDrive: drive, isSearching: searching, category: category)
+				hasServices: services, hasConnectedDrive: drive, isSearching: searching, pill: pill)
 		}
 		#expect(shows())
-		#expect(shows(category: .files))
-		#expect(!shows(category: .code))
+		#expect(shows(pill: .vendor(.google)))
+		#expect(shows(pill: .category(.files)))
+		#expect(!shows(pill: .category(.code)))
+		#expect(!shows(pill: .vendor(.microsoft)))
 		#expect(!shows(searching: true))
 		#expect(!shows(drive: false))
 		#expect(!shows(services: false))
@@ -280,10 +251,11 @@ struct SettingsIntegrationsRulesTests {
 
 	@Test("the add card shows under All or Custom, and not while searching")
 	func addCard() {
-		#expect(SettingsRowRules.showsAddCard(isSearching: false, category: nil))
-		#expect(SettingsRowRules.showsAddCard(isSearching: false, category: .custom))
-		#expect(!SettingsRowRules.showsAddCard(isSearching: false, category: .code))
-		#expect(!SettingsRowRules.showsAddCard(isSearching: true, category: nil))
+		#expect(SettingsRowRules.showsAddCard(isSearching: false, pill: .all))
+		#expect(SettingsRowRules.showsAddCard(isSearching: false, pill: .category(.custom)))
+		#expect(!SettingsRowRules.showsAddCard(isSearching: false, pill: .category(.code)))
+		#expect(!SettingsRowRules.showsAddCard(isSearching: false, pill: .vendor(.google)))
+		#expect(!SettingsRowRules.showsAddCard(isSearching: true, pill: .all))
 	}
 
 	@Test("only managers add a tool server, and a preview with no services has neither row")
