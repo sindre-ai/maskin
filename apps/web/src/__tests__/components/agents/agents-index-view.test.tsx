@@ -3,7 +3,7 @@ import { PageHeaderProvider, usePageHeader } from '@/lib/page-header-context'
 import { queryKeys } from '@/lib/query-keys'
 import type { SessionStatsRow } from '@maskin/shared'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, render, screen, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -29,11 +29,14 @@ type MockState = {
 	__dsUpsertCalls: number
 	__dsLastUpsertBody: DisplaySettingsBody | null
 	__dsPersistedSettings: DisplaySettingsBody
+	/** Ids the mocked server search answers with, best match first. */
+	__searchIds: string[]
 }
 const mockState = globalThis as unknown as MockState
 mockState.__dsUpsertCalls = 0
 mockState.__dsLastUpsertBody = null
 mockState.__dsPersistedSettings = {}
+mockState.__searchIds = []
 
 vi.mock('@/lib/api', () => {
 	class ApiError extends Error {
@@ -48,6 +51,11 @@ vi.mock('@/lib/api', () => {
 	return {
 		ApiError,
 		api: {
+			search: {
+				query: async () => ({
+					results: state.__searchIds.map((id) => ({ id })),
+				}),
+			},
 			userDisplaySettings: {
 				list: async () => ({ items: [] }),
 				get: async () => ({
@@ -191,6 +199,7 @@ function resetMockState() {
 	mockState.__dsUpsertCalls = 0
 	mockState.__dsLastUpsertBody = null
 	mockState.__dsPersistedSettings = {}
+	mockState.__searchIds = []
 }
 
 beforeEach(resetMockState)
@@ -206,6 +215,33 @@ describe('AgentsIndexView', () => {
 			expect(screen.queryByText('Ada')).not.toBeInTheDocument()
 			await user.type(title.getByRole('searchbox', { name: 'Search agents' }), ' zzz')
 			expect(screen.getByText('No agents match.')).toBeInTheDocument()
+		})
+
+		it('lists a name match above a description match, and A to Z again once cleared', async () => {
+			const user = userEvent.setup()
+			const mention = buildActorListItem({
+				id: 'agent-alpha',
+				name: 'Alpha',
+				type: 'agent',
+				description: 'Works with cco on hiring',
+			})
+			const cco = buildActorListItem({
+				id: 'agent-cco',
+				name: 'CCO',
+				type: 'agent',
+				description: 'Commercial',
+			})
+			mockState.__searchIds = ['agent-cco', 'agent-alpha']
+			mount([mention, cco], [])
+			const names = () => screen.getAllByRole('link').map((l) => l.textContent ?? '')
+			expect(names()[0]).toContain('Alpha')
+			const box = within(screen.getByTestId('title-row')).getByRole('searchbox', {
+				name: 'Search agents',
+			})
+			await user.type(box, 'cco')
+			await waitFor(() => expect(names()[0]).toContain('CCO'))
+			await user.clear(box)
+			await waitFor(() => expect(names()[0]).toContain('Alpha'))
 		})
 	})
 
