@@ -35,7 +35,7 @@ describe('Accounting loop definition', () => {
 		expect(ACCOUNTING_LOOP.slug).toBe('accounting-loop')
 		expect(ACCOUNTING_LOOP.name).toBe('Accounting')
 		expect(ACCOUNTING_LOOP.useCase).toBe('Finance')
-		expect(ACCOUNTING_LOOP.version).toBe('1.4.0')
+		expect(ACCOUNTING_LOOP.version).toBe('1.4.1')
 		expect(ACCOUNTING_LOOP.description.length).toBeGreaterThan(0)
 	})
 
@@ -67,7 +67,7 @@ describe('Accounting loop definition', () => {
 		expect(settings.checklist?.driverSourceItemId).toBe(ACCOUNTING_LOOP_ACTOR_BOOKKEEPER)
 		const items = settings.checklist?.items ?? []
 		expect(items.map((i) => i.title)).toEqual([
-			'Connect Dinero as a custom tool',
+			'Connect Dinero',
 			'Run the first connection check',
 			'Say which Dinero plan you have',
 			'Upload one test receipt',
@@ -78,6 +78,14 @@ describe('Accounting loop definition', () => {
 			expect(item.title.split(' ').length).toBeLessThanOrEqual(8)
 		}
 		expect(settings.checklist?.body).toContain('at most 3 questions at a time')
+	})
+
+	it('points the connect step at the Dinero sign-in, not a custom tool and token', () => {
+		const settings = loopSettingsSchema.parse(ACCOUNTING_LOOP.settings)
+		const connect = settings.checklist?.items[0]
+		expect(connect?.body).toMatch(/Dinero connected under Settings, Integrations/)
+		expect(connect?.body).toMatch(/sign in once with their own Dinero user/)
+		expect(connect?.body).not.toMatch(/custom tool/)
 	})
 
 	it('ships one actor, four triggers and four skills, no duplicates', () => {
@@ -186,13 +194,18 @@ describe('Accounting loop definition', () => {
 		}
 	})
 
-	// Install step for Dinero's own server: added as a custom tool, limited to drafts, and a plain
-	// warning that its sign-in runs out because the flow cannot renew it. A check on every first run.
+	// Install step for Dinero: connect it under Settings, Integrations and sign in once with the
+	// owner's own Dinero user. The custom tool route stays as a fallback. A check on every first run.
 	it('tells the owner how to connect Dinero and what the first run checks', () => {
 		const check =
 			skillTexts().find((t) => t.startsWith('---\nname: accounting-connection-check')) ?? ''
-		expect(check).toMatch(/add Dinero's own server as a custom tool/)
+		expect(check).toMatch(/under Integrations, connect Dinero/)
+		expect(check).toMatch(/Sign in once with your own Dinero user/)
+		expect(check).toMatch(/Pro or Total/)
+		expect(check).toMatch(/no token to find or paste/)
 		expect(check).toMatch(/only the one company/)
+		expect(check).toMatch(/Only if Dinero cannot be connected under Integrations/)
+		expect(check).toMatch(/add Dinero's own server as a custom tool/)
 		expect(check).toMatch(/needs someone technical/)
 		expect(check).toMatch(/Limit the tool to reading and saving drafts/)
 		expect(check).toMatch(/read and write access/)
@@ -201,12 +214,13 @@ describe('Accounting loop definition', () => {
 		expect(actorTexts().join('\n')).toMatch(/connection check first/)
 	})
 
-	it('says the Dinero sign-in runs out and the flow cannot renew it', () => {
+	it('says a sign-in error means signing in to Dinero again', () => {
 		const check =
 			skillTexts().find((t) => t.startsWith('---\nname: accounting-connection-check')) ?? ''
-		expect(check).toMatch(/early version/)
-		expect(check).toMatch(/runs out after about an hour/)
-		expect(check).toMatch(/cannot renew it/)
+		expect(check).not.toMatch(/early version/)
+		expect(check).toMatch(/sign in to Dinero again with your own Dinero user/)
+		expect(check).toMatch(/older custom tool route, the token has run out/)
+		expect(check).toMatch(/On the older route the sign-in token runs out after about an hour/)
 		expect(ACCOUNTING_LOOP.description).toMatch(/runs out after about an hour/)
 		expect(actorTexts().join('\n')).toMatch(/do not try to sign in yourself/i)
 	})
