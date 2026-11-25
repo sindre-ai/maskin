@@ -35,6 +35,7 @@ import {
 	buildChiefOfStaffKickoffPrompt,
 	shouldSkipOnboardingKickoff,
 } from '../lib/onboarding/chief-of-staff-kickoff'
+import { SEEDED_SKILL_HASH_KEY, seededSkillHash } from '../lib/seeded-skill-hash'
 import {
 	OwnershipCapExceededError,
 	computeEffectiveTier,
@@ -354,6 +355,8 @@ export async function attachSkill(
 						storageKey,
 						sizeBytes,
 						isValid,
+						// Lets the boot sync tell this copy is still the seeded text if the seed changes later.
+						metadata: { [SEEDED_SKILL_HASH_KEY]: seededSkillHash(skill.content) },
 						createdBy,
 					})
 					.onConflictDoNothing()

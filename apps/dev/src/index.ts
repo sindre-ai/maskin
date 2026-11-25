@@ -52,6 +52,7 @@ import { assertKeychainKeyConfig } from './lib/keychain-kms'
 import { logger } from './lib/logger'
 import { recordDbTime, setRouteTimingSink } from './lib/request-timing'
 import { createRouteTimingStore } from './lib/route-timing-store'
+import { runSeededSkillSyncOnBoot } from './lib/seeded-skill-boot'
 import { getStripeClient } from './lib/stripe'
 import { isWorkspaceMember } from './lib/workspace-auth'
 import { initMcpRateLimit, stopMcpRateLimit } from './routes/mcp'
@@ -558,6 +559,11 @@ void runDefaultHeartbeatBackfillOnBoot(db)
 // have one). Does nothing unless RUN_DRAFT_APPROVAL_SKILL_BACKFILL is 1 (or dry), runs once per
 // database, and never blocks or fails startup.
 void runDraftApprovalSkillBackfillOnBoot(db, agentStorage)
+
+// Keeps the seeded Chief of Staff skills in step with the code: gives each existing workspace the
+// skill once, then carries later edits of the seeded text into copies nobody has changed. Runs on
+// every boot with nothing to switch on, and never blocks or fails startup.
+void runSeededSkillSyncOnBoot(db, agentStorage)
 
 const loopVersionPusher = new LoopVersionPusher(db, agentStorage, undefined, storageProvider)
 loopVersionPusher.start()
