@@ -71,6 +71,61 @@ struct DraftPreviewMappingTests {
 		#expect(!preview.canApprove)
 	}
 
+	@Test("keeps the message the draft answers, so the card can show it above the draft")
+	func mapsOriginalMessage() async throws {
+		let preview = Self.preview.replacingOccurrences(
+			of: #""body":"Hej Hans""#, with: #""context":"  Kan vi tage fredag kl. 10?\n","body":"Hej Hans""#)
+		let draft = #"{"object_id":"o1","body":"Hej Hans","preview":\#(preview)}"#
+		let mapped = try #require(try await decision(feed(draft: draft)).draft)
+
+		#expect(mapped.preview?.context == "  Kan vi tage fredag kl. 10?\n")
+		#expect(mapped.preview?.originalMessage == "Kan vi tage fredag kl. 10?")
+		#expect(mapped.preview?.originalMessageLabel == "Hans Jensen wrote")
+	}
+
+	@Test("the editable draft under Drafts to review carries the original message too")
+	func reviewDraftKeepsOriginalMessage() {
+		func review(context: String?) -> ReviewDraft? {
+			let preview = ObjectPreview(
+				kind: "email", label: "Email", recipients: [.init(role: "to", name: "Clark Kn\u{F8}sen")],
+				context: context, body: "Hej Clark", contentHash: "h")
+			let card = ForYouCard(
+				id: "card-1", objectTitle: "Confirm", objectType: "task", latestEventId: 10,
+				mention: ForYouMention(
+					eventId: 5, actorId: "agent-1", content: "ask",
+					decision: DecisionPrompt(
+						title: "Send?", summary: "s", ask: "a", options: [DecisionOption(label: "Send", recommended: true)],
+						draft: DecisionDraft(label: "Email", body: "Hej Clark", objectId: "o1", preview: preview))),
+				rank: 0)
+			return ReviewDraft.drafts(in: card, agentName: nil).first
+		}
+		let answered = review(context: " Hej. Fredag kl 10 ")
+		#expect(answered?.originalMessage == "Hej. Fredag kl 10")
+		#expect(answered?.originalMessageLabel == "Clark Kn\u{F8}sen wrote")
+		#expect(review(context: nil)?.originalMessage == nil)
+		#expect(review(context: "  ")?.originalMessage == nil)
+	}
+
+	@Test("a draft that answers nothing has no original message")
+	func noOriginalMessage() async throws {
+		let draft = #"{"object_id":"o1","body":"Hej Hans","preview":\#(Self.preview)}"#
+		let mapped = try #require(try await decision(feed(draft: draft)).draft)
+
+		#expect(mapped.preview?.originalMessage == nil)
+	}
+
+	@Test("the label names who wrote it, else says In reply to, as the web does")
+	func originalMessageLabel() {
+		func label(_ recipients: [ObjectPreview.Recipient]) -> String {
+			ObjectPreview(kind: "email", label: "Email", recipients: recipients, body: "b", contentHash: "h")
+				.originalMessageLabel
+		}
+		#expect(label([.init(role: "cc", name: "Ops"), .init(role: "to", name: " Mette Holm ")]) == "Mette Holm wrote")
+		#expect(label([.init(role: "to", address: "mette@x.com")]) == "In reply to")
+		#expect(label([.init(role: "to", name: "  ")]) == "In reply to")
+		#expect(label([]) == "In reply to")
+	}
+
 	@Test("keeps a draft that is a file even though it has no text")
 	func keepsFileDraft() async throws {
 		let file = #"{"file_id":"f1","label":"Page","file":{"id":"f1","name":"plan.html","mime_type":"text/html","size_bytes":2048}}"#
