@@ -35,7 +35,7 @@ describe('Accounting loop definition', () => {
 		expect(ACCOUNTING_LOOP.slug).toBe('accounting-loop')
 		expect(ACCOUNTING_LOOP.name).toBe('Accounting')
 		expect(ACCOUNTING_LOOP.useCase).toBe('Finance')
-		expect(ACCOUNTING_LOOP.version).toBe('1.4.1')
+		expect(ACCOUNTING_LOOP.version).toBe('1.4.2')
 		expect(ACCOUNTING_LOOP.description.length).toBeGreaterThan(0)
 	})
 
@@ -225,6 +225,39 @@ describe('Accounting loop definition', () => {
 		expect(actorTexts().join('\n')).toMatch(/do not try to sign in yourself/i)
 	})
 
+	// A connected install gets more than the 18 names from Maskin's own limit (36 tools on 25 Nov
+	// 2026), so the first run must not stop on them. The custom tool route keeps the strict check.
+	it('accepts the tool set a signed-in connection offers and keeps the booking rule', () => {
+		const check =
+			skillTexts().find((t) => t.startsWith('---\nname: accounting-connection-check')) ?? ''
+		expect(check).toMatch(
+			/the connection itself limits the Dinero tools to reading and saving drafts/,
+		)
+		expect(check).toMatch(/Accept that set: do not stop because a tool is not on the 18-name list/)
+		// A tool that books, pays or sends still stops the check, and is never called.
+		expect(check).toMatch(
+			/offers a tool that books or finalises a voucher, registers a payment or sends anything to a customer/,
+		)
+		expect(check).toMatch(/say so and stop\. Never call such a tool/)
+		expect(check).not.toMatch(/steps 1 to 4/)
+		expect(check).toMatch(/finished the install steps \(1 and 2, or 3 on the older route\)/)
+		expect(ACCOUNTING_LOOP.description).not.toMatch(/early version/)
+	})
+
+	it('keeps the token rule and the allowed-list stop for the custom tool route only', () => {
+		const prompt = actorTexts().join('\n')
+		expect(prompt).toMatch(
+			/When Dinero is connected under Integrations, the connection limits the tools/,
+		)
+		expect(prompt).toMatch(
+			/On the older custom tool route, if the connection check shows a Dinero tool/,
+		)
+		expect(prompt).toMatch(
+			/Only if Dinero was added by the older custom tool route, the token runs out/,
+		)
+		expect(prompt).not.toMatch(/- Dinero's sign-in token runs out after about an hour/)
+	})
+
 	// The allowed list has no field in the Custom tools form, so the text is the only way an owner
 	// learns the call and the names. Names are Dinero's own, read from its live tool list.
 	it('names the call and the allowed Dinero tools in the install text', () => {
@@ -268,7 +301,7 @@ describe('Accounting loop definition', () => {
 		}
 		// The check still stops on a tool that books, and on any Dinero tool off the list.
 		expect(check).toMatch(/every Dinero tool you have is on the list/)
-		expect(check).toMatch(/A tool that books, changes or deletes is offered, or a Dinero tool/)
+		expect(check).toMatch(/a tool that books, changes or deletes is offered, or a Dinero tool/)
 		// get_vat_report is the gateway's own read, not a Dinero tool, so the check must not count it.
 		expect(check).toMatch(/get_vat_report is not a Dinero tool and does not count here/)
 	})
