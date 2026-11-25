@@ -46,7 +46,7 @@ private struct FakeTranscriber: SpeechTranscribing {
 	var words: [UInt8: String]
 	var fails = false
 
-	func transcribe(wav: Data, language: String?) async throws -> String {
+	func transcribe(wav: Data) async throws -> String {
 		if fails { throw BackendDictationError() }
 		return words[wav.first ?? 0] ?? ""
 	}

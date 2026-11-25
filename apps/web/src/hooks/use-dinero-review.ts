@@ -74,3 +74,24 @@ export function useDineroFilingHandoff(workspaceId: string) {
 		onError: (err: Error) => toast.error(err.message),
 	})
 }
+
+export function useDineroBooking(workspaceId: string, enabled = true) {
+	return useQuery({
+		enabled,
+		queryKey: queryKeys.dineroBooking.all(workspaceId),
+		queryFn: () => api.dineroBooking.get(workspaceId),
+	})
+}
+
+export function useSetDineroBooking(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (body: { enabled: boolean; acknowledged?: boolean }) =>
+			api.dineroBooking.set(workspaceId, body),
+		onSuccess: (state) => {
+			toast.success(state.enabled ? 'Dinero booking is on' : 'Dinero booking is off')
+			queryClient.invalidateQueries({ queryKey: queryKeys.dineroBooking.all(workspaceId) })
+		},
+		onError: (err: Error) => toast.error(err.message),
+	})
+}

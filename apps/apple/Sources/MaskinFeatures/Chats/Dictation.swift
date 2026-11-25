@@ -108,7 +108,7 @@ final class Dictation {
 			return false
 		}
 		let run = BackendDictationRun(
-			service: service, language: DictationLanguage.hint(preferredLanguages: Locale.preferredLanguages),
+			service: service,
 			previewRecognizer: Self.makePreviewRecognizer(),
 			onText: { [weak self] text in
 				self?.backendText = text
