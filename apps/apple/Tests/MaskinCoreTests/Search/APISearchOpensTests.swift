@@ -1,4 +1,5 @@
 import Foundation
+import MaskinAPI
 import Testing
 
 @testable import MaskinCore
