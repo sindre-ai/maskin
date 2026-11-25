@@ -252,9 +252,7 @@ export const commentDecisionSchema = z
 		no_draft_needed: z
 			.boolean()
 			.optional()
-			.describe(
-				'Set true only on a card with a destructive option that sends nothing the human can read first (a spend, a deploy, a ship). Without it, a destructive option needs draft or drafts.',
-			),
+			.describe('Set true when a destructive option sends nothing to read (a spend, a deploy).'),
 		status_stamp: z
 			.object({ object_id: z.string().uuid(), status: z.string().min(1) })
 			.optional()
@@ -267,14 +265,13 @@ export const commentDecisionSchema = z
 		draft: decisionDraftSchema
 			.optional()
 			.describe(
-				"Required on any card with a destructive option that sends something in a person's name or to the outside world: the human must read exactly what would go out. A card with a destructive option and no draft or drafts is refused. Give object_id (preferred), file_id or the text as body, never in the summary.",
+				"Attach this whenever the call is whether to send something in a person's name or to the outside world, so the human reads what would go out. Required with a destructive send option. Give object_id (preferred), file_id or the text as body, never in the summary.",
 			),
 	})
 	.describe(
 		[
 			'Attach this when you need a human to make a call, together with that human in `mentions` (a decision with empty `mentions` reaches nobody). It renders as a card in their For You feed, each option a button.',
-			'To ask approval of a message, save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and recipient fields; set `draft.object_id` to it and mark the send option `destructive: true`. See the `draft-approval-tasks` skill.',
-			'A card with a destructive option must carry `draft` or `drafts`, or it is refused: a send card with no message shows buttons and nothing to read. Options with `set_status` or `delete_agent` are exempt. For a destructive option that sends nothing readable (a spend, a deploy), set `no_draft_needed: true`.',
+			'To ask approval of a message, save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and recipient fields; set `draft.object_id` to it and mark the send option `destructive: true`. A destructive option with no `draft` or `drafts` is refused unless `no_draft_needed` is true. See the `draft-approval-tasks` skill.',
 			'A new card withdraws your earlier cards on the same object. To ask whether an object should change status, put `set_status` on that option; a card that talks about a status change without it is rejected.',
 			'The API rejects a decision that breaks its rules (no em-dash, en-dash, emoji or hedge word such as "several" standing in for a number) and lists every violation.',
 		].join('\n'),
