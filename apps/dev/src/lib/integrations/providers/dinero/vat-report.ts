@@ -9,7 +9,7 @@ import type { ReviewItem, ReviewReceipt } from './review'
  */
 
 export const VAT_REPORT_NOTICE =
-	'A draft for checking, not the VAT return. The amounts to report are the ones Dinero shows in its own VAT filing for the same period: compare the two before you file. Nothing has been filed.'
+	'A draft for checking, not the VAT return. The amounts to report are the ones Dinero shows in its own VAT filing for the same period: compare the two before you file. This report files nothing.'
 
 /** The VAT codes this report calculates, as a share of the amount including VAT. */
 const RATE_BY_CODE: Record<string, { direction: 'input' | 'output'; rate: number }> = {
