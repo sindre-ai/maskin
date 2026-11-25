@@ -6,7 +6,8 @@ import Testing
 /// The order of a chat search, read from the file the server test reads too
 /// (packages/shared/fixtures/chat-search-order.json), so the phone and the server cannot drift apart.
 /// Archived chats are left out of the expected order: the server lists them among the matches, the
-/// phone lists archived matches apart.
+/// Chats list lists archived matches apart. The Search tab shows the server's order as it comes, see
+/// SearchServerOrderTests.
 @Suite("ChatSearchOrder")
 struct ChatSearchOrderTests {
 	private struct Fixture: Decodable {
@@ -65,26 +66,6 @@ struct ChatSearchOrderTests {
 			#expect(
 				layout.archivedMatches.map(\.id) == testCase.expected.filter { archivedIDs.contains($0) },
 				"archived matches of \(testCase.query)")
-		}
-	}
-
-	@Test("the Search tab orders chats as the shared cases say")
-	func searchTab() throws {
-		let fixture = try Self.load()
-		let archivedIDs = Set(fixture.chats.filter(\.archived).map(\.id))
-		let results = fixture.chats.filter { !$0.archived }.map { chat in
-			SearchResult(
-				kind: .chat, entityId: chat.id, title: chat.title, subtitle: (["Me"] + chat.people).joined(separator: ", "),
-				snippet: chat.message, updatedAt: Self.now.addingTimeInterval(-chat.minutesAgo * 60),
-				participantIds: ["me"] + chat.people, isUnread: chat.unread,
-				hasPlaceholderTitle: ConversationSummary.isPlaceholder(chat.title))
-		}
-		for testCase in fixture.cases {
-			let found = SearchStore.filter(results, testCase.query)
-			let ordered = SearchRanking.ordered(found, query: testCase.query)
-			#expect(
-				ordered.map(\.entityId) == testCase.expected.filter { !archivedIDs.contains($0) },
-				"query \(testCase.query)")
 		}
 	}
 }

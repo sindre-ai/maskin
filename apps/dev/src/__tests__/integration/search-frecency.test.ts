@@ -13,7 +13,7 @@ import {
 	insertConversation,
 	insertWorkspace,
 } from '../factories'
-import { jsonGet, jsonRequest } from '../helpers'
+import { jsonRequest } from '../helpers'
 import { db, getTestActorId } from './global-setup'
 
 const { default: searchRoutes } = await import('../../routes/search')
@@ -183,32 +183,6 @@ describe('search frecency against real Postgres', () => {
 			expect(rows).toHaveLength(1)
 			expect(rows[0]).toMatchObject({ workspaceId, actorId })
 			expect(rows[0]?.decayedOpens).toBeCloseTo(1, 5)
-		})
-
-		it('lists the caller own bonuses, decayed and capped, best first', async () => {
-			const a = crypto.randomUUID()
-			const b = crypto.randomUUID()
-			const c = crypto.randomUUID()
-			const gone = crypto.randomUUID()
-			await setOpens(a, 1, 0) // 50
-			await setOpens(b, 100, 0) // capped
-			await setOpens(c, 3, 14) // 75
-			await setOpens(gone, 1, 400) // decayed to 0, left out
-			await setOpens(crypto.randomUUID(), 5, 0, otherUserId) // someone else's
-
-			const res = await createApp().request(
-				jsonGet('/api/search/opens', { ...auth, 'X-Workspace-Id': workspaceId }),
-			)
-			expect(res.status).toBe(200)
-			const { opens } = (await res.json()) as { opens: Array<{ entity_id: string; bonus: number }> }
-			expect(opens.map((o) => o.entity_id)).toEqual([b, c, a])
-			expect(opens[0]?.bonus).toBe(FRECENCY_MAX_BONUS)
-			// The bonus is floored and decays a little between the write and the read, so it can be
-			// one point under the exact value.
-			expect(opens[1]?.bonus).toBeGreaterThanOrEqual(74)
-			expect(opens[1]?.bonus).toBeLessThanOrEqual(75)
-			expect(opens[2]?.bonus).toBeGreaterThanOrEqual(49)
-			expect(opens[2]?.bonus).toBeLessThanOrEqual(50)
 		})
 
 		it('rejects a body that is not a uuid', async () => {

@@ -1,12 +1,9 @@
 import Foundation
 import MaskinAPI
 
-/// What search needs to rank by what the person opened before (frecency). The server keeps one
-/// decayed open count per person and result; the phone ranks on the device, so it reads the ranking
-/// bonus of the caller's own opened results and reports each open from a search result.
+/// Reports that the person opened a search result, so the server can rank it higher next time
+/// (frecency). The server does the ranking; the phone only writes.
 public protocol SearchOpensRemote: Sendable {
-	/// `GET /api/search/opens`: entity id to bonus points (already decayed and capped), best first.
-	func bonuses() async throws -> [String: Int]
 	/// `POST /api/search/opens`: the person opened this result from a search. Best effort.
 	func recordOpen(entityId: String) async
 }
@@ -27,13 +24,6 @@ public struct APISearchOpens: SearchOpensRemote {
 		self.clientSource = clientSource
 		self.credentials = credentials
 		self.session = session
-	}
-
-	public func bonuses() async throws -> [String: Int] {
-		let request = await makeRequest(method: "GET", body: nil)
-		let (data, response) = try await session.data(for: request)
-		guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw SearchError("Couldn't load search history.") }
-		return try Self.decode(data)
 	}
 
 	public func recordOpen(entityId: String) async {
@@ -57,24 +47,5 @@ public struct APISearchOpens: SearchOpensRemote {
 			if let workspaceId = creds.workspaceId { request.setValue(workspaceId, forHTTPHeaderField: "X-Workspace-Id") }
 		}
 		return request
-	}
-
-	private struct Response: Decodable {
-		var opens: [Row]
-	}
-
-	private struct Row: Decodable {
-		var entityId: String
-		var bonus: Int
-
-		enum CodingKeys: String, CodingKey {
-			case entityId = "entity_id"
-			case bonus
-		}
-	}
-
-	static func decode(_ data: Data) throws -> [String: Int] {
-		let response = try JSONDecoder().decode(Response.self, from: data)
-		return Dictionary(response.opens.map { ($0.entityId, $0.bonus) }, uniquingKeysWith: max)
 	}
 }

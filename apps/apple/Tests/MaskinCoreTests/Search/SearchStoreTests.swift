@@ -4,51 +4,37 @@ import Testing
 @testable import MaskinCore
 
 actor FakeSearchRemote: SearchRemote {
-	var objectsHandler: @Sendable (String) async throws -> [SearchResult] = { _ in [] }
+	var serverHandler: @Sendable (String, [String]) async throws -> SearchAnswer = { _, _ in SearchAnswer(results: []) }
 	var filesHandler: @Sendable (String) async throws -> [SearchResult] = { _ in [] }
-	var chats: Result<[SearchResult], SearchError> = .success([])
-	var agentList: Result<[SearchResult], SearchError> = .success([])
 	var peopleList: [SearchPerson] = []
-	private(set) var objectQueries: [String] = []
-	private(set) var conversationCalls = 0
+	private(set) var serverQueries: [String] = []
+	private(set) var serverParticipants: [[String]] = []
 
-	func setObjects(_ h: @escaping @Sendable (String) async throws -> [SearchResult]) { objectsHandler = h }
+	/// What the server search answers for the words, in the order it answers.
+	func setServer(_ h: @escaping @Sendable (String) async throws -> [SearchResult]) {
+		serverHandler = { query, _ in SearchAnswer(results: try await h(query)) }
+	}
+	/// The server search with the picked people's ids and the whole answer, partial flag included.
+	func setServerAnswer(_ h: @escaping @Sendable (String, [String]) async throws -> SearchAnswer) { serverHandler = h }
 	func setFiles(_ h: @escaping @Sendable (String) async throws -> [SearchResult]) { filesHandler = h }
-	func setChats(_ r: Result<[SearchResult], SearchError>) { chats = r }
-	func setAgents(_ r: Result<[SearchResult], SearchError>) { agentList = r }
 	func setPeople(_ list: [SearchPerson]) { peopleList = list }
 
-	func searchObjects(query: String, limit: Int) async throws -> [SearchResult] {
-		objectQueries.append(query)
-		#expect(limit <= ServerLimits.maxPageSize)
-		return try await objectsHandler(query)
+	func search(query: String, participants: [String], limit: Int) async throws -> SearchAnswer {
+		serverQueries.append(query)
+		serverParticipants.append(participants)
+		#expect(limit <= 150)
+		return try await serverHandler(query, participants)
 	}
 	func searchFiles(query: String, limit: Int) async throws -> [SearchResult] {
 		#expect(limit <= ServerLimits.maxPageSize)
 		return try await filesHandler(query)
 	}
-	func conversations() async throws -> [SearchResult] {
-		conversationCalls += 1
-		return try chats.get()
-	}
-	func agents() async throws -> [SearchResult] { try agentList.get() }
 	func people() async throws -> [SearchPerson] { peopleList }
 }
 
 actor FakeSearchOpens: SearchOpensRemote {
-	var bonusList: [String: Int] = [:]
-	var fails = false
 	private(set) var recorded: [String] = []
-	private(set) var bonusCalls = 0
 
-	func setBonuses(_ list: [String: Int]) { bonusList = list }
-	func setFails(_ value: Bool) { fails = value }
-
-	func bonuses() async throws -> [String: Int] {
-		bonusCalls += 1
-		if fails { throw SearchError("down") }
-		return bonusList
-	}
 	func recordOpen(entityId: String) async { recorded.append(entityId) }
 }
 
@@ -56,15 +42,16 @@ func object(_ id: String, _ title: String) -> SearchResult {
 	SearchResult(kind: .object, entityId: id, title: title, subtitle: "active", detail: "task")
 }
 func chat(
-	_ id: String, _ title: String, people: String = "", ids: [String] = [], snippet: String = "",
-	at updatedAt: Date? = nil
+	_ id: String, _ title: String, people: String = "", snippet: String = "", at updatedAt: Date? = nil
 ) -> SearchResult {
 	SearchResult(
-		kind: .chat, entityId: id, title: title, subtitle: people, snippet: snippet, updatedAt: updatedAt,
-		participantIds: ids)
+		kind: .chat, entityId: id, title: title, subtitle: people, snippet: snippet, updatedAt: updatedAt)
 }
 func agent(_ id: String, _ name: String) -> SearchResult {
 	SearchResult(kind: .agent, entityId: id, title: name)
+}
+func flow(_ id: String, _ title: String) -> SearchResult {
+	SearchResult(kind: .object, entityId: id, title: title, subtitle: "active", detail: "loop")
 }
 func file(_ id: String, _ name: String) -> SearchResult {
 	SearchResult(kind: .file, entityId: id, title: name, subtitle: "Markdown", detail: "text/markdown")
@@ -99,14 +86,14 @@ struct SearchStoreTests {
 		store.setQuery("ab")
 		store.setQuery("abc")
 		await store.settle()
-		#expect(await remote.objectQueries == ["abc"])
+		#expect(await remote.serverQueries == ["abc"])
 		#expect(store.phase == .results)
 	}
 
 	@Test("a slow response for an old query never overwrites the newer one")
 	func staleResponsesAreDropped() async {
 		let remote = FakeSearchRemote()
-		await remote.setObjects { q in
+		await remote.setServer { q in
 			if q == "slow" {
 				try await Task.sleep(for: .milliseconds(300))
 				return [object("old", "Slow result")]
@@ -126,7 +113,7 @@ struct SearchStoreTests {
 	@Test("clearing the query returns to idle and drops results")
 	func clearing() async {
 		let remote = FakeSearchRemote()
-		await remote.setObjects { _ in [object("1", "Hit")] }
+		await remote.setServer { _ in [object("1", "Hit")] }
 		let store = makeStore(remote)
 		store.setQuery("hit")
 		await store.settle()
@@ -136,55 +123,68 @@ struct SearchStoreTests {
 		#expect(store.allResults.isEmpty)
 	}
 
-	@Test("chats and agents are filtered on the client, case-insensitively")
-	func clientSideFilter() async {
+	@Test("the server's order is shown as it comes, across groups, with files last")
+	func serverOrderIsKept() async {
 		let remote = FakeSearchRemote()
-		await remote.setChats(.success([chat("c1", "Launch plan", people: "Sigrid"), chat("c2", "Standup")]))
-		await remote.setAgents(.success([agent("a1", "Forge"), agent("a2", "Scout")]))
+		// A perfect agent match first, then a flow, then chats and an item: not grouped, not re-sorted.
+		await remote.setServer { _ in
+			[
+				agent("a1", "Forge"), chat("c1", "Forge sync", at: Date(timeIntervalSince1970: 100)),
+				flow("l1", "Forge release"), chat("c2", "Forge notes", at: Date(timeIntervalSince1970: 900)),
+				object("o1", "Forge plan"),
+			]
+		}
+		await remote.setFiles { _ in [file("f1", "forge.md")] }
 		let store = makeStore(remote)
-		store.setQuery("LAUNCH")
+		store.setQuery("forge")
 		await store.settle()
-		#expect(store.allResults.map(\.id) == ["chat:c1"])
-		store.setQuery("sigrid")  // matches the participant list, not the title
-		await store.settle()
-		#expect(store.allResults.map(\.id) == ["chat:c1"])
-		store.setQuery("for")
-		await store.settle()
-		#expect(store.allResults.map(\.id) == ["agent:a1"])
-		#expect(await remote.conversationCalls == 1, "the chat list is fetched once, then cached")
+		#expect(store.rows.map(\.id) == ["agent:a1", "chat:c1", "object:l1", "chat:c2", "object:o1", "file:f1"])
+		#expect(store.visibleCount == 6)
 	}
 
-	@Test("scope narrows the visible sections without refetching")
+	@Test("a chat is shown only because the server returned it, nothing is filtered on the phone")
+	func noPhoneFiltering() async {
+		let remote = FakeSearchRemote()
+		// The words appear nowhere in this row (the server matched a message or a typo): it still shows.
+		await remote.setServer { _ in [chat("c1", "Roadmap", people: "Sigrid")] }
+		let store = makeStore(remote)
+		store.setQuery("roadmpa")
+		await store.settle()
+		#expect(store.allResults.map(\.id) == ["chat:c1"])
+		#expect(await remote.serverQueries == ["roadmpa"])
+	}
+
+	@Test("scope narrows the visible rows without asking again")
 	func scopes() async {
 		let remote = FakeSearchRemote()
-		await remote.setObjects { _ in [object("o1", "Plan the launch")] }
+		await remote.setServer { _ in [chat("c1", "Launch chat"), object("o1", "Plan the launch")] }
 		await remote.setFiles { _ in [file("f1", "launch.md")] }
-		await remote.setChats(.success([chat("c1", "Launch chat")]))
 		let store = makeStore(remote)
 		store.setQuery("launch")
 		await store.settle()
 		#expect(store.sections.map(\.group) == [.team, .objects, .files])
+		#expect(store.rows.map(\.id) == ["chat:c1", "object:o1", "file:f1"])
 		#expect(store.visibleCount == 3)
 		store.scope = .team
-		#expect(store.sections.map(\.group) == [.team])
+		#expect(store.rows.map(\.id) == ["chat:c1"])
 		store.scope = .objects
-		#expect(store.sections.map(\.group) == [.objects])
+		#expect(store.rows.map(\.id) == ["object:o1"])
 		store.scope = .agents
-		#expect(store.sections.isEmpty)
+		#expect(store.rows.isEmpty)
 		store.scope = .files
-		#expect(store.sections.map(\.group) == [.files])
-		#expect(await remote.objectQueries.count == 1)
+		#expect(store.rows.map(\.id) == ["file:f1"])
+		#expect(await remote.serverQueries.count == 1)
 	}
 
 	@Test("type sub-chips narrow Objects by type, most frequent first, flows excluded")
 	func typeChips() async {
 		let remote = FakeSearchRemote()
-		await remote.setObjects { _ in
+		await remote.setServer { _ in
 			[
 				SearchResult(kind: .object, entityId: "b1", title: "Launch bet", detail: "bet"),
 				SearchResult(kind: .object, entityId: "t1", title: "Launch task", detail: "task"),
 				SearchResult(kind: .object, entityId: "t2", title: "Launch task 2", detail: "task"),
-				SearchResult(kind: .object, entityId: "l1", title: "Launch loop", detail: "loop"),
+				flow("l1", "Launch loop"),
 			]
 		}
 		let store = makeStore(remote)
@@ -194,40 +194,11 @@ struct SearchStoreTests {
 		store.scope = .objects
 		#expect(store.visibleCount == 3)
 		store.objectType = "bet"
-		#expect(store.sections.flatMap(\.results).map(\.entityId) == ["b1"])
+		#expect(store.rows.map(\.entityId) == ["b1"])
 		store.scope = .flows
 		#expect(store.objectType == nil, "changing scope clears the type")
-		#expect(store.sections.flatMap(\.results).map(\.entityId) == ["l1"])
+		#expect(store.rows.map(\.entityId) == ["l1"])
 		#expect(store.count(in: .all) == 4)
-	}
-
-	@Test("flows come from the flow list, filtered by name, and replace the server's duplicate")
-	func flowsList() async {
-		struct Remote: SearchRemote {
-			func searchObjects(query: String, limit: Int) async throws -> [SearchResult] {
-				[SearchResult(kind: .object, entityId: "l1", title: "Weekly report", detail: "loop")]
-			}
-			func searchFiles(query: String, limit: Int) async throws -> [SearchResult] { [] }
-			func conversations() async throws -> [SearchResult] { [] }
-			func agents() async throws -> [SearchResult] { [] }
-			func flows() async throws -> [SearchResult] {
-				[
-					SearchResult(kind: .object, entityId: "l1", title: "Weekly report", subtitle: "Supervised", detail: "loop"),
-					SearchResult(kind: .object, entityId: "l2", title: "Onboarding", detail: "loop"),
-				]
-			}
-		}
-		let defaults = UserDefaults(suiteName: "search-tests-\(UUID().uuidString)")!
-		let store = SearchStore(
-			remote: Remote(), recents: SearchRecents(defaults: defaults), workspaceId: { "ws-1" },
-			debounce: .milliseconds(10))
-		store.setQuery("weekly")
-		await store.settle()
-		#expect(store.allResults.map(\.entityId) == ["l1"])
-		#expect(store.allResults.first?.subtitle == "Supervised")
-		#expect(store.allResults.first?.isFlow == true)
-		store.scope = .flows
-		#expect(store.sections.map(\.group) == [.flows])
 	}
 
 	@Test("the search tab offers All, Team, Objects, Flows and Agents")
@@ -235,10 +206,10 @@ struct SearchStoreTests {
 		#expect(SearchScope.chips.map(\.title) == ["All", "Items", "Chats", "Flows", "Files"])
 	}
 
-	@Test("one failing source still yields results and flags the list as partial")
+	@Test("a failing files search still yields the server's results and flags the list as partial")
 	func partialFailure() async {
 		let remote = FakeSearchRemote()
-		await remote.setObjects { _ in [object("o1", "Launch")] }
+		await remote.setServer { _ in [object("o1", "Launch")] }
 		await remote.setFiles { _ in throw SearchError("boom") }
 		let store = makeStore(remote)
 		store.setQuery("launch")
@@ -248,20 +219,43 @@ struct SearchStoreTests {
 		#expect(store.allResults.count == 1)
 	}
 
+	@Test("sources the server could not search flag the list as partial")
+	func serverPartial() async {
+		let remote = FakeSearchRemote()
+		await remote.setServerAnswer { _, _ in SearchAnswer(results: [object("o1", "Launch")], isPartial: true) }
+		let store = makeStore(remote)
+		store.setQuery("launch")
+		await store.settle()
+		#expect(store.phase == .results)
+		#expect(store.isPartial)
+	}
+
+	@Test("a failing server search still shows the files")
+	func serverFailsFilesStay() async {
+		let remote = FakeSearchRemote()
+		await remote.setServer { _ in throw SearchError("boom") }
+		await remote.setFiles { _ in [file("f1", "launch.md")] }
+		let store = makeStore(remote)
+		store.setQuery("launch")
+		await store.settle()
+		#expect(store.phase == .results)
+		#expect(store.isPartial)
+		#expect(store.allResults.map(\.id) == ["file:f1"])
+	}
+
 	@Test("every source failing is a failed phase, and retry recovers")
 	func totalFailure() async {
 		let remote = FakeSearchRemote()
 		let offline = SearchError("You're offline.", isOffline: true)
-		await remote.setObjects { _ in throw offline }
+		await remote.setServer { _ in throw offline }
 		await remote.setFiles { _ in throw offline }
-		await remote.setChats(.failure(offline))
-		await remote.setAgents(.failure(offline))
 		let store = makeStore(remote)
 		store.setQuery("x")
 		await store.settle()
 		#expect(store.phase == .failed("You're offline."))
 		#expect(store.isOffline)
-		await remote.setObjects { _ in [object("o1", "x marks")] }
+		await remote.setServer { _ in [object("o1", "x marks")] }
+		await remote.setFiles { _ in [] }
 		await store.retry()
 		#expect(store.phase == .results)
 		#expect(!store.isOffline)
@@ -270,46 +264,12 @@ struct SearchStoreTests {
 	@Test("committing remembers the query and skips the debounce")
 	func commit() async {
 		let remote = FakeSearchRemote()
-		await remote.setObjects { _ in [object("o1", "Launch")] }
+		await remote.setServer { _ in [object("o1", "Launch")] }
 		let store = makeStore(remote, debounce: .seconds(30))
 		store.setQuery("launch")
 		await store.commit()
 		#expect(store.phase == .results)
 		#expect(store.recents == ["launch"])
-	}
-
-	@Test("results you opened from search rank higher inside their tier")
-	func opensBoostResults() async {
-		let remote = FakeSearchRemote()
-		await remote.setChats(
-			.success([
-				chat("new", "Plan bravo", at: Date(timeIntervalSince1970: 900)),
-				chat("old", "Plan alpha", at: Date(timeIntervalSince1970: 100)),
-			]))
-		let plain = makeStore(remote, opens: FakeSearchOpens())
-		plain.setQuery("plan")
-		await plain.settle()
-		#expect(plain.allResults.map(\.entityId) == ["new", "old"])
-
-		let opens = FakeSearchOpens()
-		await opens.setBonuses(["old": 100])
-		let boosted = makeStore(remote, opens: opens)
-		boosted.setQuery("plan")
-		await boosted.settle()
-		#expect(boosted.allResults.map(\.entityId) == ["old", "new"])
-	}
-
-	@Test("a failed read of the history leaves the usual order and no error")
-	func historyFailureIsQuiet() async {
-		let remote = FakeSearchRemote()
-		await remote.setChats(.success([chat("c1", "Plan alpha")]))
-		let opens = FakeSearchOpens()
-		await opens.setFails(true)
-		let store = makeStore(remote, opens: opens)
-		store.setQuery("plan")
-		await store.settle()
-		#expect(store.phase == .results)
-		#expect(store.allResults.map(\.entityId) == ["c1"])
 	}
 
 	@Test("opening a result of a typed search records it; a tap with no query does not")
@@ -400,8 +360,11 @@ private final class WorkspaceBox {
 }
 
 @MainActor
-@Suite("SearchStore directory caches")
-struct SearchDirectoryCacheTests {
+@Suite("SearchStore people list")
+struct SearchPeopleCacheTests {
+	private let sigrid = SearchPerson(id: "h-sig", name: "Sigrid Larsen")
+	private let marketing = SearchPerson(id: "a-pm", name: "Product Marketing", isAgent: true)
+
 	private func make(
 		_ remote: FakeSearchRemote, workspace: WorkspaceBox, clock: Clock, ttl: TimeInterval = 60
 	) -> SearchStore {
@@ -411,38 +374,40 @@ struct SearchDirectoryCacheTests {
 			debounce: .milliseconds(1), directoryTTL: ttl, now: { clock.date })
 	}
 
-	@Test("chats are re-fetched once the TTL has passed")
-	func ttlRefetches() async {
+	private func untilPeople(_ store: SearchStore, _ count: Int) async {
+		for _ in 0..<200 where store.people.count != count { try? await Task.sleep(for: .milliseconds(10)) }
+	}
+
+	@Test("the people list is dropped once the TTL has passed and then loaded again")
+	func ttlReloads() async {
 		let remote = FakeSearchRemote()
 		let clock = Clock()
 		let store = make(remote, workspace: WorkspaceBox(), clock: clock)
-		await remote.setChats(.success([chat("c1", "Roadmap")]))
-		store.setQuery("road")
-		await store.settle()
-		store.setQuery("roadm")
-		await store.settle()
-		#expect(await remote.conversationCalls == 1)
+		await remote.setPeople([sigrid])
+		store.setQuery("@")
+		await untilPeople(store, 1)
+		#expect(store.people == [sigrid])
 		clock.advance(61)
-		store.setQuery("roadma")
-		await store.settle()
-		#expect(await remote.conversationCalls == 2)
+		store.expireStaleDirectories()
+		#expect(store.people.isEmpty)
+		await remote.setPeople([sigrid, marketing])
+		store.setQuery("@s")
+		await untilPeople(store, 2)
+		#expect(store.people.count == 2)
 	}
 
-	@Test("a workspace switch never shows the previous workspace's chats")
-	func switchDropsCaches() async {
+	@Test("a workspace switch never shows the previous workspace's people")
+	func switchDropsPeople() async {
 		let remote = FakeSearchRemote()
 		let box = WorkspaceBox()
 		let store = make(remote, workspace: box, clock: Clock())
-		await remote.setChats(.success([chat("c1", "Roadmap A")]))
-		store.setQuery("roadmap")
-		await store.settle()
-		#expect(store.allResults.contains { $0.entityId == "c1" })
+		await remote.setPeople([sigrid])
+		store.setQuery("@")
+		await untilPeople(store, 1)
+		#expect(store.people == [sigrid])
 		box.id = "ws-2"
-		await remote.setChats(.success([chat("c2", "Roadmap B")]))
-		store.setQuery("Roadmap")
-		await store.settle()
-		#expect(!store.allResults.contains { $0.entityId == "c1" })
-		#expect(store.allResults.contains { $0.entityId == "c2" })
+		store.expireStaleDirectories()
+		#expect(store.people.isEmpty)
 	}
 }
 

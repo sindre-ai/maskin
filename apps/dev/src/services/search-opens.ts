@@ -6,13 +6,9 @@ import {
 	FRECENCY_POINTS_PER_OPEN,
 } from '../lib/search-rank'
 
-/** Most rows the phone fetches: the caller's best-scored results. Older ones have decayed to nothing. */
-export const SEARCH_OPENS_READ_LIMIT = 200
-
 /**
  * The ranking bonus, in points, of a search_opens row aliased `so`: the stored count decayed to
- * now, times the points per open, capped. One definition, read by the search score and by the list
- * the phone ranks with, so the two cannot drift.
+ * now, times the points per open, capped. Read by the search score.
  */
 export function frecencyBonusSql(): SQL {
 	const ageDays = sql`extract(epoch from (now() - so.last_opened_at)) / 86400.0`
@@ -39,24 +35,4 @@ export async function recordSearchOpen(
 				* power(0.5, extract(epoch from (now() - search_opens.last_opened_at)) / 86400.0
 					/ ${FRECENCY_HALF_LIFE_DAYS}::double precision) + 1,
 			last_opened_at = now()`)
-}
-
-/** The caller's own results with a bonus above zero, best first. Never another person's rows. */
-export async function listSearchOpenBonuses(
-	db: Database,
-	p: { workspaceId: string; actorId: string },
-): Promise<Array<{ entity_id: string; bonus: number }>> {
-	const rows = await db.execute(sql`
-		SELECT entity_id, bonus FROM (
-			SELECT so.entity_id, ${frecencyBonusSql()} AS bonus
-			FROM search_opens so
-			WHERE so.workspace_id = ${p.workspaceId} AND so.actor_id = ${p.actorId}
-		) t
-		WHERE bonus > 0
-		ORDER BY bonus DESC, entity_id
-		LIMIT ${SEARCH_OPENS_READ_LIMIT}`)
-	return (rows as unknown as Array<{ entity_id: string; bonus: number }>).map((r) => ({
-		entity_id: r.entity_id,
-		bonus: Number(r.bonus),
-	}))
 }

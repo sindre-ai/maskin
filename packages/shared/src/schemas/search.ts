@@ -75,16 +75,6 @@ export const searchOpenBodySchema = z.object({
 })
 export type SearchOpenBody = z.infer<typeof searchOpenBodySchema>
 
-/**
- * Answer of GET /api/search/opens: the caller's own results with a ranking bonus above zero, best
- * first. `bonus` is in the same points the server adds to a search score (capped), already decayed
- * to now, so a client that ranks on the device adds it after the match tier and before unread.
- */
-export const searchOpensResponseSchema = z.object({
-	opens: z.array(z.object({ entity_id: z.string().uuid(), bonus: z.number().int().positive() })),
-})
-export type SearchOpensResponse = z.infer<typeof searchOpensResponseSchema>
-
 export type SearchQuery = z.infer<typeof searchQuerySchema>
 export type SearchSort = (typeof SEARCH_SORTS)[number]
 export type SearchSourceGroup = (typeof SEARCH_SOURCE_GROUPS)[number]

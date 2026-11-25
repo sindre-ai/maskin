@@ -369,7 +369,6 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'GET /api/notification-preferences',
 	'GET /api/objects/facets',
 	'GET /api/search',
-	'GET /api/search/opens',
 	'GET /api/send-permissions',
 	'GET /api/sessions/:id/activity',
 	'GET /api/sessions/:id/keychain-credentials',

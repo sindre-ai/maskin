@@ -1,8 +1,9 @@
 import Foundation
 import Observation
 
-/// Debounced, cancellable workspace search across objects, files (server-side) and chats and
-/// agents (filtered on the client over their cached lists, like the web).
+/// Debounced, cancellable workspace search. Chats, flows, agents and items come from the server
+/// search (`GET /api/search`) in the server's own order, the same as the web; files are searched by
+/// name apart and listed last. Nothing is filtered or re-ranked on the phone.
 @MainActor
 @Observable
 public final class SearchStore {
@@ -15,7 +16,10 @@ public final class SearchStore {
 		case failed(String)
 	}
 
-	public static let pageSize = 25
+	/// Rows asked of the server search, its own default and cap.
+	public static let resultLimit = 150
+	/// Rows asked of the files search.
+	public static let fileLimit = 25
 
 	public private(set) var query = ""
 	public var scope: SearchScope = .all {
@@ -36,19 +40,14 @@ public final class SearchStore {
 
 	@ObservationIgnored private let remote: any SearchRemote
 	@ObservationIgnored private let opens: (any SearchOpensRemote)?
-	/// The caller's frecency bonuses, loaded once per directory TTL and dropped after an open.
-	@ObservationIgnored private var bonusCache: [String: Int]?
 	@ObservationIgnored private let recentsStore: SearchRecents
 	@ObservationIgnored private let workspaceId: @MainActor () -> String?
 	@ObservationIgnored private let debounce: Duration
 	@ObservationIgnored private var generation = 0
 	@ObservationIgnored private var task: Task<Void, Never>?
-	@ObservationIgnored private var chatsCache: [SearchResult]?
-	@ObservationIgnored private var agentsCache: [SearchResult]?
-	@ObservationIgnored private var flowsCache: [SearchResult]?
 	@ObservationIgnored private var peopleTask: Task<Void, Never>?
 	@ObservationIgnored private let currentActorId: @MainActor () -> String?
-	/// When, and for which workspace, the directory caches were filled.
+	/// When, and for which workspace, the people list was filled.
 	@ObservationIgnored private var cacheStamp: (workspace: String?, at: Date)?
 	@ObservationIgnored private let directoryTTL: TimeInterval
 	@ObservationIgnored private let now: @MainActor () -> Date
@@ -73,7 +72,7 @@ public final class SearchStore {
 
 	// MARK: Derived
 
-	/// Results in the chosen scope, grouped in display order.
+	/// Results in the chosen scope, grouped in display order. Inside a group the server's order is kept.
 	public var sections: [SearchSection] {
 		SearchGroup.displayOrder.compactMap { group in
 			let rows = allResults.filter { $0.group == group && scope.includes($0, objectType: objectType) }
@@ -84,7 +83,12 @@ public final class SearchStore {
 	/// The sub-chips under Objects: the types the current results contain.
 	public var objectTypes: [String] { SearchScope.objectTypes(in: allResults) }
 
-	public var visibleCount: Int { sections.reduce(0) { $0 + $1.results.count } }
+	/// The results in the chosen scope, in the server's order across groups (files last).
+	public var rows: [SearchResult] {
+		allResults.filter { scope.includes($0, objectType: objectType) }
+	}
+
+	public var visibleCount: Int { rows.count }
 
 	/// The people the @ menu offers for the text typed so far. Empty when the "@" matches nobody,
 	/// in which case it is searched as plain text.
@@ -153,7 +157,12 @@ public final class SearchStore {
 		peopleTask = Task { [weak self] in
 			let loaded = try? await remote.people()
 			guard let self, !Task.isCancelled, startWorkspace == self.workspaceId() else { return }
-			if let loaded { self.people = loaded } else { self.peopleTask = nil }
+			if let loaded {
+				self.people = loaded
+				self.cacheStamp = (startWorkspace, self.now())
+			} else {
+				self.peopleTask = nil
+			}
 		}
 	}
 
@@ -177,7 +186,6 @@ public final class SearchStore {
 		remember(query)
 		// Only a result of a typed search counts, never a tap from the recents screen.
 		guard !query.isEmpty, let opens else { return }
-		bonusCache = nil
 		Task { await opens.recordOpen(entityId: result.entityId) }
 	}
 
@@ -191,12 +199,10 @@ public final class SearchStore {
 
 	// MARK: Changes from a row menu
 
-	/// Takes a result out of the list and out of the cached chat and flow lists, so it stays gone
-	/// when the words change. For a chat that was archived or deleted from its menu.
+	/// Takes a result out of the list. For a chat that was archived or deleted from its menu; the
+	/// server no longer returns it, so it stays gone when the words change.
 	public func remove(_ result: SearchResult) {
 		allResults.removeAll { $0.id == result.id }
-		chatsCache?.removeAll { $0.id == result.id }
-		flowsCache?.removeAll { $0.id == result.id }
 	}
 
 	/// Shows an object's new status on its row, after its status changed from the row menu.
@@ -230,19 +236,15 @@ public final class SearchStore {
 		recents = recentsStore.push(text, workspaceId: workspace)
 	}
 
-	/// Drops the cached chat and agent lists (workspace switch, or a new chat was created).
+	/// Drops the people list the @ menu offers (workspace switch).
 	public func invalidateDirectories() {
-		chatsCache = nil
-		agentsCache = nil
-		flowsCache = nil
-		bonusCache = nil
 		cacheStamp = nil
 		peopleTask?.cancel()
 		peopleTask = nil
 		people = []
 	}
 
-	/// Drops the directory caches when they belong to another workspace or are older than the TTL.
+	/// Drops the people list when it belongs to another workspace or is older than the TTL.
 	/// Called before every search and when the screen appears.
 	public func expireStaleDirectories() {
 		guard let stamp = cacheStamp else { return }
@@ -255,63 +257,33 @@ public final class SearchStore {
 
 	private func run(_ text: String, generation mine: Int) async {
 		let remote = self.remote
-		let limit = Self.pageSize
+		let limit = Self.resultLimit
+		let fileLimit = Self.fileLimit
 		expireStaleDirectories()
 		let startWorkspace = workspaceId()
-		let cachedChats = chatsCache
-		let cachedAgents = agentsCache
-		let cachedFlows = flowsCache
-		let cachedBonuses = bonusCache
-		let opens = self.opens
-		let picked = participants
-		// With people picked only chats can match, so the other sources are not asked.
+		let picked = participants.map(\.id)
+		// With people picked only chats can match, so files are not asked.
 		let chatsOnly = !picked.isEmpty
 
-		async let objects = Self.attempt { if chatsOnly { return [] }; return try await remote.searchObjects(query: text, limit: limit) }
-		async let files = Self.attempt { if chatsOnly { return [] }; return try await remote.searchFiles(query: text, limit: limit) }
-		async let chats = Self.attempt { if let cachedChats { return cachedChats }; return try await remote.conversations() }
-		async let agents = Self.attempt { if chatsOnly { return [] }; if let cachedAgents { return cachedAgents }; return try await remote.agents() }
-		async let flows = Self.attempt { if chatsOnly { return [] }; if let cachedFlows { return cachedFlows }; return try await remote.flows() }
-		async let bonuses = Self.loadBonuses(cached: cachedBonuses, opens: opens)
-		let (o, f, c, a, fl) = await (objects, files, chats, agents, flows)
-		let boosts = await bonuses
+		async let server = Self.attempt { () async throws -> SearchAnswer in
+			try await remote.search(query: text, participants: picked, limit: limit)
+		}
+		async let files = Self.attempt { () async throws -> [SearchResult] in
+			if chatsOnly { return [] }
+			return try await remote.searchFiles(query: text, limit: fileLimit)
+		}
+		let (s, f) = await (server, files)
 		// A newer query (or a cancel) started while this one was in flight.
 		guard mine == generation, !Task.isCancelled else { return }
-		// The workspace changed while this was in flight: its lists belong to the old one.
+		// The workspace changed while this was in flight: these rows belong to the old one.
 		guard startWorkspace == workspaceId() else {
 			invalidateDirectories()
 			await run(text, generation: mine)
 			return
 		}
 
-		if case .success(let list) = c { chatsCache = list }
-		bonusCache = boosts
-		// A chats-only search skipped agents and flows, so their empty answers must not be cached.
-		if case .success(let list) = a, !chatsOnly { agentsCache = list }
-		if case .success(let list) = fl, !chatsOnly { flowsCache = list }
-		// A fresh fetch restarts the TTL; a pure cache hit leaves the old stamp alone.
-		if chatsOnly {
-			if cacheStamp == nil { cacheStamp = (startWorkspace, now()) }
-		} else if cachedChats == nil || cachedAgents == nil || cachedFlows == nil {
-			cacheStamp = (startWorkspace, now())
-		}
-
-		if chatsOnly, case .failure(let error) = c {
-			allResults = []
-			isOffline = error.isOffline
-			isPartial = false
-			phase = .failed(error.message)
-			return
-		}
-
-		// The flow list only supplements the four searched sources: it never decides "nothing could
-		// be searched", but its failure still marks the results partial.
-		let outcomes = [o, f, c, a]
-		let errors = outcomes.compactMap { outcome -> SearchError? in
-			if case .failure(let e) = outcome { return e }
-			return nil
-		}
-		if errors.count == outcomes.count, let first = errors.first {
+		let errors = [s.failureValue, chatsOnly ? nil : f.failureValue].compactMap { $0 }
+		if case .failure(let first) = s, chatsOnly || f.failureValue != nil {
 			allResults = []
 			isOffline = first.isOffline
 			isPartial = false
@@ -319,49 +291,29 @@ public final class SearchStore {
 			return
 		}
 		isOffline = false
-		if case .failure = fl { isPartial = true } else { isPartial = !errors.isEmpty }
-
+		isPartial = !errors.isEmpty
 		var merged: [SearchResult] = []
-		if case .success(let list) = c { merged += Self.withParticipants(Self.filter(list, text), picked) }
-		if case .success(let list) = a { merged += Self.filter(list, text) }
-		// The flow list is authoritative for flows; the server's object hits fill in the rest.
-		var flowIds = Set<String>()
-		if case .success(let list) = fl {
-			let hits = Self.filter(list, text)
-			flowIds = Set(hits.map(\.entityId))
-			merged += hits
+		if case .success(let answer) = s {
+			merged += answer.results
+			if answer.isPartial { isPartial = true }
 		}
-		if case .success(let list) = o { merged += list.filter { !flowIds.contains($0.entityId) } }
-		if case .success(let list) = f { merged += list }
-		allResults = SearchRanking.ordered(merged, query: text, bonuses: text.isEmpty ? [:] : (boosts ?? [:]))
+		if !chatsOnly, case .success(let list) = f { merged += list }
+		allResults = merged
 		phase = .results
 	}
 
-	/// Chats that contain every picked person or agent. No one picked keeps the list as it is.
-	nonisolated static func withParticipants(_ list: [SearchResult], _ picked: [SearchPerson]) -> [SearchResult] {
-		guard !picked.isEmpty else { return list }
-		return list.filter { result in picked.allSatisfy { result.participantIds.contains($0.id) } }
-	}
-
-	nonisolated static func filter(_ list: [SearchResult], _ text: String) -> [SearchResult] {
-		list.filter { SearchHighlight.matches(text, in: $0.searchableText) }
-	}
-
-	/// The frecency bonuses: the cached ones, or a fresh read. A failed read means no boost, never an
-	/// error: the search still answers in its usual order.
-	private nonisolated static func loadBonuses(
-		cached: [String: Int]?, opens: (any SearchOpensRemote)?
-	) async -> [String: Int]? {
-		if let cached { return cached }
-		guard let opens else { return nil }
-		return try? await opens.bonuses()
-	}
-
-	private nonisolated static func attempt(
-		_ work: @Sendable () async throws -> [SearchResult]
-	) async -> Result<[SearchResult], SearchError> {
+	private nonisolated static func attempt<T: Sendable>(
+		_ work: @Sendable () async throws -> T
+	) async -> Result<T, SearchError> {
 		do { return .success(try await work()) } catch {
 			return .failure((error as? SearchError) ?? RemoteFailure.searchError(error))
 		}
+	}
+}
+
+private extension Result {
+	var failureValue: Failure? {
+		if case .failure(let error) = self { return error }
+		return nil
 	}
 }
