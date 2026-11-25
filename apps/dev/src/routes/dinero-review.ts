@@ -24,6 +24,7 @@ import {
 	isIsoDate,
 	readReviewLog,
 } from '../lib/integrations/providers/dinero/review'
+import { buildVatReport, vatReportCsv } from '../lib/integrations/providers/dinero/vat-report'
 import { getProvider } from '../lib/integrations/registry'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import {
@@ -71,6 +72,12 @@ const errorResponses = {
 
 const dateString = z.string().refine(isIsoDate, 'Use a date like 2026-11-30')
 
+const receiptSchema = z.object({
+	file_name: z.string().nullable(),
+	file_guid: z.string().nullable(),
+	reference: z.string().nullable(),
+})
+
 const itemSchema = z.object({
 	event_id: z.number(),
 	at: z.string().nullable(),
@@ -87,6 +94,7 @@ const itemSchema = z.object({
 			vat_code: z.string().nullable(),
 		}),
 	),
+	receipt: receiptSchema.nullable(),
 	result: z.string().nullable(),
 	reverses_event_id: z.number().nullable(),
 	reversed_by_event_id: z.number().nullable(),
@@ -466,19 +474,49 @@ app.openapi(approveRoute, (async (c) => {
 	return c.json(await buildLog(db, workspaceId, row.id, { from: body.from, to: body.to }), 200)
 }) as RouteHandler<typeof approveRoute, Env>)
 
+const vatEntrySchema = z.object({
+	event_id: z.number(),
+	voucher_date: z.string().nullable(),
+	description: z.string().nullable(),
+	account: z.number().nullable(),
+	amount_incl_vat: z.number(),
+	vat_amount: z.number().nullable(),
+	net_amount: z.number().nullable(),
+	receipt: receiptSchema.nullable(),
+})
+
+const vatLineSchema = z.object({
+	vat_code: z.string().nullable(),
+	direction: z.enum(['input', 'output', 'none', 'unknown']),
+	rate: z.number().nullable(),
+	lines: z.number(),
+	amount_incl_vat: z.number(),
+	vat_amount: z.number().nullable(),
+	net_amount: z.number().nullable(),
+	entries: z.array(vatEntrySchema),
+})
+
+const vatReportSchema = z.object({
+	from: z.string(),
+	to: z.string(),
+	lines: z.array(vatLineSchema),
+	totals: z.object({
+		input_vat: z.number(),
+		output_vat: z.number(),
+		complete: z.boolean(),
+		uncalculated_lines: z.number(),
+	}),
+	figures_hash: z.string(),
+	notice: z.string(),
+})
+
 const handoffSchema = z.object({
 	from: z.string(),
 	to: z.string(),
 	approved_by: z.string().uuid(),
 	approved_at: z.string(),
 	figures_hash: z.string(),
-	figures: z.array(
-		z.object({
-			vat_code: z.string().nullable(),
-			lines: z.number(),
-			amount_incl_vat: z.number(),
-		}),
-	),
+	figures: z.array(vatLineSchema),
 	figures_note: z.string(),
 	steps: z.array(z.string()),
 	year_end_steps: z.array(z.string()),
@@ -553,7 +591,12 @@ app.openapi(handoffRoute, (async (c) => {
 	const handoff = buildFilingHandoff({
 		from: body.from,
 		to: body.to,
-		items: view.items,
+		report: buildVatReport({
+			from: body.from,
+			to: body.to,
+			items: view.items,
+			figuresHash: view.figures_hash,
+		}),
 		approvedBy: approval.approvedBy,
 		approvedAt: approval.approvedAt,
 		figuresHash: approval.figuresHash,
@@ -576,5 +619,96 @@ app.openapi(handoffRoute, (async (c) => {
 	})
 	return c.json(handoff, 200)
 }) as RouteHandler<typeof handoffRoute, Env>)
+
+const reportQuery = z.object({ from: dateString, to: dateString })
+
+const vatReportRoute = createRoute({
+	method: 'get',
+	path: '/vat-report',
+	'x-viewer-policy': 'writer',
+	tags: ['integrations'],
+	summary:
+		'The draft VAT report for a period, built from the booked entries of the log (a person, admin or owner)',
+	request: { headers: workspaceIdHeader, query: reportQuery },
+	responses: {
+		200: {
+			description: 'The report, also the data file',
+			content: { 'application/json': { schema: vatReportSchema } },
+		},
+		...errorResponses,
+	},
+})
+
+// The VAT report is the same figures the filing hand-off hands over (buildVatReport). It is for
+// checking: it reads the log and writes nothing, and it is open before the approval so the owner
+// can check the figures before approving. It never calls Dinero's filing, SKAT or Erhvervsstyrelsen.
+async function loadReport(db: Database, workspaceId: string, from: string, to: string) {
+	const row = await loadDinero(db, workspaceId)
+	if (!row) return null
+	const view = await buildLog(db, workspaceId, row.id, { from, to })
+	return buildVatReport({ from, to, items: view.items, figuresHash: view.figures_hash })
+}
+
+app.openapi(vatReportRoute, (async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	if (
+		!(await requireOwnerPerson(
+			db,
+			{
+				actorId: c.get('actorId'),
+				actorType: c.get('actorType'),
+				workspaceRole: c.get('workspaceRole'),
+			},
+			workspaceId,
+		))
+	) {
+		return c.json(createApiError('FORBIDDEN', FORBIDDEN_TEXT), 403)
+	}
+	const { from, to } = c.req.valid('query')
+	if (from > to) return c.json(createApiError('BAD_REQUEST', 'from is after to'), 400)
+	const report = await loadReport(db, workspaceId, from, to)
+	if (!report) return c.json(createApiError('NOT_FOUND', 'Dinero is not connected'), 404)
+	return c.json(report, 200)
+}) as RouteHandler<typeof vatReportRoute, Env>)
+
+const vatReportCsvRoute = createRoute({
+	method: 'get',
+	path: '/vat-report/csv',
+	'x-viewer-policy': 'writer',
+	tags: ['integrations'],
+	summary: 'The draft VAT report as a spreadsheet file (CSV), same lines as the report',
+	request: { headers: workspaceIdHeader, query: reportQuery },
+	responses: {
+		200: { description: 'The CSV file', content: { 'text/csv': { schema: z.string() } } },
+		...errorResponses,
+	},
+})
+
+app.openapi(vatReportCsvRoute, (async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	if (
+		!(await requireOwnerPerson(
+			db,
+			{
+				actorId: c.get('actorId'),
+				actorType: c.get('actorType'),
+				workspaceRole: c.get('workspaceRole'),
+			},
+			workspaceId,
+		))
+	) {
+		return c.json(createApiError('FORBIDDEN', FORBIDDEN_TEXT), 403)
+	}
+	const { from, to } = c.req.valid('query')
+	if (from > to) return c.json(createApiError('BAD_REQUEST', 'from is after to'), 400)
+	const report = await loadReport(db, workspaceId, from, to)
+	if (!report) return c.json(createApiError('NOT_FOUND', 'Dinero is not connected'), 404)
+	return c.body(vatReportCsv(report), 200, {
+		'content-type': 'text/csv; charset=utf-8',
+		'content-disposition': `attachment; filename="vat-report-draft-${from}-${to}.csv"`,
+	})
+}) as RouteHandler<typeof vatReportCsvRoute, Env>)
 
 export default app
