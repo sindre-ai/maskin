@@ -40,7 +40,8 @@ struct SettingsServices {
 	/// Create and switch), and every store built afterwards must use the new header.
 	var source: APISettingsSource? {
 		environment.workspaceId.map {
-			APISettingsSource(client: environment.client, workspaceID: $0)
+			APISettingsSource(
+				client: environment.client, workspaceID: $0, connectClient: environment.connectClient)
 		}
 	}
 
