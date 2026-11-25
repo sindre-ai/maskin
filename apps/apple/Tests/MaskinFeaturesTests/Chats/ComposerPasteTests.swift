@@ -55,6 +55,65 @@ struct ComposerPasteTests {
 		#expect(loaded.unreadable == 0)
 	}
 
+	private func fileProvider(named name: String, type: UTType, contents: Data) throws -> NSItemProvider {
+		let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+		try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+		let source = folder.appendingPathComponent(name)
+		try contents.write(to: source)
+		let provider = NSItemProvider()
+		provider.suggestedName = "Statement"
+		provider.registerFileRepresentation(forTypeIdentifier: type.identifier, fileOptions: [], visibility: .all) { done in
+			done(source, false, nil)
+			return nil
+		}
+		return provider
+	}
+
+	@Test("a copied PDF counts as a file, text and pictures do not")
+	func recognisesFileItems() throws {
+		let pdf = try fileProvider(named: "Statement.pdf", type: .pdf, contents: Data([0x25, 0x50]))
+		#expect(ClipboardFiles.isFile(pdf))
+		#expect(!ClipboardFiles.isFile(NSItemProvider(object: "just text" as NSString)))
+		let picture = NSItemProvider()
+		picture.registerDataRepresentation(forTypeIdentifier: UTType.png.identifier, visibility: .all) { done in
+			done(Data([1]), nil)
+			return nil
+		}
+		#expect(!ClipboardFiles.isFile(picture))
+		#expect(ClipboardFiles.holdsFile(types: [UTType.pdf.identifier]))
+		#expect(!ClipboardFiles.holdsFile(types: [UTType.utf8PlainText.identifier, UTType.png.identifier]))
+	}
+
+	@Test("every file on the clipboard is read in order and keeps its name")
+	func readsEveryFileKeepingNames() async throws {
+		let first = try fileProvider(named: "Statement.pdf", type: .pdf, contents: Data([1, 2, 3]))
+		let second = try fileProvider(named: "Notes.pdf", type: .pdf, contents: Data([4, 5]))
+		let loaded = await ClipboardFiles.load([first, NSItemProvider(object: "text" as NSString), second])
+		#expect(loaded.unreadable == 0)
+		#expect(loaded.files.map(\.lastPathComponent) == ["Statement.pdf", "Notes.pdf"])
+		#expect(try Data(contentsOf: loaded.files[0]) == Data([1, 2, 3]))
+	}
+
+	@Test("a copied file with no extension gets the one its type has")
+	func addsMissingExtension() async throws {
+		let provider = try fileProvider(named: "Statement", type: .pdf, contents: Data([1]))
+		let loaded = await ClipboardFiles.load([provider])
+		#expect(loaded.files.map(\.lastPathComponent) == ["Statement.pdf"])
+	}
+
+	@Test("a pasted file becomes a chip under its own name, up to the attachment limit")
+	func pastedFileBecomesChip() async throws {
+		let model = ChatComposerModel(uploader: Uploader(), selfActorID: "me")
+		let provider = try fileProvider(named: "Statement.pdf", type: .pdf, contents: Data([1, 2, 3]))
+		let loaded = await ClipboardFiles.load([provider])
+		model.attach(loaded.files.map { ComposerDrop.file($0) })
+		#expect(model.attachments.count == 1)
+		#expect(model.attachments.first?.name == "Statement.pdf")
+		#expect(model.attachments.first?.mimeType == "application/pdf")
+		#expect(model.attachments.first?.isImage == false)
+		#expect(model.text.isEmpty)
+	}
+
 	@Test("the + menu keeps its Paste image row")
 	func pasteRowStays() {
 		#expect(ComposerAttachAction.allCases.map(\.label).contains("Paste image"))
@@ -69,6 +128,14 @@ struct ComposerPasteTests {
 		#expect(!field.readOnly.wasChanged)
 		#expect(types.contains(UTType.text.identifier))
 		#expect(types.contains(UTType.image.identifier))
+	}
+
+	@Test("file paste setup lets the input accept files beside text and pictures")
+	func installAcceptsFiles() {
+		let field = UITextView()
+		ComposerImagePasteHandler().install(on: field)
+		let types = field.pasteConfiguration?.acceptableTypeIdentifiers ?? []
+		#expect(types.contains(UTType.data.identifier))
 	}
 
 	@Test("an input with image paste setup offers Paste while the clipboard holds only a picture")

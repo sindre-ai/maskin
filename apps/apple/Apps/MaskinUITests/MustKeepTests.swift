@@ -283,6 +283,15 @@ final class MustKeepTests: XCTestCase {
 		}
 	}
 
+	/// A one-page PDF on the system clipboard, as a file item with no text beside it.
+	private func putPDFOnClipboard() {
+		let data = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 200, height: 200)).pdfData { context in
+			context.beginPage()
+			"Statement".draw(at: CGPoint(x: 20, y: 20), withAttributes: nil)
+		}
+		UIPasteboard.general.setData(data, forPasteboardType: "com.adobe.pdf")
+	}
+
 	/// Long-presses the message field until its edit menu shows Paste (the first press can only focus the
 	/// field, so it tries a few times). Returns the Paste item; it may not exist, the caller asserts.
 	private func fieldMenuPaste(_ field: XCUIElement, dump name: String) -> XCUIElement {
@@ -389,6 +398,21 @@ final class MustKeepTests: XCTestCase {
 		let chip = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Remove '")).firstMatch
 		if !chip.waitForExistence(timeout: 15) { dumpScreen("mk07c-chip") }
 		XCTAssertTrue(chip.exists, "the pasted picture shows as a chip in the composer")
+	}
+
+	/// MK-07e: Paste in the field's menu with a PDF on the clipboard adds the file as a chip (its Remove button shows).
+	/// The keyboard's "Paste from <app>" suggestion uses the same paste handling, so that is checked by hand.
+	func testMK07e_FieldPasteAddsFileChip() throws {
+		putPDFOnClipboard()
+		openChat("Priya Rao")
+		dismissNotNow()
+		let field = composerField()
+		XCTAssertTrue(field.waitForExistence(timeout: 15), "the chat shows its message field")
+		field.tap()
+		pasteIntoField(field)
+		let chip = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Remove '")).firstMatch
+		if !chip.waitForExistence(timeout: 15) { dumpScreen("mk07e-chip") }
+		XCTAssertTrue(chip.exists, "the pasted PDF shows as a chip in the composer")
 	}
 
 	/// MK-07d: Paste in the field's menu with text on the clipboard puts the words in the field and adds no chip.

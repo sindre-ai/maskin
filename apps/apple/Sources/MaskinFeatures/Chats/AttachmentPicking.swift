@@ -90,6 +90,75 @@ enum ClipboardImages {
 	}
 }
 
+/// The files on the clipboard (a PDF, a document, anything that is not text, a picture or a link), copied to our
+/// own temp folder with the name they were copied under, so a pasted `Statement.pdf` stays `Statement.pdf`.
+enum ClipboardFiles {
+	/// A file item: some kind of data, but not words, a picture or a link. Those have their own paste.
+	static func isFile(_ provider: NSItemProvider) -> Bool {
+		provider.hasItemConformingToTypeIdentifier(UTType.data.identifier)
+			&& !provider.hasItemConformingToTypeIdentifier(UTType.text.identifier)
+			&& !provider.hasItemConformingToTypeIdentifier(UTType.image.identifier)
+			&& !provider.hasItemConformingToTypeIdentifier(UTType.url.identifier)
+	}
+
+	/// True when a clipboard type list (what the pasteboard reports without being read) holds a file type.
+	static func holdsFile(types: [String]) -> Bool {
+		types.contains { identifier in
+			guard let type = UTType(identifier), type.conforms(to: .data) else { return false }
+			return !type.conforms(to: .text) && !type.conforms(to: .image) && !type.conforms(to: .url)
+		}
+	}
+
+	/// Every file among `providers`, in order. `unreadable` counts the ones that gave no file.
+	@MainActor
+	static func load(_ providers: [NSItemProvider]) async -> (files: [URL], unreadable: Int) {
+		var files: [URL] = []
+		var unreadable = 0
+		for provider in providers where isFile(provider) {
+			if let url = await copy(provider) { files.append(url) } else { unreadable += 1 }
+		}
+		return (files, unreadable)
+	}
+
+	/// One file item as a file in its own temp folder. The folder is the caller's to remove
+	/// (`ComposerDrop.file` attachments remove it once uploaded).
+	@MainActor
+	static func copy(_ provider: NSItemProvider) async -> URL? {
+		let type =
+			provider.registeredTypeIdentifiers.first { UTType($0)?.conforms(to: .data) == true } ?? UTType.data.identifier
+		let suggestedName = provider.suggestedName
+		return await withCheckedContinuation { continuation in
+			provider.loadFileRepresentation(forTypeIdentifier: type) { url, _ in
+				guard let url else {
+					continuation.resume(returning: nil)
+					return
+				}
+				continuation.resume(returning: copyOut(url, suggestedName: suggestedName, type: type))
+			}
+		}
+	}
+
+	/// The system's file is only readable inside the callback, so it is copied before that returns.
+	private static func copyOut(_ url: URL, suggestedName: String?, type: String) -> URL? {
+		var name = url.lastPathComponent
+		if url.pathExtension.isEmpty {
+			let base = (suggestedName?.isEmpty == false ? suggestedName : nil) ?? name
+			let clean = base.replacingOccurrences(of: "/", with: "-")
+			name = UTType(type)?.preferredFilenameExtension.map { "\(clean).\($0)" } ?? clean
+		}
+		let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+		let copy = folder.appendingPathComponent(name)
+		do {
+			try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+			try FileManager.default.copyItem(at: url, to: copy)
+			return copy
+		} catch {
+			try? FileManager.default.removeItem(at: folder)
+			return nil
+		}
+	}
+}
+
 /// PhotosPickerItem is not declared Sendable; it is only ever used from the one loading task.
 private struct ItemBox: @unchecked Sendable { let item: PhotosPickerItem }
 
