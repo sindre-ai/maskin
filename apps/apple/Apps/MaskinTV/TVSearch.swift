@@ -50,7 +50,9 @@ struct TVSearch: View {
 			}
 			let auth = environment.auth
 			store = SearchStore(
-				remote: APISearchRemote(client: environment.client, credentials: auth.credentialsProvider),
+				remote: APISearchRemote(
+					client: environment.client, baseURL: environment.baseURL, clientSource: environment.clientSource,
+					credentials: auth.credentialsProvider),
 				recents: SearchRecents(actorId: auth.session?.actorId ?? ""),
 				workspaceId: { auth.session?.workspaceId })
 		}

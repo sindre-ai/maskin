@@ -50,7 +50,8 @@ private struct SearchScreenContent: View {
 	init(environment: AppEnvironment, open: ((SearchResult) -> Void)? = nil, onNewItem: ((String) -> Void)? = nil) {
 		self.onNewItem = onNewItem
 		let remote = APISearchRemote(
-			client: environment.client, credentials: environment.auth.credentialsProvider)
+			client: environment.client, baseURL: environment.baseURL, clientSource: environment.clientSource,
+			credentials: environment.auth.credentialsProvider)
 		let auth = environment.auth
 		let searchStore = SearchStore(
 			remote: remote, recents: SearchRecents(actorId: auth.session?.actorId ?? ""),

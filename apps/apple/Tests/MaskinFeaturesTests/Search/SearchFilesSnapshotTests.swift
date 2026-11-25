@@ -12,40 +12,46 @@ import UniformTypeIdentifiers
 
 private struct StubSearch: SearchRemote {
 	var fail = false
-	func searchObjects(query: String, limit: Int) async throws -> [SearchResult] {
+	/// The chats and who is in them: the server search keeps only chats everyone picked is in.
+	private let chats: [(result: SearchResult, people: [String])] = [
+		(
+			SearchResult(
+				kind: .chat, entityId: "c1", title: "Launch coordination", subtitle: "Sigrid Larsen, Forge",
+				snippet: "Who owns the launch email?"), ["p1", "a2"]
+		),
+		(
+			SearchResult(
+				kind: .chat, entityId: "c2", title: "Standup", subtitle: "Sigrid Larsen", snippet: "Nothing blocked"),
+			["p1"]
+		),
+	]
+
+	func search(query: String, participants: [String], limit: Int) async throws -> SearchAnswer {
 		if fail { throw SearchError("You're offline.", isOffline: true) }
-		return [
+		if !participants.isEmpty {
+			return SearchAnswer(
+				results: chats.filter { chat in participants.allSatisfy { chat.people.contains($0) } }.map(\.result))
+		}
+		guard query.localizedCaseInsensitiveContains("launch") else { return SearchAnswer(results: []) }
+		return SearchAnswer(results: [
+			chats[0].result,
+			SearchResult(kind: .agent, entityId: "a1", title: "Launch Captain", snippet: "Coordinates launches"),
 			SearchResult(
 				kind: .object, entityId: "o1", title: "Launch checklist for the iOS app",
 				subtitle: "in progress", snippet: "Before we launch we need push notifications, TestFlight and a privacy review.",
 				detail: "task", updatedAt: Date(timeIntervalSinceNow: -3600)),
 			SearchResult(kind: .object, entityId: "o2", title: "Launch retro", subtitle: "done", detail: "insight"),
-		]
+		])
 	}
 	func searchFiles(query: String, limit: Int) async throws -> [SearchResult] {
 		if fail { throw SearchError("You're offline.", isOffline: true) }
 		return [SearchResult(kind: .file, entityId: "f1", title: "launch-plan.md", subtitle: "Markdown", snippet: "The plan for launch week", detail: "text/markdown")]
-	}
-	func conversations() async throws -> [SearchResult] {
-		if fail { throw SearchError("You're offline.", isOffline: true) }
-		return [
-			SearchResult(
-				kind: .chat, entityId: "c1", title: "Launch coordination", subtitle: "Sigrid Larsen, Forge",
-				snippet: "Who owns the launch email?", participantIds: ["p1", "a2"]),
-			SearchResult(
-				kind: .chat, entityId: "c2", title: "Standup", subtitle: "Sigrid Larsen",
-				snippet: "Nothing blocked", participantIds: ["p1"]),
-		]
 	}
 	func people() async throws -> [SearchPerson] {
 		[
 			SearchPerson(id: "p1", name: "Sigrid Larsen"), SearchPerson(id: "a1", name: "Launch Captain", isAgent: true),
 			SearchPerson(id: "a2", name: "Forge", isAgent: true),
 		]
-	}
-	func agents() async throws -> [SearchResult] {
-		if fail { throw SearchError("You're offline.", isOffline: true) }
-		return [SearchResult(kind: .agent, entityId: "a1", title: "Launch Captain", snippet: "Coordinates launches")]
 	}
 }
 
@@ -122,7 +128,7 @@ struct SearchFilesSnapshotTests {
 		for (w, d) in sizes { try snapshot("search-recents", width: w, dark: d) { SearchContentBody(store: s, onSelect: { _ in }).padding(MaskinSpace.s9) } }
 	}
 
-	@Test("grouped results with highlights")
+	@Test("results in the server's order with highlights")
 	func results() async throws {
 		let s = await store(query: "launch")
 		#expect(s.sections.count == 4)
