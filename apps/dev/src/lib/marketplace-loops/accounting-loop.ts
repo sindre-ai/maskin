@@ -2,7 +2,7 @@
 //
 // The bundle contains the Bookkeeper, plus every trigger and skill attached to it. Its snapshot
 // data is written to be workspace-neutral and lives in data/accounting-*.json. The Dinero
-// connection is not shipped: the installer adds Dinero's own server as a custom tool after
+// connection is not shipped: the installer connects Dinero under Settings, Integrations after
 // install, by the steps in the accounting-connection-check skill.
 //
 // Exported so the seed config and its tests can share the exact same shape.
@@ -28,8 +28,8 @@ const ACCOUNTING_CHECKLIST: LoopChecklist = {
 	driverSourceItemId: ACCOUNTING_LOOP_ACTOR_BOOKKEEPER,
 	items: [
 		{
-			title: 'Connect Dinero as a custom tool',
-			body: "Needed: Dinero's own server added as a custom tool and limited to the allowed list, by the steps in the skill accounting-connection-check. This needs the owner to sign in to Dinero, and usually someone technical, so you cannot do it. Tell the owner what to do in plain words, one step at a time, and never ask for or look at the sign-in token.",
+			title: 'Connect Dinero',
+			body: 'Needed: Dinero connected under Settings, Integrations, by the steps in the skill accounting-connection-check. This needs the owner to sign in once with their own Dinero user (a Dinero Pro or Total plan), so you cannot do it. Tell the owner what to do in plain words, one step at a time, and never ask for or look at a sign-in token.',
 		},
 		{
 			title: 'Run the first connection check',
