@@ -210,6 +210,8 @@ describe('Accounting loop definition', () => {
 		// The check still stops on a tool that books, and on any Dinero tool off the list.
 		expect(check).toMatch(/every Dinero tool you have is on the list/)
 		expect(check).toMatch(/A tool that books, changes or deletes is offered, or a Dinero tool/)
+		// get_vat_report is the gateway's own read, not a Dinero tool, so the check must not count it.
+		expect(check).toMatch(/get_vat_report is not a Dinero tool and does not count here/)
 	})
 
 	it('has no key-based install step left', () => {
