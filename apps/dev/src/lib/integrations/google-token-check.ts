@@ -34,7 +34,7 @@ export function isGoogleApisUrl(url: string): boolean {
 
 function bearerToken(authorization: string | undefined): string | null {
 	const match = /^Bearer\s+(\S+)$/i.exec(authorization ?? '')
-	return match ? match[1] : null
+	return match?.[1] ?? null
 }
 
 export async function checkGoogleToken(args: {
