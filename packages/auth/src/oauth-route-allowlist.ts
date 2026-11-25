@@ -183,6 +183,7 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'POST /api/objects/migrate-type',
 	'GET /api/saved-views',
 	'POST /api/saved-views',
+	'POST /api/search/opens',
 	'DELETE /api/saved-views/:id',
 	'GET /api/saved-views/:id/apply',
 	'POST /api/sessions/:id/ask',

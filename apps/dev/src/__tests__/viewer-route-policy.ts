@@ -119,6 +119,11 @@ export const OPEN_ROUTES: OpenRoute[] = [
 	// Per-actor push registration: it writes the caller's own device row and touches no
 	// workspace data, and a read-only viewer still wants their own notifications.
 	['POST', '/api/devices', 'registers the caller\u2019s own device, no workspace data'],
+	[
+		'POST',
+		'/api/search/opens',
+		'records only the caller\u2019s own search history, which a viewer builds by searching',
+	],
 	['DELETE', '/api/devices/:id_or_token', 'removes only the caller\u2019s own device'],
 	[
 		'POST',

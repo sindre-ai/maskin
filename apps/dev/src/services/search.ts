@@ -25,6 +25,7 @@ import {
 } from '../lib/search-rank'
 import { canHaveTypo, titleTypoDistance } from '../lib/search-typo'
 import { directPairKey } from './direct-chat'
+import { frecencyBonusSql } from './search-opens'
 
 /** A source that takes longer than this is reported as partial instead of failing the request. */
 const SOURCE_TIMEOUT_MS = 5000
@@ -218,8 +219,9 @@ export interface SearchSource {
 	 */
 	rankSub?: boolean
 	/**
-	 * Optional. The chat order under relevance sort: match tier, then open before archived, then unread
-	 * before read, then newest. The score is not read, so a short title earns nothing (see orderBy).
+	 * Optional. The chat order under relevance sort: match tier, then open before archived, then the
+	 * caller's frecency, then unread before read, then newest. The title score is not read, so a short
+	 * title earns nothing (see orderBy).
 	 */
 	unreadFirst?: boolean
 	/**
@@ -494,13 +496,19 @@ function tierExpression(tokens: string[], source: SearchSource): SQL {
  * bonus when the word starts a word of the title. It reads the candidate row `s` and runs for the
  * matched rows only, so the second look at the title and body costs next to nothing.
  */
-function scoreExpression(tokens: string[], source: SearchSource, hasDeep: boolean): SQL {
+function scoreExpression(
+	tokens: string[],
+	source: SearchSource,
+	hasDeep: boolean,
+	ctx: SearchContext,
+): SQL {
 	if (tokens.length === 0) return sql`0`
-	// Chats are ordered by tier, archive, unread and recency, never by score, so every chat scores the
-	// same: just under a title that is the whole phrase. The score only places a chat among the other
-	// groups (a chat leads other rows of the same tier, a perfect title hit of another kind leads it).
+	// Chats are ordered by tier, archive, frecency, unread and recency, never by the title score, so
+	// every chat scores the same: just under a title that is the whole phrase, plus the caller's
+	// frecency bonus. The score only places a chat among the other groups (a chat leads other rows of
+	// the same tier, a perfect title hit of another kind leads it) and orders chats by frecency.
 	if (source.unreadFirst) {
-		return sql`${tokens.length * (TITLE_HIT_WEIGHT + TITLE_COVERAGE_SCALE + TITLE_PHRASE_PREFIX_BONUS - 1)}::int`
+		return sql`${tokens.length * (TITLE_HIT_WEIGHT + TITLE_COVERAGE_SCALE + TITLE_PHRASE_PREFIX_BONUS - 1)}::int + ${frecencyBonus(ctx)}`
 	}
 	const perToken = tokens.map((token) => {
 		const pattern = tokenIlikePattern(token)
@@ -511,7 +519,20 @@ function scoreExpression(tokens: string[], source: SearchSource, hasDeep: boolea
 		const wordStart = wordPatterns(token).start
 		return sql`((case when s.title ilike ${pattern} then ${TITLE_HIT_WEIGHT}::int + floor(${TITLE_COVERAGE_SCALE}::int * ${token.length}::int / greatest(length(s.title), 1)) + (case when s.title ~* ${wordStart} then ${TITLE_PHRASE_PREFIX_BONUS}::int else 0 end) else 0 end) + ${name} + (case when ${body} then 1 else 0 end))`
 	})
-	return sql.join(perToken, sql` + `)
+	return sql`${sql.join(perToken, sql` + `)} + ${frecencyBonus(ctx)}`
+}
+
+/**
+ * The bonus for a result the caller opened from search before: their own decayed open count for
+ * the candidate row `s`, times the points per open, capped. Only the caller's rows are read, and
+ * only for a typed query (an empty query has no score at all).
+ */
+function frecencyBonus({ workspaceId, callerId }: SearchContext): SQL {
+	return sql`coalesce((
+		SELECT ${frecencyBonusSql()}
+		FROM search_opens so
+		WHERE so.workspace_id = ${workspaceId} AND so.actor_id = ${callerId} AND so.entity_id = s.id
+	), 0)`
 }
 
 /**
@@ -554,7 +575,7 @@ function orderBy(sort: SearchQuery['sort'], source: SearchSource, statusRank: SQ
 	if (sort === 'recent') return sql`m.updated_at desc nulls last, m.id`
 	if (sort === 'az') return sql`lower(m.title) asc, m.id`
 	if (source.unreadFirst) {
-		return sql`m.tier, (m.status = 'archived'), (m.status <> 'unread'), m.updated_at desc nulls last, m.id`
+		return sql`m.tier, (m.status = 'archived'), m.score desc, (m.status <> 'unread'), m.updated_at desc nulls last, m.id`
 	}
 	return sql`m.tier, m.score desc, ${statusRank}, m.updated_at desc nulls last, m.id`
 }
@@ -762,7 +783,7 @@ async function runSource(
 				SELECT s.id, s.type, s.title, s.sub, ${SNIPPET} AS snippet, ${statusExpr(source, ctx)} AS status,
 					s.updated_at, (${participantsOk}) AS p_ok,
 					${hasDeep ? sql`s.deep,` : sql``}
-					${scoreExpression(tokens, source, hasDeep)} AS score,
+					${scoreExpression(tokens, source, hasDeep, ctx)} AS score,
 					${tierExpression(tokens, source)} AS tier,
 					${inWindow} AS in_window
 				FROM (${candidates}) s

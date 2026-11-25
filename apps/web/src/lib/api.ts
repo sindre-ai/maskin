@@ -577,6 +577,14 @@ export const api = {
 			const qs = Object.keys(params).length > 0 ? `?${new URLSearchParams(params)}` : ''
 			return request<SearchResponse>(`/search${qs}`, { workspaceId, signal: opts?.signal })
 		},
+		/** Records that the caller opened a result from a search; it feeds their own ranking. */
+		recordOpen: (workspaceId: string, entityId: string) =>
+			request<void>('/search/opens', {
+				method: 'POST',
+				body: { entity_id: entityId },
+				workspaceId,
+				keepalive: true,
+			}),
 	},
 	objects: {
 		list: (workspaceId: string, params?: Record<string, string>) => {

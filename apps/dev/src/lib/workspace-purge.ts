@@ -147,6 +147,7 @@ export const WORKSPACE_PURGE_CASCADE = [
 	'receipt_intake_keys',
 	'receipt_intakes',
 	'saved_views',
+	'search_opens',
 	'send_permissions',
 	'session_dispatch_attempts',
 	'slack_user_links',

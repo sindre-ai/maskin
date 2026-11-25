@@ -32,6 +32,12 @@ actor FakeSearchRemote: SearchRemote {
 	func people() async throws -> [SearchPerson] { peopleList }
 }
 
+actor FakeSearchOpens: SearchOpensRemote {
+	private(set) var recorded: [String] = []
+
+	func recordOpen(entityId: String) async { recorded.append(entityId) }
+}
+
 func object(_ id: String, _ title: String) -> SearchResult {
 	SearchResult(kind: .object, entityId: id, title: title, subtitle: "active", detail: "task")
 }
@@ -59,6 +65,14 @@ func makeStore(
 	return SearchStore(
 		remote: remote, recents: SearchRecents(defaults: defaults), workspaceId: { workspace },
 		debounce: debounce)
+}
+
+@MainActor
+func makeStore(_ remote: FakeSearchRemote, opens: FakeSearchOpens) -> SearchStore {
+	let defaults = UserDefaults(suiteName: "search-tests-\(UUID().uuidString)")!
+	return SearchStore(
+		remote: remote, recents: SearchRecents(defaults: defaults), workspaceId: { "ws-1" },
+		debounce: .milliseconds(10), opens: opens)
 }
 
 @MainActor
@@ -256,6 +270,24 @@ struct SearchStoreTests {
 		await store.commit()
 		#expect(store.phase == .results)
 		#expect(store.recents == ["launch"])
+	}
+
+	@Test("opening a result of a typed search records it; a tap with no query does not")
+	func recordsOpens() async throws {
+		let remote = FakeSearchRemote()
+		let opens = FakeSearchOpens()
+		let store = makeStore(remote, opens: opens)
+		let hit = chat("c1", "Plan alpha")
+		store.setQuery("plan")
+		await store.settle()
+		store.didOpen(hit)
+		try await Task.sleep(for: .milliseconds(100))
+		#expect(await opens.recorded == ["c1"])
+
+		store.setQuery("")
+		store.didOpen(chat("c2", "Other"))
+		try await Task.sleep(for: .milliseconds(100))
+		#expect(await opens.recorded == ["c1"], "no query: not an open from search")
 	}
 }
 

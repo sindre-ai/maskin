@@ -36,6 +36,7 @@ import { buildRecents } from '@/lib/palette/recents'
 import { highlightText } from '@/lib/search-highlight'
 import { getRecentObjectIds, pushRecentObject } from '@/lib/search-recents'
 import {
+	recordSearchOpen,
 	searchEntityType,
 	trackSearchRowOpened,
 	useTrackSettledSearchV2,
@@ -528,7 +529,10 @@ function LauncherPanel({
 			listSize,
 			uiVersion: 'v2',
 		})
-		if (withQuery) pushRecentSearchEntry(workspaceId, { q: query, types, statuses })
+		if (withQuery) {
+			pushRecentSearchEntry(workspaceId, { q: query, types, statuses })
+			recordSearchOpen(workspaceId, row.id)
+		}
 		if (row.group === 'objects') pushRecentObject(workspaceId, row.id)
 		onClose()
 		navigateToSearchRow(navigate, workspaceId, row)
@@ -557,6 +561,7 @@ function LauncherPanel({
 				uiVersion: 'v2',
 			})
 			pushRecentSearchEntry(workspaceId, { q: query, types, statuses })
+			recordSearchOpen(workspaceId, conversation.id)
 			onClose()
 			navigate({
 				to: '/$workspaceId/chats/$conversationId',

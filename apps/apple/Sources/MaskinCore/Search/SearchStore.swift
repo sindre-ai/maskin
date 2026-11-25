@@ -39,6 +39,7 @@ public final class SearchStore {
 	public private(set) var people: [SearchPerson] = []
 
 	@ObservationIgnored private let remote: any SearchRemote
+	@ObservationIgnored private let opens: (any SearchOpensRemote)?
 	@ObservationIgnored private let recentsStore: SearchRecents
 	@ObservationIgnored private let workspaceId: @MainActor () -> String?
 	@ObservationIgnored private let debounce: Duration
@@ -55,8 +56,10 @@ public final class SearchStore {
 		remote: any SearchRemote, recents: SearchRecents = SearchRecents(),
 		workspaceId: @escaping @MainActor () -> String?, debounce: Duration = .milliseconds(300),
 		directoryTTL: TimeInterval = 60, now: @escaping @MainActor () -> Date = { Date() },
-		currentActorId: @escaping @MainActor () -> String? = { nil }
+		currentActorId: @escaping @MainActor () -> String? = { nil },
+		opens: (any SearchOpensRemote)? = nil
 	) {
+		self.opens = opens
 		self.currentActorId = currentActorId
 		self.directoryTTL = directoryTTL
 		self.now = now
@@ -179,7 +182,12 @@ public final class SearchStore {
 	}
 
 	/// A result was opened: its query is worth remembering.
-	public func didOpen(_ result: SearchResult) { remember(query) }
+	public func didOpen(_ result: SearchResult) {
+		remember(query)
+		// Only a result of a typed search counts, never a tap from the recents screen.
+		guard !query.isEmpty, let opens else { return }
+		Task { await opens.recordOpen(entityId: result.entityId) }
+	}
 
 	public func retry() async {
 		guard !query.isEmpty || !participants.isEmpty else { return }
