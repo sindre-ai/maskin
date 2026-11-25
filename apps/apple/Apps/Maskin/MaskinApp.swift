@@ -27,13 +27,15 @@ struct MaskinApp: App {
 				let session = try? JSONDecoder().decode(StoredSession.self, from: Data(raw.utf8))
 			{
 				let environment = AppEnvironment(
-					baseURL: apiBaseURL, clientSource: source, secretStore: InMemorySecretStore())
+					baseURL: apiBaseURL, clientSource: source, secretStore: InMemorySecretStore(),
+					connectBaseURL: connectBaseURL)
 				try? environment.auth.adopt(session)
 				return environment
 			}
 		#endif
 		let environment = AppEnvironment(
-			baseURL: apiBaseURL, clientSource: source, secretStore: KeychainSecretStore())
+			baseURL: apiBaseURL, clientSource: source, secretStore: KeychainSecretStore(),
+			connectBaseURL: connectBaseURL)
 		environment.auth.restore()
 		return environment
 	}
@@ -194,5 +196,12 @@ struct MaskinApp: App {
 	private static var apiBaseURL: URL {
 		let raw = Bundle.main.object(forInfoDictionaryKey: "MaskinAPIBaseURL") as? String
 		return raw.flatMap(URL.init(string:)) ?? URL(string: "https://maskin.io")!
+	}
+
+	/// `MASKIN_CONNECT_BASE_URL` build setting: the host that answers the integration connect call
+	/// when `MASKIN_API_BASE_URL` is a host that skips the Cloudflare Worker. Empty keeps one host.
+	private static var connectBaseURL: URL? {
+		let raw = Bundle.main.object(forInfoDictionaryKey: "MaskinConnectBaseURL") as? String
+		return raw.flatMap { $0.isEmpty ? nil : URL(string: $0) }
 	}
 }

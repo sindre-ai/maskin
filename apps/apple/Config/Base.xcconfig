@@ -9,6 +9,7 @@ MASKIN_IOS_ENTITLEMENTS = Apps/Maskin/Maskin.entitlements
 
 // Where the app opens web-only settings pages. Empty = the API's own origin (production).
 MASKIN_WEB_BASE_URL =
+MASKIN_CONNECT_BASE_URL =
 
 // Product analytics. The PostHog project token of the project the web app reports to (the same value
 // as VITE_POSTHOG_KEY). Empty = this build sends nothing and never shows the usage question; CI and
