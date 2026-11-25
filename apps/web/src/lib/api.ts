@@ -919,6 +919,10 @@ export const api = {
 			}),
 		vatReport: (workspaceId: string, from: string, to: string) =>
 			request<DineroVatReport>(`/dinero-review/vat-report?from=${from}&to=${to}`, { workspaceId }),
+		vatCheckNote: (workspaceId: string, from: string, to: string) =>
+			request<DineroVatCheckNote>(`/dinero-review/vat-check-note?from=${from}&to=${to}`, {
+				workspaceId,
+			}),
 		vatReportCsv: async (workspaceId: string, from: string, to: string): Promise<Blob> => {
 			const apiKey = getApiKey()
 			const res = await fetch(`${API_BASE}/dinero-review/vat-report/csv?from=${from}&to=${to}`, {
@@ -4050,6 +4054,10 @@ export interface DineroVatLine {
 	vat_amount: number | null
 	net_amount: number | null
 	entries: DineroVatEntry[]
+}
+
+export interface DineroVatCheckNote {
+	note: { id: string; title: string; created_at: string | null } | null
 }
 
 export interface DineroVatReport {

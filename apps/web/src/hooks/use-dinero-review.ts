@@ -17,6 +17,13 @@ export function useDineroVatReport(workspaceId: string, from: string, to: string
 	})
 }
 
+export function useDineroVatCheckNote(workspaceId: string, from: string, to: string) {
+	return useQuery({
+		queryKey: queryKeys.dineroReview.vatCheckNote(workspaceId, from, to),
+		queryFn: () => api.dineroReview.vatCheckNote(workspaceId, from, to),
+	})
+}
+
 export function useDownloadDineroVatCsv(workspaceId: string) {
 	return useMutation({
 		mutationFn: async (p: { from: string; to: string }) => {

@@ -24,6 +24,7 @@ import {
 	isIsoDate,
 	readReviewLog,
 } from '../lib/integrations/providers/dinero/review'
+import { findVatCheckNote } from '../lib/integrations/providers/dinero/vat-check-tool'
 import { buildVatReport, vatReportCsv } from '../lib/integrations/providers/dinero/vat-report'
 import { getProvider } from '../lib/integrations/registry'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
@@ -710,5 +711,57 @@ app.openapi(vatReportCsvRoute, (async (c) => {
 		'content-disposition': `attachment; filename="vat-report-draft-${from}-${to}.csv"`,
 	})
 }) as RouteHandler<typeof vatReportCsvRoute, Env>)
+
+const vatCheckNoteRoute = createRoute({
+	method: 'get',
+	path: '/vat-check-note',
+	'x-viewer-policy': 'writer',
+	tags: ['integrations'],
+	summary:
+		'The latest VAT check note the flow wrote for a period, or none (a person, admin or owner)',
+	request: { headers: workspaceIdHeader, query: reportQuery },
+	responses: {
+		200: {
+			description: 'The note, or null when the flow has not written one for this period',
+			content: {
+				'application/json': {
+					schema: z.object({
+						note: z
+							.object({
+								id: z.string().uuid(),
+								title: z.string(),
+								created_at: z.string().nullable(),
+							})
+							.nullable(),
+					}),
+				},
+			},
+		},
+		...errorResponses,
+	},
+})
+
+// The VAT check note is a knowledge page the flow writes, titled by the period. This only points
+// the owner at it, next to the figures. It reads one row and writes nothing.
+app.openapi(vatCheckNoteRoute, (async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	if (
+		!(await requireOwnerPerson(
+			db,
+			{
+				actorId: c.get('actorId'),
+				actorType: c.get('actorType'),
+				workspaceRole: c.get('workspaceRole'),
+			},
+			workspaceId,
+		))
+	) {
+		return c.json(createApiError('FORBIDDEN', FORBIDDEN_TEXT), 403)
+	}
+	const { from, to } = c.req.valid('query')
+	if (from > to) return c.json(createApiError('BAD_REQUEST', 'from is after to'), 400)
+	return c.json({ note: await findVatCheckNote(db, { workspaceId, from, to }) }, 200)
+}) as RouteHandler<typeof vatCheckNoteRoute, Env>)
 
 export default app

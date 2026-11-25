@@ -8,8 +8,14 @@ import {
 	TableHeader,
 	TableRow,
 } from '@/components/ui/table'
-import { saveBlob, useDineroVatReport, useDownloadDineroVatCsv } from '@/hooks/use-dinero-review'
+import {
+	saveBlob,
+	useDineroVatCheckNote,
+	useDineroVatReport,
+	useDownloadDineroVatCsv,
+} from '@/hooks/use-dinero-review'
 import type { DineroVatLine, DineroVatReport } from '@/lib/api'
+import { Link } from '@tanstack/react-router'
 
 export function money(n: number | null): string {
 	return n === null ? '' : n.toLocaleString('da-DK', { minimumFractionDigits: 2 })
@@ -42,6 +48,7 @@ export function DineroVatReportSection({
 }) {
 	const query = useDineroVatReport(workspaceId, from, to)
 	const csv = useDownloadDineroVatCsv(workspaceId)
+	const checkNote = useDineroVatCheckNote(workspaceId, from, to)
 
 	return (
 		<section aria-labelledby="dinero-vat-heading" className="flex flex-col gap-2">
@@ -73,6 +80,18 @@ export function DineroVatReportSection({
 								Download data file
 							</Button>
 						</div>
+						{checkNote.data?.note && (
+							<p className="text-xs text-foreground">
+								The flow wrote a check of these figures:{' '}
+								<Link
+									to="/$workspaceId/objects/$objectId"
+									params={{ workspaceId, objectId: checkNote.data.note.id }}
+									className="underline"
+								>
+									{checkNote.data.note.title}
+								</Link>
+							</p>
+						)}
 						<VatReportBody report={report} />
 					</>
 				)}

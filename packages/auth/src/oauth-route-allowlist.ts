@@ -95,6 +95,7 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'POST /api/dinero-review/reverse',
 	'GET /api/dinero-review/vat-report',
 	'GET /api/dinero-review/vat-report/csv',
+	'GET /api/dinero-review/vat-check-note',
 	'POST /api/installed-loops/:id/update',
 	'GET /api/actors/:actorId/skills',
 	'DELETE /api/actors/:actorId/skills/:skillName',

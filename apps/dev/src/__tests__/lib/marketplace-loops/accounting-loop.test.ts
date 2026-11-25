@@ -35,7 +35,7 @@ describe('Accounting loop definition', () => {
 		expect(ACCOUNTING_LOOP.slug).toBe('accounting-loop')
 		expect(ACCOUNTING_LOOP.name).toBe('Accounting')
 		expect(ACCOUNTING_LOOP.useCase).toBe('Finance')
-		expect(ACCOUNTING_LOOP.version).toBe('1.3.0')
+		expect(ACCOUNTING_LOOP.version).toBe('1.4.0')
 		expect(ACCOUNTING_LOOP.description.length).toBeGreaterThan(0)
 	})
 
@@ -80,15 +80,16 @@ describe('Accounting loop definition', () => {
 		expect(settings.checklist?.body).toContain('at most 3 questions at a time')
 	})
 
-	it('ships one actor, two triggers and three skills, no duplicates', () => {
+	it('ships one actor, three triggers and four skills, no duplicates', () => {
 		expect(ACCOUNTING_LOOP_ACTOR_IDS).toEqual([ACCOUNTING_LOOP_ACTOR_BOOKKEEPER])
-		expect(ACCOUNTING_LOOP_TRIGGER_IDS.length).toBe(2)
-		expect(ACCOUNTING_LOOP_SKILL_IDS.length).toBe(3)
+		expect(ACCOUNTING_LOOP_TRIGGER_IDS.length).toBe(3)
+		expect(ACCOUNTING_LOOP_SKILL_IDS.length).toBe(4)
 		expect(new Set(ACCOUNTING_LOOP_SKILL_IDS).size).toBe(ACCOUNTING_LOOP_SKILL_IDS.length)
 		expect(ACCOUNTING_LOOP_SKILL_IDS.map((id) => getSkillData(id).name).sort()).toEqual([
 			'accounting-connection-check',
 			'accounting-rule-check',
 			'bookkeeping-draft-method',
+			'vat-return-check',
 		])
 	})
 
@@ -318,6 +319,59 @@ describe('Accounting loop definition', () => {
 				/Never save a second draft, or change the first, to make an entry pass/,
 			)
 			expect(ACCOUNTING_LOOP.description).toMatch(/clear or flagged with the rule it broke/)
+		})
+	})
+
+	// The VAT return check: reads the flow's own VAT report, never builds a second set of figures,
+	// never guesses a date, and never says anything was filed.
+	describe('VAT return check', () => {
+		const skill = () => skillTexts().find((t) => t.startsWith('---\nname: vat-return-check')) ?? ''
+		const trigger = () => {
+			const t = ACCOUNTING_LOOP_TRIGGER_IDS.map((id) => getTriggerData(id)).find((x) =>
+				x.name.startsWith('VAT return check'),
+			)
+			if (!t) throw new Error('VAT return check trigger not shipped')
+			return t
+		}
+
+		it('runs on Mondays at 07:00 UTC, with a late-start guard, silent until a return is near', () => {
+			expect(trigger().name).toBe('VAT return check (Monday 07:00 UTC)')
+			expect(trigger().config).toMatchObject({ expression: '0 7 * * 1' })
+			const prompt = trigger().actionPrompt ?? ''
+			expect(prompt).toContain('flow named Accounting')
+			expect(prompt).toContain('more than 1 hour after its scheduled time, do nothing')
+			expect(prompt).toContain('vat-return-check')
+			expect(prompt).toContain('more than 28 days away')
+		})
+
+		it('reads figures only from get_vat_report and never builds a second set', () => {
+			expect(skill()).toMatch(/figures come from the tool get_vat_report and from nothing else/)
+			expect(skill()).toMatch(/do not build a second set of figures/)
+			expect(skill()).toMatch(/Both amounts on every finding/)
+		})
+
+		it('reads dates from Skat at run time, cites them and never guesses', () => {
+			expect(skill()).toMatch(/Every date comes from Skat at run time/)
+			expect(skill()).toMatch(/Never guess a date/)
+			expect(skill()).toMatch(/due date not confirmed/)
+			expect(skill()).toMatch(/more than 28 days away: stay silent/)
+			expect(skill()).toMatch(/within 20 days: run the short version/)
+		})
+
+		it('writes one note titled by the period, linked to the flow, and never says filed', () => {
+			expect(skill()).toMatch(/titled exactly VAT check, the period start, the word to/)
+			expect(skill()).toMatch(/in_loop relationship from the flow/)
+			expect(skill()).toMatch(/Nothing was filed/)
+			expect(skill().toLowerCase()).not.toMatch(/\b(was|has been|is|are) filed\b/)
+			const prompt = actorTexts().join('\n')
+			expect(prompt).toMatch(/# VAT return check/)
+			expect(prompt).toMatch(/get_vat_report, is not a Dinero tool/)
+			expect(prompt).toMatch(/never files/)
+		})
+
+		it('stops and names the owner when the report tool is not there', () => {
+			expect(skill()).toMatch(/If the tool is not among your tools, say so in the first line/)
+			expect(skill()).toMatch(/Dinero connected by sign-in/)
 		})
 	})
 
