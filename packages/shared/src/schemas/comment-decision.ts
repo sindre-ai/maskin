@@ -249,6 +249,12 @@ export const commentDecisionSchema = z
 			.describe(
 				'Set true only when the API rejected the card for a status change but the ask is about something else.',
 			),
+		no_draft_needed: z
+			.boolean()
+			.optional()
+			.describe(
+				'Set true only on a card with a destructive option that sends nothing the human can read first (a spend, a deploy, a ship). Without it, a destructive option needs draft or drafts.',
+			),
 		status_stamp: z
 			.object({ object_id: z.string().uuid(), status: z.string().min(1) })
 			.optional()
@@ -261,13 +267,14 @@ export const commentDecisionSchema = z
 		draft: decisionDraftSchema
 			.optional()
 			.describe(
-				"Attach this whenever the call is whether to send something in a person's name or to the outside world, so the human reads what would go out. Give object_id (preferred), file_id or the text as body, never in the summary.",
+				"Required on any card with a destructive option that sends something in a person's name or to the outside world: the human must read exactly what would go out. A card with a destructive option and no draft or drafts is refused. Give object_id (preferred), file_id or the text as body, never in the summary.",
 			),
 	})
 	.describe(
 		[
 			'Attach this when you need a human to make a call, together with that human in `mentions` (a decision with empty `mentions` reaches nobody). It renders as a card in their For You feed, each option a button.',
 			'To ask approval of a message, save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and recipient fields; set `draft.object_id` to it and mark the send option `destructive: true`. See the `draft-approval-tasks` skill.',
+			'A card with a destructive option must carry `draft` or `drafts`, or it is refused: a send card with no message shows buttons and nothing to read. Options with `set_status` or `delete_agent` are exempt. For a destructive option that sends nothing readable (a spend, a deploy), set `no_draft_needed: true`.',
 			'A new card withdraws your earlier cards on the same object. To ask whether an object should change status, put `set_status` on that option; a card that talks about a status change without it is rejected.',
 			'The API rejects a decision that breaks its rules (no em-dash, en-dash, emoji or hedge word such as "several" standing in for a number) and lists every violation.',
 		].join('\n'),
@@ -379,6 +386,7 @@ export function validateDecisionProse(
 		)
 	}
 	violations.push(...findDefaultOnSilenceViolations(decision))
+	violations.push(...findMissingDraftViolations(decision))
 
 	const titleWords = words(decision.title)
 	if (titleWords.length < TITLE_MIN_WORDS || titleWords.length > TITLE_MAX_WORDS) {
@@ -516,6 +524,25 @@ function findDefaultOnSilenceViolations(decision: CommentDecision): DecisionPros
 				'A card that sends, spends or deletes never gets a default on silence: it has a destructive option, a delete_agent option or a draft. Drop default_on_silence and wait for the answer.',
 		})
 	}
+	return violations
+}
+
+/**
+ * A destructive option that sends has to show what it sends. A card with such an option and no
+ * draft or drafts renders buttons and no text, so the person is asked to approve a message they
+ * cannot read. Options that carry set_status or delete_agent are status and delete cards, not
+ * sends, and are skipped. Spend and ship cards have nothing to read, so `no_draft_needed` opts out.
+ */
+function findMissingDraftViolations(decision: CommentDecision): DecisionProseViolation[] {
+	if (decision.no_draft_needed || decision.draft || decision.drafts?.length) return []
+	const violations: DecisionProseViolation[] = []
+	decision.options.forEach((option, index) => {
+		if (!option.destructive || option.set_status || option.delete_agent) return
+		violations.push({
+			path: `options.${index}.destructive`,
+			message: `"${option.label}" is destructive but the card has no message to read. Attach the exact text with draft (one message) or drafts (several): save it as an object and pass { "object_id": "<id>" }, or pass { "body": "<text>" }. If the option sends nothing a person can read first (a spend, a deploy, a ship), set no_draft_needed: true on the decision instead.`,
+		})
+	})
 	return violations
 }
 
