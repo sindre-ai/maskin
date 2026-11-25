@@ -615,7 +615,7 @@ function registerCaptionTools(server: McpServer, ctx: YoutubeMcpContext): void {
 	// Quota in the words: asking reads the channel and the video (about 2 units, plus the caption
 	// list at 50 for a replace or delete). Running it is charged when a person approves.
 	const held = (asking: string, running: number) =>
-		`Holds the change for a person to approve and returns the id of the held request. It never changes anything on YouTube itself: the change goes out only after a person approves the card, and the request lapses after 7 days. Only videos on the connected channel. Asking costs ${asking} of quota; running it costs ${running} units when a person approves, out of the 1,000 units a workspace has a day. Needs the youtube.force-ssl permission, like youtube__get_own_captions.`
+		`Holds the change for a person to approve and returns the id of the held request. It never changes anything on YouTube itself: the change goes out only after a person approves the card, and the request lapses after 7 days. Only videos on the connected channel. Asking costs ${asking} of quota; running it costs ${running} units when a person approves, out of the workspace's daily YouTube quota. Needs the youtube.force-ssl permission, like youtube__get_own_captions.`
 	const captionFile = z
 		.string()
 		.uuid()
