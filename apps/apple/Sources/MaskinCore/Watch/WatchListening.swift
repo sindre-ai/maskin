@@ -33,7 +33,6 @@ public final class WatchListeningStore {
 
 	@ObservationIgnored private let transcriber: (any SpeechTranscribing)?
 	@ObservationIgnored private let makeMicrophone: @MainActor () -> any PhraseMicrophone
-	@ObservationIgnored private let language: String?
 	@ObservationIgnored private let settle: Duration
 	@ObservationIgnored private let maxDuration: Duration
 	@ObservationIgnored private let drainTimeout: Duration
@@ -58,14 +57,13 @@ public final class WatchListeningStore {
 	///     to talk, so the wearer is never left looking at a screen that does nothing.
 	///   - deliver: gets the finished question; the caller asks the Chief of Staff with it.
 	public init(
-		transcriber: (any SpeechTranscribing)?, language: String? = nil,
+		transcriber: (any SpeechTranscribing)?,
 		settle: Duration = .milliseconds(1400), maxDuration: Duration = .seconds(60),
 		drainTimeout: Duration = .seconds(8), noSpeechTimeout: Duration = .seconds(6),
 		makeMicrophone: @escaping @MainActor () -> any PhraseMicrophone,
 		deliver: @escaping @MainActor (String) -> Void = { _ in }
 	) {
 		self.transcriber = transcriber
-		self.language = language
 		self.settle = settle
 		self.maxDuration = maxDuration
 		self.drainTimeout = drainTimeout
@@ -111,7 +109,7 @@ public final class WatchListeningStore {
 		}
 		microphone = mic
 		let queue = PhraseTranscriptionQueue(
-			transcriber: transcriber, language: language,
+			transcriber: transcriber,
 			onText: { [weak self] heard in self?.heard(heard, run: current) },
 			onFailure: { [weak self] _ in self?.failed(run: current) })
 		self.queue = queue
