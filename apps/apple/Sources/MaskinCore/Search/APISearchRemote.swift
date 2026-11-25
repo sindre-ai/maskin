@@ -154,6 +154,8 @@ private struct ConversationPageDTO: Decodable {
 		var title: String
 		var snippet: String?
 		var lastMessageAt: String?
+		/// The server's own key.
+		var unread_count: Int?
 		var participants: [Participant]
 
 		var result: SearchResult {
@@ -161,7 +163,8 @@ private struct ConversationPageDTO: Decodable {
 			return SearchResult(
 				kind: .chat, entityId: id, title: title.isEmpty ? "Untitled chat" : title,
 				subtitle: people, snippet: snippet ?? "", updatedAt: lastMessageAt.flatMap(ISODate.parse),
-				participantIds: participants.map(\.actorId))
+				participantIds: participants.map(\.actorId), isUnread: (unread_count ?? 0) > 0,
+				hasPlaceholderTitle: ConversationSummary.isPlaceholder(title))
 		}
 	}
 	var conversations: [Row]
