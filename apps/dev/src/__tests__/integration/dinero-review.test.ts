@@ -286,7 +286,14 @@ describe('The Dinero review screen (Integration)', () => {
 			notice: string
 		}
 		expect(handoff.approved_by).toBe(s.human)
-		expect(handoff.figures).toEqual([{ vat_code: null, lines: 1, amount_incl_vat: 4000 }])
+		expect(handoff.figures).toMatchObject([
+			{ vat_code: null, direction: 'none', lines: 1, amount_incl_vat: 4000, vat_amount: 0 },
+		])
+		// One set of figures: the hand-off lines are the VAT report's lines for the same period.
+		const report = (await (await call(app, s.ws.id, 'GET', `/vat-report${path}`)).json()) as {
+			lines: unknown
+		}
+		expect(handoff.figures).toEqual(report.lines)
 		expect(handoff.notice).toContain('Nothing has been filed')
 
 		const logged = await handoffEvents()
@@ -414,5 +421,115 @@ describe('The Dinero review screen (Integration)', () => {
 			.set({ usedAt: new Date() })
 			.where(eq(ownerApprovals.workspaceId, s.ws.id))
 		await expect(recordOwnerApproval(db, row)).resolves.toMatchObject({ subject: row.subject })
+	})
+
+	describe('the VAT report', () => {
+		const voucher = '00000000-0000-4000-8000-0000000000aa'
+		const file = '00000000-0000-4000-9000-0000000000bb'
+		async function addPurchase(s: Awaited<ReturnType<typeof setup>>, book: boolean) {
+			const row = (data: Record<string, unknown>) =>
+				db
+					.insert(events)
+					.values({
+						workspaceId: s.ws.id,
+						actorId: s.agent.id,
+						action: 'dinero_action',
+						entityType: 'integration',
+						entityId: s.dinero.id,
+						data: { outcome: 'success', ...data },
+					})
+					.returning({ id: events.id })
+			await row({
+				tool: 'upload_file',
+				arguments: { fileName: 'bilag-2.pdf' },
+				result: `Uploaded ${file}`,
+			})
+			await row({
+				tool: 'CreatePurchaseVoucher',
+				arguments: {
+					voucherDate: today(),
+					fileGuid: file,
+					externalReference: 'Bilag 2',
+					lines: [{ amount: 1875, accountNumber: 2000, description: 'Ler', vatCode: 'I25' }],
+				},
+				result: `Draft ${voucher}`,
+			})
+			if (book) {
+				await row({ tool: 'BookVoucher', arguments: { voucherGuid: voucher }, result: 'Booked' })
+			}
+		}
+		type Report = {
+			lines: Array<{
+				vat_code: string | null
+				vat_amount: number | null
+				entries: Array<{ receipt: { file_name: string | null } | null }>
+			}>
+			totals: { input_vat: number }
+		}
+
+		it('reads a booked purchase voucher back from its draft, with the receipt behind it', async () => {
+			const s = await setup()
+			await addPurchase(s, true)
+			const res = await call(
+				appFor(s.human),
+				s.ws.id,
+				'GET',
+				`/vat-report?from=${today()}&to=${today()}`,
+			)
+			expect(res.status).toBe(200)
+			const report = (await res.json()) as Report
+			const i25 = report.lines.find((l) => l.vat_code === 'I25')
+			expect(i25).toMatchObject({ lines: 1, amount_incl_vat: 1875, vat_amount: 375 })
+			expect(i25?.entries[0]?.receipt?.file_name).toBe('bilag-2.pdf')
+			expect(report.totals.input_vat).toBe(375)
+		})
+
+		it('leaves out a draft that was never booked', async () => {
+			const s = await setup()
+			await addPurchase(s, false)
+			const res = await call(
+				appFor(s.human),
+				s.ws.id,
+				'GET',
+				`/vat-report?from=${today()}&to=${today()}`,
+			)
+			const report = (await res.json()) as Report
+			expect(report.lines.find((l) => l.vat_code === 'I25')).toBeUndefined()
+		})
+
+		it('gives the same lines as a spreadsheet, and is refused for an agent', async () => {
+			const s = await setup()
+			await addPurchase(s, true)
+			const path = `/vat-report/csv?from=${today()}&to=${today()}`
+			const res = await call(appFor(s.human), s.ws.id, 'GET', path)
+			expect(res.status).toBe(200)
+			expect(res.headers.get('content-type')).toContain('text/csv')
+			expect(res.headers.get('content-disposition')).toContain('attachment')
+			const csv = await res.text()
+			expect(csv).toContain('Total;I25;input')
+			expect(csv).toContain('1875,00;375,00;1500,00')
+			expect((await call(appFor(s.agent.id, 'agent'), s.ws.id, 'GET', path)).status).toBe(403)
+			expect(
+				(
+					await call(
+						appFor(s.agent.id, 'agent'),
+						s.ws.id,
+						'GET',
+						`/vat-report?from=${today()}&to=${today()}`,
+					)
+				).status,
+			).toBe(403)
+		})
+
+		it('refuses a period that ends before it starts', async () => {
+			const s = await setup()
+			const res = await call(
+				appFor(s.human),
+				s.ws.id,
+				'GET',
+				'/vat-report?from=2026-11-30&to=2026-11-01',
+			)
+			expect(res.status).toBe(400)
+		})
 	})
 })

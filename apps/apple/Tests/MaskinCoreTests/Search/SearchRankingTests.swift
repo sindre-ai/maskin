@@ -11,24 +11,46 @@ struct SearchRankingTests {
 	private let participantOnly = chat("part", "Weekly sync", people: "Magnus Eide, Sigrid Larsen", snippet: "ok")
 	private let titled = chat("title", "Magnus 1:1", people: "Sebastian")
 
-	@Test("title matches come first, then participants, then preview text")
+	@Test("a whole-word match ranks above the start of a word, above inside a word, above a preview hit")
 	func tiers() {
-		let ordered = SearchRanking.ordered([previewOnly, participantOnly, titled], query: "magnus")
-		#expect(ordered.map(\.entityId) == ["title", "part", "prev"])
+		let start = chat("start", "Magnusson plan", people: "Sebastian")
+		let inside = chat("inside", "Unmagnused", people: "Sebastian")
+		let ordered = SearchRanking.ordered([previewOnly, inside, start, participantOnly, titled], query: "magnus")
+		// Whole word in the title or in a name ties, so the one with no date keeps its input order.
+		#expect(ordered.map(\.entityId) == ["part", "title", "start", "inside", "prev"])
 	}
 
-	@Test("tier is read from the title, then the chat's participants, then anything else")
+	@Test("tier is read from the title and the chat's people together, then anything else")
 	func tierOf() {
-		#expect(SearchRanking.tier(of: titled, query: "Magnus") == .title)
-		#expect(SearchRanking.tier(of: participantOnly, query: "Magnus") == .participants)
-		#expect(SearchRanking.tier(of: previewOnly, query: "Magnus") == .preview)
-		#expect(SearchRanking.tier(of: titled, query: "  ") == .title, "no words: everything ranks alike")
+		#expect(SearchRanking.tier(of: titled, query: "Magnus") == 0)
+		#expect(SearchRanking.tier(of: participantOnly, query: "Magnus") == 0)
+		#expect(SearchRanking.tier(of: previewOnly, query: "Magnus") == 3)
+		#expect(SearchRanking.tier(of: titled, query: "  ") == 0, "no words: everything ranks alike")
+	}
+
+	@Test("a chat on the placeholder title is not found or ranked by those words")
+	func placeholderTitle() {
+		let placeholder = SearchResult(
+			kind: .chat, entityId: "new", title: "New chat", subtitle: "Me, Sam", hasPlaceholderTitle: true)
+		let named = chat("named", "Chat redesign", people: "Me, Sam")
+		#expect(SearchRanking.tier(of: placeholder, query: "chat") == 3)
+		#expect(SearchRanking.tier(of: named, query: "chat") == 0)
+		#expect(SearchStore.filter([placeholder, named], "chat").map(\.entityId) == ["named"])
+		#expect(SearchRanking.tier(of: placeholder, query: "sam") == 0, "its people still find it")
 	}
 
 	@Test("a status or file type in the subtitle is not a participant match")
 	func subtitleOfOtherKinds() {
 		let task = SearchResult(kind: .object, entityId: "o", title: "Plan", subtitle: "active", detail: "task")
-		#expect(SearchRanking.tier(of: task, query: "active") == .preview)
+		#expect(SearchRanking.tier(of: task, query: "active") == 3)
+	}
+
+	@Test("inside a tier an unread chat comes before a read one, whatever the dates")
+	func unreadFirst() {
+		var unread = chat("unread", "Magnus old", at: Date(timeIntervalSince1970: 100))
+		unread.isUnread = true
+		let read = chat("read", "Magnus new", at: Date(timeIntervalSince1970: 900))
+		#expect(SearchRanking.ordered([read, unread], query: "magnus").map(\.entityId) == ["unread", "read"])
 	}
 
 	@Test("inside a tier chats and flows go newest first")

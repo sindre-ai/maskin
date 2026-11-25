@@ -6,7 +6,7 @@
 -- table owns it, and a row for a deleted result is harmless. workspace and actor cascade.
 -- New, empty table, additive, not on the hot-tables list (see MIGRATIONS.md), so plain DDL is fine.
 -- Row-level security is switched on because 0111_enable_rls_public_tables ran before it existed.
--- Down: drizzle/down/0176_search_opens_down.sql.
+-- Down: drizzle/down/0177_search_opens_down.sql.
 
 CREATE TABLE IF NOT EXISTS "search_opens" (
 	"workspace_id" uuid NOT NULL REFERENCES "workspaces"("id") ON DELETE CASCADE,

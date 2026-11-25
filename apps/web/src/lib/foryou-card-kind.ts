@@ -1,4 +1,9 @@
-import type { LatestMention, LatestMentionDecision, UnreadItem } from '@/lib/api'
+import type {
+	LatestMention,
+	LatestMentionDecision,
+	LatestMentionDecisionDraft,
+	UnreadItem,
+} from '@/lib/api'
 
 // The two action-UI weights a For You card renders.
 // - `decision` → the agent asked for a call, and authored the options
@@ -86,6 +91,22 @@ export function recommendedAction(item: UnreadItem): CardAction | undefined {
 /** Whether taking this option approves a send (the agent marked it destructive). */
 export function isSendingOption(item: UnreadItem, label: string): boolean {
 	return Boolean(decisionOf(item)?.options.some((o) => o.label === label && o.destructive))
+}
+
+/**
+ * A card that asks the person to send something but carries no message to read: an option marked
+ * destructive (it reaches real people), and no `draft` or `drafts` with something to show. A draft
+ * the feed could not fill (no text, no file) draws nothing, so it counts as missing. An option that
+ * changes a status is not a send, so it does not count.
+ */
+export function sendsWithoutMessage(item: UnreadItem): boolean {
+	const decision = decisionOf(item)
+	if (!decision) return false
+	const hasMessage = (draft: LatestMentionDecisionDraft) =>
+		Boolean(draft.file || draft.body?.trim())
+	if (decision.draft && hasMessage(decision.draft)) return false
+	if (decision.drafts?.some(hasMessage)) return false
+	return decision.options.some((o) => o.destructive && !o.set_status)
 }
 
 /**

@@ -84,6 +84,11 @@ public struct SearchResult: Identifiable, Sendable, Equatable, Hashable {
 	public var searchableText: String
 	/// Actor ids of the people and agents in a chat; empty for everything else. The @ filter reads it.
 	public var participantIds: [String]
+	/// A chat with something unread. It comes before read chats of the same match.
+	public var isUnread: Bool
+	/// A chat still on the placeholder title ("New chat"): the title names nothing, so no search
+	/// counts its words.
+	public var hasPlaceholderTitle: Bool
 
 	public var id: String { "\(kind.rawValue):\(entityId)" }
 
@@ -103,7 +108,8 @@ public struct SearchResult: Identifiable, Sendable, Equatable, Hashable {
 	public init(
 		kind: SearchKind, entityId: String, title: String, subtitle: String = "",
 		snippet: String = "", detail: String? = nil, updatedAt: Date? = nil,
-		searchableText: String? = nil, participantIds: [String] = []
+		searchableText: String? = nil, participantIds: [String] = [],
+		isUnread: Bool = false, hasPlaceholderTitle: Bool = false
 	) {
 		self.kind = kind
 		self.entityId = entityId
@@ -112,8 +118,11 @@ public struct SearchResult: Identifiable, Sendable, Equatable, Hashable {
 		self.snippet = snippet
 		self.detail = detail
 		self.updatedAt = updatedAt
-		self.searchableText = searchableText ?? [title, subtitle, snippet].joined(separator: "\n")
+		self.searchableText =
+			searchableText ?? [hasPlaceholderTitle ? "" : title, subtitle, snippet].joined(separator: "\n")
 		self.participantIds = participantIds
+		self.isUnread = isUnread
+		self.hasPlaceholderTitle = hasPlaceholderTitle
 	}
 }
 

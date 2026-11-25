@@ -9,10 +9,15 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 	APIKeysAPI, SkillsAPI, BillingAPI, SchemaAPI, MCPAPI
 {
 	private let client: Client
+	/// Only `startConnect` uses it: the OAuth state cookie is set on the host that answers, and the
+	/// provider's callback lands on the web host. The same as `client` unless the app talks to a
+	/// separate API host.
+	private let connectClient: Client
 	public let workspaceID: String
 
-	public init(client: Client, workspaceID: String) {
+	public init(client: Client, workspaceID: String, connectClient: Client? = nil) {
 		self.client = client
+		self.connectClient = connectClient ?? client
 		self.workspaceID = workspaceID
 	}
 
@@ -203,7 +208,7 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 			let integrationId: String?
 			if provider == "linkedin-unipile" {
 				let output = try await IdempotencyKey.bind(idempotencyKey) {
-					try await client.post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect(
+					try await connectClient.post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect(
 						.init(headers: .init(x_hyphen_workspace_hyphen_id: workspaceID), body: linkedInBody))
 				}
 				guard case .ok(let ok) = output else { throw SettingsError("Couldn't start connecting.") }
@@ -212,7 +217,7 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 				integrationId = json.integration_id
 			} else {
 				let output = try await IdempotencyKey.bind(idempotencyKey) {
-					try await client.post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect(
+					try await connectClient.post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect(
 						.init(
 							path: .init(provider: provider),
 							headers: .init(x_hyphen_workspace_hyphen_id: workspaceID), body: body))

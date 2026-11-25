@@ -193,13 +193,13 @@ struct SearchStoreMentionTests {
 		#expect(store.participants == [marketing])
 	}
 
-	@Test("ranking applies to the store's results: title, then participants, then preview")
+	@Test("ranking applies to the store's results: whole word, then word start, then preview")
 	func storeRanking() async {
 		let remote = FakeSearchRemote()
 		await remote.setChats(
 			.success([
 				chat("prev", "Roadmap", people: "Sigrid Larsen", snippet: "Magnus will review it"),
-				chat("part", "Weekly sync", people: "Magnus Eide, Sigrid Larsen", snippet: "ok"),
+				chat("part", "Weekly sync", people: "Magnusson Eide, Sigrid Larsen", snippet: "ok"),
 				chat("title", "Magnus 1:1", people: "Sebastian"),
 			]))
 		let store = make(remote)

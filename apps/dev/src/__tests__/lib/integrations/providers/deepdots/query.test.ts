@@ -81,8 +81,10 @@ describe('buildListRequest', () => {
 		expect(buildListRequest('topics', { topic: 'Login' }).ok).toBe(false)
 	})
 
-	it('pins the topics request: order and limit only, no where', () => {
-		expect(filterOf(built('topics', { limit: 50 }).url)).toEqual({
+	it('pins the topics request: the insights-family route, order and limit only, no where', () => {
+		const url = built('topics', { limit: 50 }).url
+		expect(new URL(url).pathname).toBe('/feedbacks/insight/topics')
+		expect(filterOf(url)).toEqual({
 			limit: 50,
 			skip: 0,
 			order: ['topic DESC'],

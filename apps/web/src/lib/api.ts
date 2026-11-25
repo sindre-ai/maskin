@@ -548,6 +548,24 @@ const limitedNextChange = limitConcurrency(
 	},
 )
 
+/** How an Accounting flow takes receipts besides chat uploads (routes/receipt-intake.ts). */
+export interface ReceiptIntakeStatus {
+	email: {
+		available: boolean
+		enabled: boolean
+		address: string | null
+		allowed_senders: string[]
+		default_sender: string | null
+		accepted: number
+		held: number
+	}
+	command: {
+		upload_url: string
+		keys: { id: string; last4: string; created_at: string; last_used_at: string | null }[]
+	}
+	limits: { daily_cap: number; max_file_bytes: number; file_types: string[] }
+}
+
 export const api = {
 	// The unified search endpoint: all five sources, true counts, AND matching.
 	search: {
@@ -907,6 +925,28 @@ export const api = {
 				body,
 				workspaceId,
 			}),
+		vatReport: (workspaceId: string, from: string, to: string) =>
+			request<DineroVatReport>(`/dinero-review/vat-report?from=${from}&to=${to}`, { workspaceId }),
+		vatCheckNote: (workspaceId: string, from: string, to: string) =>
+			request<DineroVatCheckNote>(`/dinero-review/vat-check-note?from=${from}&to=${to}`, {
+				workspaceId,
+			}),
+		vatReportCsv: async (workspaceId: string, from: string, to: string): Promise<Blob> => {
+			const apiKey = getApiKey()
+			const res = await fetch(`${API_BASE}/dinero-review/vat-report/csv?from=${from}&to=${to}`, {
+				headers: {
+					...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+					'X-Workspace-Id': workspaceId,
+				},
+			})
+			if (!res.ok) {
+				const data = await res.json().catch(() => ({ error: res.statusText }))
+				const message =
+					typeof data.error === 'object' ? data.error.message : data.error || res.statusText
+				throw new ApiError(res.status, message)
+			}
+			return res.blob()
+		},
 	},
 	dineroBooking: {
 		get: (workspaceId: string) => request<DineroBookingState>('/dinero-booking', { workspaceId }),
@@ -1075,6 +1115,10 @@ export const api = {
 				// Deepdots signs in with these (the connect route stores nothing if they fail).
 				email?: string
 				password?: string
+				// A self-hosted WordPress site signs in with these (nothing is stored if they fail).
+				site_url?: string
+				username?: string
+				application_password?: string
 			},
 		) =>
 			request<{
@@ -1502,6 +1546,31 @@ export const api = {
 			request<{ deleted: boolean }>(`/installed-loops/${installedLoopId}`, {
 				method: 'DELETE',
 				body: { keepProvisionedItems },
+				workspaceId,
+			}),
+	},
+
+	receiptIntake: {
+		get: (workspaceId: string, loopId: string) =>
+			request<ReceiptIntakeStatus>(`/receipt-intake/${loopId}`, { workspaceId }),
+		updateEmail: (
+			workspaceId: string,
+			loopId: string,
+			body: { enabled?: boolean; allowed_senders?: string[]; new_address?: boolean },
+		) =>
+			request<ReceiptIntakeStatus>(`/receipt-intake/${loopId}/email`, {
+				method: 'PUT',
+				body,
+				workspaceId,
+			}),
+		createKey: (workspaceId: string, loopId: string) =>
+			request<{ id: string; key: string; last4: string }>(`/receipt-intake/${loopId}/keys`, {
+				method: 'POST',
+				workspaceId,
+			}),
+		revokeKey: (workspaceId: string, loopId: string, keyId: string) =>
+			request<ReceiptIntakeStatus>(`/receipt-intake/${loopId}/keys/${keyId}`, {
+				method: 'DELETE',
 				workspaceId,
 			}),
 	},
@@ -3983,6 +4052,52 @@ export interface DineroReviewLine {
 	vat_code: string | null
 }
 
+export interface DineroReceipt {
+	file_name: string | null
+	file_guid: string | null
+	reference: string | null
+}
+
+export interface DineroVatEntry {
+	event_id: number
+	voucher_date: string | null
+	description: string | null
+	account: number | null
+	amount_incl_vat: number
+	vat_amount: number | null
+	net_amount: number | null
+	receipt: DineroReceipt | null
+}
+
+export interface DineroVatLine {
+	vat_code: string | null
+	direction: 'input' | 'output' | 'none' | 'unknown'
+	rate: number | null
+	lines: number
+	amount_incl_vat: number
+	vat_amount: number | null
+	net_amount: number | null
+	entries: DineroVatEntry[]
+}
+
+export interface DineroVatCheckNote {
+	note: { id: string; title: string; created_at: string | null } | null
+}
+
+export interface DineroVatReport {
+	from: string
+	to: string
+	lines: DineroVatLine[]
+	totals: {
+		input_vat: number
+		output_vat: number
+		complete: boolean
+		uncalculated_lines: number
+	}
+	figures_hash: string
+	notice: string
+}
+
 export interface DineroReviewItem {
 	event_id: number
 	at: string | null
@@ -3991,6 +4106,7 @@ export interface DineroReviewItem {
 	booked: boolean
 	voucher_date: string | null
 	lines: DineroReviewLine[]
+	receipt: DineroReceipt | null
 	result: string | null
 	reverses_event_id: number | null
 	reversed_by_event_id: number | null
@@ -4013,7 +4129,7 @@ export interface DineroFilingHandoff {
 	approved_by: string
 	approved_at: string
 	figures_hash: string
-	figures: Array<{ vat_code: string | null; lines: number; amount_incl_vat: number }>
+	figures: DineroVatLine[]
 	figures_note: string
 	steps: string[]
 	year_end_steps: string[]

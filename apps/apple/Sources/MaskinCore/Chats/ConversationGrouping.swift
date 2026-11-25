@@ -82,14 +82,15 @@ public enum ConversationGrouping {
 		return conversations.filter { $0.participants.contains { $0.id == agentID } }
 	}
 
-	/// Case-insensitive match on title, snippet and participant names.
+	/// Case-insensitive match on title, snippet and participant names. A chat still on the
+	/// placeholder title ("New chat") has no title to match.
 	public static func filter(_ conversations: [ConversationSummary], query: String)
 		-> [ConversationSummary]
 	{
 		let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard !q.isEmpty else { return conversations }
 		return conversations.filter { c in
-			c.title.localizedCaseInsensitiveContains(q)
+			(!c.hasPlaceholderTitle && c.title.localizedCaseInsensitiveContains(q))
 				|| (c.snippet?.localizedCaseInsensitiveContains(q) ?? false)
 				|| c.participants.contains { $0.name.localizedCaseInsensitiveContains(q) }
 		}

@@ -160,4 +160,66 @@ describe('FeedCard', () => {
 		expect(open).toBeInTheDocument()
 		expect(screen.getByText('Not this one')).toBeInTheDocument()
 	})
+
+	describe('a card that asks to send', () => {
+		const sendOption = {
+			label: 'Send to Alan',
+			recommended: true,
+			destructive: true,
+			consequences: ['Goes out right away.'],
+		}
+
+		it('says the message is not attached, and links to the task, when no draft is on the card', () => {
+			renderCard(buildItem(decision({ options: [sendOption] })))
+			expect(
+				screen.getByText('The message is not attached. Open the task to read it.'),
+			).toBeInTheDocument()
+			expect(screen.getByRole('link', { name: 'Open the task' })).toHaveAttribute(
+				'href',
+				'/$workspaceId/objects/$objectId',
+			)
+			expect(screen.getByRole('button', { name: 'Send to Alan' })).toBeInTheDocument()
+		})
+
+		it('also says it when the draft the card points at has no text', () => {
+			renderCard(
+				buildItem(decision({ options: [sendOption], draft: { object_id: 'gone', body: ' ' } })),
+			)
+			expect(screen.getByTestId('message-not-attached')).toBeInTheDocument()
+		})
+
+		it('shows no fallback when a draft is attached', () => {
+			renderCard(
+				buildItem(
+					decision({ options: [sendOption], draft: { to: 'Alan', body: 'Hi Alan, can we?' } }),
+				),
+			)
+			expect(screen.getByText('Hi Alan, can we?')).toBeInTheDocument()
+			expect(screen.queryByTestId('message-not-attached')).not.toBeInTheDocument()
+			expect(screen.queryByRole('link', { name: 'Open the task' })).not.toBeInTheDocument()
+		})
+
+		it('shows no fallback when several drafts are attached', () => {
+			renderCard(
+				buildItem(decision({ options: [sendOption], drafts: [{ id: 'a', body: 'One.' }] })),
+			)
+			expect(screen.queryByTestId('message-not-attached')).not.toBeInTheDocument()
+		})
+
+		it('shows no fallback when no option sends', () => {
+			renderCard(buildItem())
+			expect(screen.queryByTestId('message-not-attached')).not.toBeInTheDocument()
+		})
+
+		it('does not treat a status change as a send', () => {
+			renderCard(
+				buildItem(
+					decision({
+						options: [{ ...sendOption, label: 'Close it', set_status: { status: 'done' } }],
+					}),
+				),
+			)
+			expect(screen.queryByTestId('message-not-attached')).not.toBeInTheDocument()
+		})
+	})
 })

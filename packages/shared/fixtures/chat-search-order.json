@@ -1,0 +1,152 @@
+{
+	"note": "Read by the server search test (apps/dev, integration/chat-search-order.test.ts) and the Swift tests (ChatSearchOrderTests). The viewer is Me and is in every chat. people lists the others. minutesAgo is the age of the last message. unread means the last message is from someone else and not read yet. A chat marked archived is archived by the viewer: the server lists it among the matches, the phone lists archived matches apart, so the Swift tests leave archived chats out of both sides. expected is the ids in order.",
+	"chats": [
+		{
+			"id": "redesign",
+			"title": "Chat redesign",
+			"people": ["Ida"],
+			"archived": false,
+			"unread": false,
+			"minutesAgo": 5,
+			"message": "Mocks are ready"
+		},
+		{
+			"id": "weekly",
+			"title": "Weekly chat",
+			"people": ["Ida"],
+			"archived": false,
+			"unread": true,
+			"minutesAgo": 4000,
+			"message": "Notes are up"
+		},
+		{
+			"id": "old-chat",
+			"title": "Old chat notes",
+			"people": ["Ida"],
+			"archived": true,
+			"unread": false,
+			"minutesAgo": 100,
+			"message": "Filed away"
+		},
+		{
+			"id": "chatty",
+			"title": "Chatty planning",
+			"people": ["Sam"],
+			"archived": false,
+			"unread": false,
+			"minutesAgo": 30,
+			"message": "Dates agreed"
+		},
+		{
+			"id": "chatbot",
+			"title": "Chatbot ideas",
+			"people": ["Sam"],
+			"archived": true,
+			"unread": false,
+			"minutesAgo": 10,
+			"message": "Parked"
+		},
+		{
+			"id": "inword",
+			"title": "Mychat tools",
+			"people": ["Sam"],
+			"archived": false,
+			"unread": false,
+			"minutesAgo": 20,
+			"message": "Nothing here"
+		},
+		{
+			"id": "mention",
+			"title": "Budget",
+			"people": ["Ida"],
+			"archived": false,
+			"unread": false,
+			"minutesAgo": 2,
+			"message": "Let us chat tomorrow"
+		},
+		{
+			"id": "new-message",
+			"title": "New chat",
+			"people": ["Ida"],
+			"archived": false,
+			"unread": false,
+			"minutesAgo": 1,
+			"message": "Let us chat later"
+		},
+		{
+			"id": "new-open",
+			"title": "New chat",
+			"people": ["Ida"],
+			"archived": false,
+			"unread": false,
+			"minutesAgo": 1500,
+			"message": "Hello"
+		},
+		{
+			"id": "new-archived-1",
+			"title": "New chat",
+			"people": ["Ida"],
+			"archived": true,
+			"unread": false,
+			"minutesAgo": 200000,
+			"message": "Hello"
+		},
+		{
+			"id": "new-archived-2",
+			"title": "New chat",
+			"people": ["Sam"],
+			"archived": true,
+			"unread": false,
+			"minutesAgo": 190000,
+			"message": "Hello"
+		},
+		{
+			"id": "ops",
+			"title": "Standup",
+			"people": ["Relayer"],
+			"archived": false,
+			"unread": false,
+			"minutesAgo": 50,
+			"message": "On it"
+		},
+		{
+			"id": "ops-new",
+			"title": "New chat",
+			"people": ["Relay"],
+			"archived": false,
+			"unread": true,
+			"minutesAgo": 3000,
+			"message": "On it"
+		},
+		{
+			"id": "ops-old",
+			"title": "Sync",
+			"people": ["Relay"],
+			"archived": false,
+			"unread": false,
+			"minutesAgo": 10,
+			"message": "On it"
+		}
+	],
+	"cases": [
+		{
+			"query": "chat",
+			"why": "Whole word first, unread before read, an archived chat after the open ones of its tier, then word starts, letters inside a word and message hits. A chat still on the default title is not found by its title, only by a message, so it ranks with the message hits.",
+			"expected": [
+				"weekly",
+				"redesign",
+				"old-chat",
+				"chatty",
+				"chatbot",
+				"inword",
+				"new-message",
+				"mention"
+			]
+		},
+		{
+			"query": "relay",
+			"why": "A name hit counts on a chat on the default title. Whole word, unread first, then the start of a name.",
+			"expected": ["ops-new", "ops-old", "ops"]
+		}
+	]
+}

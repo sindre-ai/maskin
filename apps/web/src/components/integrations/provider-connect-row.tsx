@@ -9,6 +9,7 @@ import {
 	LinkGithubDialog,
 	OwnAppDialog,
 	SkjaldConnectDialog,
+	WordPressConnectDialog,
 } from '@/components/integrations/provider-dialogs'
 import { ProviderLogo } from '@/components/integrations/provider-logo'
 import { ResendConnectDialog } from '@/components/integrations/resend/resend-connect-dialog'
@@ -59,6 +60,7 @@ export function ProviderRow({
 	onRequestSkjaldConnect,
 	onRequestResendConnect,
 	onRequestDeepdotsConnect,
+	onRequestWordPressConnect,
 	onRequestOwnApp,
 	ownAppSaved = false,
 	linkableCount,
@@ -81,6 +83,8 @@ export function ProviderRow({
 	onRequestResendConnect?: () => void
 	/** Deepdots signs in with an email and password, so Connect opens a two-field form. */
 	onRequestDeepdotsConnect?: () => void
+	/** A self-hosted WordPress site signs in with its address and an application password. */
+	onRequestWordPressConnect?: () => void
 	/** The tool signs in with the workspace's own app (customerApp). Opens the paste form. */
 	onRequestOwnApp?: () => void
 	/** The workspace already saved that app, so Connect goes straight to the sign-in. */
@@ -127,6 +131,10 @@ export function ProviderRow({
 		}
 		if (provider.name === 'deepdots' && onRequestDeepdotsConnect) {
 			onRequestDeepdotsConnect()
+			return
+		}
+		if (provider.name === 'wordpress-self-hosted' && onRequestWordPressConnect) {
+			onRequestWordPressConnect()
 			return
 		}
 		if (onRequestOwnApp && !ownAppSaved) {
@@ -808,6 +816,7 @@ export function ProviderConnectRow({
 	const [linkGithubOpen, setLinkGithubOpen] = useState(false)
 	const [resendOpen, setResendOpen] = useState(false)
 	const [deepdotsOpen, setDeepdotsOpen] = useState(false)
+	const [wordpressOpen, setWordpressOpen] = useState(false)
 
 	// GitHub only installs its App once per org, so a workspace that wants an org
 	// someone already connected elsewhere binds to the existing installation.
@@ -858,6 +867,9 @@ export function ProviderConnectRow({
 							onRequestDeepdotsConnect={
 								provider.name === 'deepdots' ? () => setDeepdotsOpen(true) : undefined
 							}
+							onRequestWordPressConnect={
+								provider.name === 'wordpress-self-hosted' ? () => setWordpressOpen(true) : undefined
+							}
 							{...ownApp}
 							linkableCount={linkableCount}
 							onRequestLink={() => setLinkGithubOpen(true)}
@@ -902,6 +914,13 @@ export function ProviderConnectRow({
 					workspaceId={workspaceId}
 					open={deepdotsOpen}
 					onClose={() => setDeepdotsOpen(false)}
+				/>
+			)}
+			{provider.name === 'wordpress-self-hosted' && (
+				<WordPressConnectDialog
+					workspaceId={workspaceId}
+					open={wordpressOpen}
+					onClose={() => setWordpressOpen(false)}
 				/>
 			)}
 			{provider.name === 'resend' && (

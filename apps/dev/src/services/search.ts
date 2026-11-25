@@ -218,8 +218,18 @@ export interface SearchSource {
 	 * earns the title weight, plus a bonus for a whole-word or word-start name match.
 	 */
 	rankSub?: boolean
-	/** Optional. Under relevance sort, rows with status 'unread' come before read ones of equal score. */
+	/**
+	 * Optional. The chat order under relevance sort: match tier, then open before archived, then the
+	 * caller's frecency, then unread before read, then newest. The title score is not read, so a short
+	 * title earns nothing (see orderBy).
+	 */
 	unreadFirst?: boolean
+	/**
+	 * Optional. The candidates return a `rank_title` column: the title as it counts for matching and
+	 * ranking, empty for a title that is only a default. Every word match and tier then reads it
+	 * instead of `title`, which is still the text shown.
+	 */
+	rankTitle?: boolean
 }
 
 /** The objects source rows (loops have their own source), optionally cut to the rows holding every word. */
@@ -234,12 +244,16 @@ function objectCandidates({ workspaceId }: SearchContext, patterns: string[] = [
 			WHERE o.workspace_id = ${workspaceId} AND o.type <> 'loop'${sql.join(wordFilter, sql``)}`
 }
 
+/** The title every new chat starts with. It names nothing, so a search never counts its words. */
+const DEFAULT_CHAT_TITLE = 'new chat'
+
 export const SEARCH_SOURCES: SearchSource[] = [
 	{
 		key: 'chats',
 		fixedTypes: ['chat'],
 		rankSub: true,
 		unreadFirst: true,
+		rankTitle: true,
 		statusPairs: () => sql`
 			SELECT 'chat'::text AS type, v.status AS status
 			FROM (VALUES ('archived'), ('unread'), ('read')) AS v(status)`,
@@ -247,6 +261,7 @@ export const SEARCH_SOURCES: SearchSource[] = [
 			SELECT c.id AS id,
 				'chat'::text AS type,
 				c.title AS title,
+				(CASE WHEN lower(btrim(c.title)) = ${DEFAULT_CHAT_TITLE} THEN '' ELSE c.title END) AS rank_title,
 				(SELECT string_agg(a.name, ', ' ORDER BY a.name)
 					FROM conversation_participants cp2
 					INNER JOIN actors a ON a.id = cp2.actor_id
@@ -389,6 +404,11 @@ export function searchTokens(q: string | undefined): string[] {
 	const words = q.toLowerCase().split(/\s+/).filter(Boolean)
 	return [...new Set(words)].slice(0, MAX_TOKENS)
 }
+/** The title of the candidate row `s` as it counts for matching and ranking (see rankTitle). */
+function titleExpr(source: SearchSource): SQL {
+	return source.rankTitle ? sql`s.rank_title` : sql`s.title`
+}
+
 /** A text expression for the status of a candidate row `s`: the source's own late one, or its column. */
 function statusExpr(source: SearchSource, ctx: SearchContext): SQL {
 	return source.lateStatus ? source.lateStatus(ctx) : sql`s.status`
@@ -412,7 +432,7 @@ function matchCondition(tokens: string[], source: SearchSource, hasDeep: boolean
 	const perToken = tokens.map((token) => {
 		const pattern = tokenIlikePattern(token)
 		const deep = hasDeep ? sql` or ${deepHitExpr(source, pattern)}` : sql``
-		return sql`(s.title ilike ${pattern} or s.sub ilike ${pattern} or s.body ilike ${pattern}${deep})`
+		return sql`(${titleExpr(source)} ilike ${pattern} or s.sub ilike ${pattern} or s.body ilike ${pattern}${deep})`
 	})
 	return sql.join(perToken, sql` and `)
 }
@@ -457,14 +477,15 @@ function wordPatterns(token: string) {
  */
 function tierExpression(tokens: string[], source: SearchSource): SQL {
 	if (tokens.length === 0) return sql`0`
+	const title = titleExpr(source)
 	const perToken = tokens.map((token) => {
 		const pattern = tokenIlikePattern(token)
 		const { start, whole } = wordPatterns(token)
 		const sub = (condition: SQL) => (source.rankSub ? sql` or ${condition}` : sql``)
 		return sql`(case
-			when s.title ~* ${whole}${sub(sql`s.sub ~* ${whole}`)} then ${TIER_WHOLE_WORD}::int
-			when s.title ~* ${start}${sub(sql`s.sub ~* ${start}`)} then ${TIER_WORD_START}::int
-			when s.title ilike ${pattern}${sub(sql`s.sub ilike ${pattern}`)} then ${TIER_CONTAINS}::int
+			when ${title} ~* ${whole}${sub(sql`s.sub ~* ${whole}`)} then ${TIER_WHOLE_WORD}::int
+			when ${title} ~* ${start}${sub(sql`s.sub ~* ${start}`)} then ${TIER_WORD_START}::int
+			when ${title} ilike ${pattern}${sub(sql`s.sub ilike ${pattern}`)} then ${TIER_CONTAINS}::int
 			else ${TIER_BODY_ONLY}::int end)`
 	})
 	return sql`greatest(${sql.join(perToken, sql`, `)})`
@@ -482,6 +503,13 @@ function scoreExpression(
 	ctx: SearchContext,
 ): SQL {
 	if (tokens.length === 0) return sql`0`
+	// Chats are ordered by tier, archive, frecency, unread and recency, never by the title score, so
+	// every chat scores the same: just under a title that is the whole phrase, plus the caller's
+	// frecency bonus. The score only places a chat among the other groups (a chat leads other rows of
+	// the same tier, a perfect title hit of another kind leads it) and orders chats by frecency.
+	if (source.unreadFirst) {
+		return sql`${tokens.length * (TITLE_HIT_WEIGHT + TITLE_COVERAGE_SCALE + TITLE_PHRASE_PREFIX_BONUS - 1)}::int + ${frecencyBonus(ctx)}`
+	}
 	const perToken = tokens.map((token) => {
 		const pattern = tokenIlikePattern(token)
 		const body = hasDeep
@@ -547,7 +575,7 @@ function orderBy(sort: SearchQuery['sort'], source: SearchSource, statusRank: SQ
 	if (sort === 'recent') return sql`m.updated_at desc nulls last, m.id`
 	if (sort === 'az') return sql`lower(m.title) asc, m.id`
 	if (source.unreadFirst) {
-		return sql`m.tier, m.score desc, ${statusRank}, (m.status = 'unread') desc, m.updated_at desc nulls last, m.id`
+		return sql`m.tier, (m.status = 'archived'), m.score desc, (m.status <> 'unread'), m.updated_at desc nulls last, m.id`
 	}
 	return sql`m.tier, m.score desc, ${statusRank}, m.updated_at desc nulls last, m.id`
 }
@@ -910,7 +938,7 @@ async function runTypoPass(
 					to_char(s.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_iso,
 					(${participantsCondition(query, source)}) AS p_ok
 				FROM (${source.candidates(ctx)}) s
-				WHERE s.title <> ''
+				WHERE ${titleExpr(source)} <> ''
 				ORDER BY s.updated_at DESC NULLS LAST, s.id
 				LIMIT ${TYPO_CANDIDATE_CAP + 1}`,
 		)

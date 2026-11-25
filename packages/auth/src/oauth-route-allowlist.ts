@@ -93,6 +93,9 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'POST /api/dinero-review/approve',
 	'POST /api/dinero-review/filing-handoff',
 	'POST /api/dinero-review/reverse',
+	'GET /api/dinero-review/vat-report',
+	'GET /api/dinero-review/vat-report/csv',
+	'GET /api/dinero-review/vat-check-note',
 	'POST /api/installed-loops/:id/update',
 	'GET /api/actors/:actorId/skills',
 	'DELETE /api/actors/:actorId/skills/:skillName',
@@ -214,6 +217,7 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'GET /api/integrations/:id/github-token',
 	'POST /api/integrations/:provider/connect',
 	'POST /api/integrations/deepdots/connect',
+	'POST /api/integrations/wordpress-self-hosted/connect',
 	'POST /api/integrations/github/link',
 	'GET /api/integrations/github/linkable',
 	'GET /api/integrations/github/pending-selection/:id',
@@ -256,6 +260,15 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'POST /api/webhooks/slack-commands',
 	'POST /api/webhooks/slack-interactive',
 	'POST /api/webhooks/stripe',
+	'POST /api/webhooks/receipt-intake/email',
+
+	// Receipt intake: the command route is authenticated by its own receipt key, and the owner
+	// settings (email address, command keys) are not for a connected Claude client to change.
+	'POST /api/receipt-intake/upload',
+	'GET /api/receipt-intake/:loopId',
+	'PUT /api/receipt-intake/:loopId/email',
+	'POST /api/receipt-intake/:loopId/keys',
+	'DELETE /api/receipt-intake/:loopId/keys/:keyId',
 
 	// Billing is account-level.
 	'POST /api/billing/cancel',
@@ -300,6 +313,7 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'DELETE /api/integrations/:provider/gateway',
 	'DELETE /api/integrations/:provider/gateway/:integrationId',
 	'DELETE /api/integrations/deepdots/mcp',
+	'DELETE /api/integrations/wordpress-self-hosted/mcp',
 	'DELETE /api/integrations/google-drive/mcp',
 	'DELETE /api/integrations/google-drive/watched-folders/:folderId',
 	'DELETE /api/integrations/google-search-console/mcp',
@@ -346,6 +360,7 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'GET /api/integrations/:provider/gateway/:integrationId',
 	'GET /api/integrations/:provider/native-launch',
 	'GET /api/integrations/deepdots/mcp',
+	'GET /api/integrations/wordpress-self-hosted/mcp',
 	'GET /api/integrations/google-drive/mcp',
 	'GET /api/integrations/google-drive/watched-folders',
 	'GET /api/integrations/google-search-console/mcp',
@@ -415,6 +430,7 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'POST /api/integrations/byo-login',
 	'POST /api/integrations/chat-capture',
 	'POST /api/integrations/deepdots/mcp',
+	'POST /api/integrations/wordpress-self-hosted/mcp',
 	'POST /api/integrations/gmail/save-attachment',
 	'POST /api/integrations/gmail/send',
 	'POST /api/integrations/google-drive/mcp',

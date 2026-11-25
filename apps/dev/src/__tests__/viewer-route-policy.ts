@@ -70,6 +70,12 @@ export const OPEN_ROUTES: OpenRoute[] = [
 	['POST', '/api/webhooks/slack-commands', 'provider webhook, signed by Slack'],
 	['POST', '/api/webhooks/slack-interactive', 'provider webhook, signed by Slack'],
 	['POST', '/api/webhooks/stripe', 'provider webhook, signed by Stripe'],
+	['POST', '/api/webhooks/receipt-intake/email', 'receipt email delivery, signed by Resend'],
+	[
+		'POST',
+		'/api/receipt-intake/upload',
+		'the receipt command route, authenticated by a receipt key that can only add one receipt file to its own flow',
+	],
 	['POST', '/api/internal/agent-servers/reconcile', 'shared bearer secret, no workspace caller'],
 	[
 		'POST',
@@ -103,6 +109,7 @@ export const OPEN_ROUTES: OpenRoute[] = [
 	['POST', '/oauth/token', 'public, the one-time code or refresh token is the credential'],
 	// Group B leftovers: no handler logic or no workspace data.
 	['DELETE', '/api/integrations/deepdots/mcp', 'always answers 405, no handler'],
+	['DELETE', '/api/integrations/wordpress-self-hosted/mcp', 'always answers 405, no handler'],
 	['DELETE', '/api/integrations/google-drive/mcp', 'always answers 405, no handler'],
 	['DELETE', '/api/integrations/google-meet/mcp', 'always answers 405, no handler'],
 	['DELETE', '/api/integrations/google-search-console/mcp', 'always answers 405, no handler'],
@@ -252,6 +259,11 @@ export const OPEN_ROUTES: OpenRoute[] = [
  */
 export const HAND_GATED_ROUTES: OpenRoute[] = [
 	['POST', '/api/integrations/deepdots/mcp', 'MCP endpoint, tools read as the workspace'],
+	[
+		'POST',
+		'/api/integrations/wordpress-self-hosted/mcp',
+		'MCP endpoint, tools act as the workspace',
+	],
 	['POST', '/api/integrations/google-drive/mcp', 'MCP endpoint, tools act as the workspace'],
 	['POST', '/api/integrations/google-meet/mcp', 'MCP endpoint, tools act as the workspace'],
 	[

@@ -47,6 +47,11 @@ import {
 	DINERO_LOCKED_MESSAGE,
 	isDineroPeriodLocked,
 } from '../lib/integrations/providers/dinero/review'
+import {
+	DINERO_APP_TOOLS,
+	answerDineroAppTool,
+	isDineroAppTool,
+} from '../lib/integrations/providers/dinero/vat-check-tool'
 import { assertPublicHost } from '../lib/integrations/public-host'
 import { getProvider } from '../lib/integrations/registry'
 import type { ToolAnnotationsLike } from '../lib/integrations/tool-kinds'
@@ -456,6 +461,25 @@ export async function proxyMcp(
 		})
 	}
 
+	// get_vat_report reads our own review log, not Dinero: answered here, no sign-in token needed.
+	if (provider === 'dinero' && toolName && allowed && isDineroAppTool(toolName)) {
+		const done = await answerDineroAppTool(
+			db,
+			{ workspaceId, integrationId: integration.id },
+			toolName,
+			rpc?.params?.arguments,
+		)
+		countToolCall(done.isError ? 'API_ERROR' : null)
+		return new Response(
+			JSON.stringify({
+				jsonrpc: '2.0',
+				id: rpc?.id ?? null,
+				result: { isError: done.isError, content: [{ type: 'text', text: done.text }] },
+			}),
+			{ status: 200, headers: { 'content-type': 'application/json' } },
+		)
+	}
+
 	let upstreamHeaders: Record<string, string>
 	try {
 		upstreamHeaders = await ctx.upstreamHeaders()
@@ -528,6 +552,24 @@ export async function proxyMcp(
 		return jsonRpcError(502, -32002, `${label} could not be reached. Try again shortly.`)
 	}
 	countToolCall(upstream.ok ? null : `HTTP_${upstream.status}`)
+	// A provider that refuses the token we sent. Google's hosted MCP answers 401 with its whole tool
+	// list in the body, so passing it on made the agent's client drop every tool while the server
+	// still showed as connected. Say what happened instead, and log the vendor's reason (never the token).
+	if (upstream.status === 401) {
+		logger.warn('Gateway upstream refused the provider token', {
+			workspaceId,
+			integrationId: integration.id,
+			provider,
+			method: rpc?.method ?? method,
+			wwwAuthenticate: upstream.headers.get('www-authenticate')?.slice(0, 300) ?? null,
+		})
+		await upstream.body?.cancel().catch(() => {})
+		return jsonRpcError(
+			502,
+			-32002,
+			`${label} refused the sign-in Maskin sent it (HTTP 401), so its tools are not available. Ask a workspace admin to reconnect it under Settings → Integrations.`,
+		)
+	}
 	// A draft saved in the customer's accounting system is counted once, when the vendor says it worked.
 	const draftConnector = toolName && allowed ? receiptDraftConnector(server.url, toolName) : null
 	if (draftConnector) {
@@ -588,7 +630,7 @@ export async function proxyMcp(
 			provider === 'dinero'
 				? {
 						...upstreamResult,
-						tools: [...(upstreamResult.tools ?? []), ...DINERO_BRIDGE_TOOLS],
+						tools: [...(upstreamResult.tools ?? []), ...DINERO_BRIDGE_TOOLS, ...DINERO_APP_TOOLS],
 					}
 				: upstreamResult
 		const out = annotateToolsList(withBridge as Parameters<typeof annotateToolsList>[0], {
