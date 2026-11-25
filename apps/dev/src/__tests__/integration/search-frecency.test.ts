@@ -13,7 +13,7 @@ import {
 	insertConversation,
 	insertWorkspace,
 } from '../factories'
-import { jsonRequest } from '../helpers'
+import { jsonGet, jsonRequest } from '../helpers'
 import { db, getTestActorId } from './global-setup'
 
 const { default: searchRoutes } = await import('../../routes/search')
@@ -183,6 +183,30 @@ describe('search frecency against real Postgres', () => {
 			expect(rows).toHaveLength(1)
 			expect(rows[0]).toMatchObject({ workspaceId, actorId })
 			expect(rows[0]?.decayedOpens).toBeCloseTo(1, 5)
+		})
+
+		it('lists the caller own bonuses, decayed and capped, best first', async () => {
+			const a = crypto.randomUUID()
+			const b = crypto.randomUUID()
+			const c = crypto.randomUUID()
+			const gone = crypto.randomUUID()
+			await setOpens(a, 1, 0) // 50
+			await setOpens(b, 100, 0) // capped
+			await setOpens(c, 3, 14) // 75
+			await setOpens(gone, 1, 400) // decayed to 0, left out
+			await setOpens(crypto.randomUUID(), 5, 0, otherUserId) // someone else's
+
+			const res = await createApp().request(
+				jsonGet('/api/search/opens', { ...auth, 'X-Workspace-Id': workspaceId }),
+			)
+			expect(res.status).toBe(200)
+			expect(await res.json()).toEqual({
+				opens: [
+					{ entity_id: b, bonus: FRECENCY_MAX_BONUS },
+					{ entity_id: c, bonus: 75 },
+					{ entity_id: a, bonus: 50 },
+				],
+			})
 		})
 
 		it('rejects a body that is not a uuid', async () => {

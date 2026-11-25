@@ -4,6 +4,7 @@ import {
 	STATUS_GROUP_KEYS,
 	parseChatSearch,
 	searchOpenBodySchema,
+	searchOpensResponseSchema,
 	searchQuerySchema,
 	searchResponseSchema,
 } from '@maskin/shared'
@@ -11,7 +12,7 @@ import { validationFailureHook } from '../lib/errors'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { loadAttentionChatIds } from '../services/chat-attention'
 import { SEARCH_SOURCES, runSearch } from '../services/search'
-import { recordSearchOpen } from '../services/search-opens'
+import { listSearchOpenBonuses, recordSearchOpen } from '../services/search-opens'
 
 type Env = {
 	Variables: {
@@ -123,5 +124,31 @@ app.openapi(openRoute, (async (c) => {
 	await recordSearchOpen(db, { workspaceId, actorId, entityId })
 	return c.body(null, 204)
 }) as RouteHandler<typeof openRoute, Env>)
+
+const listOpensRoute = createRoute({
+	method: 'get',
+	path: '/opens',
+	tags: ['Search'],
+	summary: 'The ranking bonus of the results the caller opened from search',
+	description:
+		"For a client that ranks search results on the device: the caller's own opened results with a " +
+		'bonus above zero, best first (at most 200). Add `bonus` after the match tier and before ' +
+		"unread. Only the caller's own history is read.",
+	request: { headers: workspaceIdHeader },
+	responses: {
+		200: {
+			content: { 'application/json': { schema: searchOpensResponseSchema } },
+			description: 'Bonuses, decayed to now',
+		},
+	},
+})
+
+app.openapi(listOpensRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const opens = await listSearchOpenBonuses(db, { workspaceId, actorId })
+	return c.json({ opens }, 200)
+}) as RouteHandler<typeof listOpensRoute, Env>)
 
 export default app

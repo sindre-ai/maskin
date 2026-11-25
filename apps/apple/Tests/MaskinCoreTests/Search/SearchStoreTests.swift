@@ -35,6 +35,23 @@ actor FakeSearchRemote: SearchRemote {
 	func people() async throws -> [SearchPerson] { peopleList }
 }
 
+actor FakeSearchOpens: SearchOpensRemote {
+	var bonusList: [String: Int] = [:]
+	var fails = false
+	private(set) var recorded: [String] = []
+	private(set) var bonusCalls = 0
+
+	func setBonuses(_ list: [String: Int]) { bonusList = list }
+	func setFails(_ value: Bool) { fails = value }
+
+	func bonuses() async throws -> [String: Int] {
+		bonusCalls += 1
+		if fails { throw SearchError("down") }
+		return bonusList
+	}
+	func recordOpen(entityId: String) async { recorded.append(entityId) }
+}
+
 func object(_ id: String, _ title: String) -> SearchResult {
 	SearchResult(kind: .object, entityId: id, title: title, subtitle: "active", detail: "task")
 }
@@ -61,6 +78,14 @@ func makeStore(
 	return SearchStore(
 		remote: remote, recents: SearchRecents(defaults: defaults), workspaceId: { workspace },
 		debounce: debounce)
+}
+
+@MainActor
+func makeStore(_ remote: FakeSearchRemote, opens: FakeSearchOpens) -> SearchStore {
+	let defaults = UserDefaults(suiteName: "search-tests-\(UUID().uuidString)")!
+	return SearchStore(
+		remote: remote, recents: SearchRecents(defaults: defaults), workspaceId: { "ws-1" },
+		debounce: .milliseconds(10), opens: opens)
 }
 
 @MainActor
@@ -251,6 +276,58 @@ struct SearchStoreTests {
 		await store.commit()
 		#expect(store.phase == .results)
 		#expect(store.recents == ["launch"])
+	}
+
+	@Test("results you opened from search rank higher inside their tier")
+	func opensBoostResults() async {
+		let remote = FakeSearchRemote()
+		await remote.setChats(
+			.success([
+				chat("new", "Plan bravo", at: Date(timeIntervalSince1970: 900)),
+				chat("old", "Plan alpha", at: Date(timeIntervalSince1970: 100)),
+			]))
+		let plain = makeStore(remote, opens: FakeSearchOpens())
+		plain.setQuery("plan")
+		await plain.settle()
+		#expect(plain.allResults.map(\.entityId) == ["new", "old"])
+
+		let opens = FakeSearchOpens()
+		await opens.setBonuses(["old": 100])
+		let boosted = makeStore(remote, opens: opens)
+		boosted.setQuery("plan")
+		await boosted.settle()
+		#expect(boosted.allResults.map(\.entityId) == ["old", "new"])
+	}
+
+	@Test("a failed read of the history leaves the usual order and no error")
+	func historyFailureIsQuiet() async {
+		let remote = FakeSearchRemote()
+		await remote.setChats(.success([chat("c1", "Plan alpha")]))
+		let opens = FakeSearchOpens()
+		await opens.setFails(true)
+		let store = makeStore(remote, opens: opens)
+		store.setQuery("plan")
+		await store.settle()
+		#expect(store.phase == .results)
+		#expect(store.allResults.map(\.entityId) == ["c1"])
+	}
+
+	@Test("opening a result of a typed search records it; a tap with no query does not")
+	func recordsOpens() async throws {
+		let remote = FakeSearchRemote()
+		let opens = FakeSearchOpens()
+		let store = makeStore(remote, opens: opens)
+		let hit = chat("c1", "Plan alpha")
+		store.setQuery("plan")
+		await store.settle()
+		store.didOpen(hit)
+		try await Task.sleep(for: .milliseconds(100))
+		#expect(await opens.recorded == ["c1"])
+
+		store.setQuery("")
+		store.didOpen(chat("c2", "Other"))
+		try await Task.sleep(for: .milliseconds(100))
+		#expect(await opens.recorded == ["c1"], "no query: not an open from search")
 	}
 }
 

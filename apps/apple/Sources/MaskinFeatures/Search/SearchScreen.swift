@@ -54,7 +54,10 @@ private struct SearchScreenContent: View {
 		let auth = environment.auth
 		let searchStore = SearchStore(
 			remote: remote, recents: SearchRecents(actorId: auth.session?.actorId ?? ""),
-			workspaceId: { auth.session?.workspaceId }, currentActorId: { auth.session?.actorId })
+			workspaceId: { auth.session?.workspaceId }, currentActorId: { auth.session?.actorId },
+			opens: APISearchOpens(
+				baseURL: environment.baseURL, clientSource: environment.clientSource,
+				credentials: auth.credentialsProvider))
 		_store = State(initialValue: searchStore)
 		// The long-press menus act on a chat list and an object list of their own (see SearchRowActions).
 		let workspaceID = environment.workspaceId ?? ""

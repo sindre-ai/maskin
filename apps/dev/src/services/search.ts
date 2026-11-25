@@ -15,9 +15,6 @@ import {
 import { type SQL, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import {
-	FRECENCY_HALF_LIFE_DAYS,
-	FRECENCY_MAX_BONUS,
-	FRECENCY_POINTS_PER_OPEN,
 	NAME_WHOLE_WORD_BONUS,
 	NAME_WORD_PREFIX_BONUS,
 	TITLE_COVERAGE_SCALE,
@@ -28,6 +25,7 @@ import {
 } from '../lib/search-rank'
 import { canHaveTypo, titleTypoDistance } from '../lib/search-typo'
 import { directPairKey } from './direct-chat'
+import { frecencyBonusSql } from './search-opens'
 
 /** A source that takes longer than this is reported as partial instead of failing the request. */
 const SOURCE_TIMEOUT_MS = 5000
@@ -502,11 +500,8 @@ function scoreExpression(
  * only for a typed query (an empty query has no score at all).
  */
 function frecencyBonus({ workspaceId, callerId }: SearchContext): SQL {
-	const ageDays = sql`extract(epoch from (now() - so.last_opened_at)) / 86400.0`
 	return sql`coalesce((
-		SELECT floor(least(${FRECENCY_MAX_BONUS}::double precision,
-			so.decayed_opens * power(0.5, ${ageDays} / ${FRECENCY_HALF_LIFE_DAYS}::double precision)
-				* ${FRECENCY_POINTS_PER_OPEN}::double precision))::int
+		SELECT ${frecencyBonusSql()}
 		FROM search_opens so
 		WHERE so.workspace_id = ${workspaceId} AND so.actor_id = ${callerId} AND so.entity_id = s.id
 	), 0)`

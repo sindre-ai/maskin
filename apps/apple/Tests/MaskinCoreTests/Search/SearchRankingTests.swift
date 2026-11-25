@@ -59,4 +59,23 @@ struct SearchRankingTests {
 		let ordered = SearchRanking.ordered(mixed, query: "launch")
 		#expect(ordered.map(\.id) == ["chat:c1", "chat:c2", "agent:a1", "object:o1", "object:o2"])
 	}
+
+	@Test("inside a tier a result opened before comes first, even when another is newer")
+	func opensBoostInsideTier() {
+		let old = chat("old", "Plan alpha", at: Date(timeIntervalSince1970: 100))
+		let new = chat("new", "Plan bravo", at: Date(timeIntervalSince1970: 900))
+		#expect(SearchRanking.ordered([new, old], query: "plan").map(\.entityId) == ["new", "old"])
+		let boosted = SearchRanking.ordered([new, old], query: "plan", bonuses: ["old": 100])
+		#expect(boosted.map(\.entityId) == ["old", "new"])
+		let twice = SearchRanking.ordered([new, old], query: "plan", bonuses: ["old": 50, "new": 100])
+		#expect(twice.map(\.entityId) == ["new", "old"], "the bigger bonus leads")
+	}
+
+	@Test("a bonus never lifts a result over a better match tier")
+	func opensNeverBeatTier() {
+		let titled = chat("title", "Plan room")
+		let previewOnly = chat("prev", "Roadmap", snippet: "plan")
+		let ordered = SearchRanking.ordered([previewOnly, titled], query: "plan", bonuses: ["prev": 150])
+		#expect(ordered.map(\.entityId) == ["title", "prev"])
+	}
 }

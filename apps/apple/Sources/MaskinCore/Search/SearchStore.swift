@@ -35,6 +35,9 @@ public final class SearchStore {
 	public private(set) var people: [SearchPerson] = []
 
 	@ObservationIgnored private let remote: any SearchRemote
+	@ObservationIgnored private let opens: (any SearchOpensRemote)?
+	/// The caller's frecency bonuses, loaded once per directory TTL and dropped after an open.
+	@ObservationIgnored private var bonusCache: [String: Int]?
 	@ObservationIgnored private let recentsStore: SearchRecents
 	@ObservationIgnored private let workspaceId: @MainActor () -> String?
 	@ObservationIgnored private let debounce: Duration
@@ -54,8 +57,10 @@ public final class SearchStore {
 		remote: any SearchRemote, recents: SearchRecents = SearchRecents(),
 		workspaceId: @escaping @MainActor () -> String?, debounce: Duration = .milliseconds(300),
 		directoryTTL: TimeInterval = 60, now: @escaping @MainActor () -> Date = { Date() },
-		currentActorId: @escaping @MainActor () -> String? = { nil }
+		currentActorId: @escaping @MainActor () -> String? = { nil },
+		opens: (any SearchOpensRemote)? = nil
 	) {
+		self.opens = opens
 		self.currentActorId = currentActorId
 		self.directoryTTL = directoryTTL
 		self.now = now
@@ -168,7 +173,13 @@ public final class SearchStore {
 	}
 
 	/// A result was opened: its query is worth remembering.
-	public func didOpen(_ result: SearchResult) { remember(query) }
+	public func didOpen(_ result: SearchResult) {
+		remember(query)
+		// Only a result of a typed search counts, never a tap from the recents screen.
+		guard !query.isEmpty, let opens else { return }
+		bonusCache = nil
+		Task { await opens.recordOpen(entityId: result.entityId) }
+	}
 
 	public func retry() async {
 		guard !query.isEmpty || !participants.isEmpty else { return }
@@ -224,6 +235,7 @@ public final class SearchStore {
 		chatsCache = nil
 		agentsCache = nil
 		flowsCache = nil
+		bonusCache = nil
 		cacheStamp = nil
 		peopleTask?.cancel()
 		peopleTask = nil
@@ -249,6 +261,8 @@ public final class SearchStore {
 		let cachedChats = chatsCache
 		let cachedAgents = agentsCache
 		let cachedFlows = flowsCache
+		let cachedBonuses = bonusCache
+		let opens = self.opens
 		let picked = participants
 		// With people picked only chats can match, so the other sources are not asked.
 		let chatsOnly = !picked.isEmpty
@@ -258,7 +272,9 @@ public final class SearchStore {
 		async let chats = Self.attempt { if let cachedChats { return cachedChats }; return try await remote.conversations() }
 		async let agents = Self.attempt { if chatsOnly { return [] }; if let cachedAgents { return cachedAgents }; return try await remote.agents() }
 		async let flows = Self.attempt { if chatsOnly { return [] }; if let cachedFlows { return cachedFlows }; return try await remote.flows() }
+		async let bonuses = Self.loadBonuses(cached: cachedBonuses, opens: opens)
 		let (o, f, c, a, fl) = await (objects, files, chats, agents, flows)
+		let boosts = await bonuses
 		// A newer query (or a cancel) started while this one was in flight.
 		guard mine == generation, !Task.isCancelled else { return }
 		// The workspace changed while this was in flight: its lists belong to the old one.
@@ -269,6 +285,7 @@ public final class SearchStore {
 		}
 
 		if case .success(let list) = c { chatsCache = list }
+		bonusCache = boosts
 		// A chats-only search skipped agents and flows, so their empty answers must not be cached.
 		if case .success(let list) = a, !chatsOnly { agentsCache = list }
 		if case .success(let list) = fl, !chatsOnly { flowsCache = list }
@@ -316,7 +333,7 @@ public final class SearchStore {
 		}
 		if case .success(let list) = o { merged += list.filter { !flowIds.contains($0.entityId) } }
 		if case .success(let list) = f { merged += list }
-		allResults = SearchRanking.ordered(merged, query: text)
+		allResults = SearchRanking.ordered(merged, query: text, bonuses: text.isEmpty ? [:] : (boosts ?? [:]))
 		phase = .results
 	}
 
@@ -328,6 +345,16 @@ public final class SearchStore {
 
 	nonisolated static func filter(_ list: [SearchResult], _ text: String) -> [SearchResult] {
 		list.filter { SearchHighlight.matches(text, in: $0.searchableText) }
+	}
+
+	/// The frecency bonuses: the cached ones, or a fresh read. A failed read means no boost, never an
+	/// error: the search still answers in its usual order.
+	private nonisolated static func loadBonuses(
+		cached: [String: Int]?, opens: (any SearchOpensRemote)?
+	) async -> [String: Int]? {
+		if let cached { return cached }
+		guard let opens else { return nil }
+		return try? await opens.bonuses()
 	}
 
 	private nonisolated static func attempt(

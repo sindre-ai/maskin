@@ -22,11 +22,16 @@ public enum SearchRanking {
 		return .preview
 	}
 
-	/// Keeps the groups in display order and, inside each group, sorts by tier. Inside a tier,
+	/// Keeps the groups in display order and, inside each group, sorts by tier. Inside a tier a
+	/// result the person opened from search before comes first, the more and the more lately the
+	/// higher (`bonuses` maps an entity id to the server's frecency points; the server's capped
+	/// bonus is the same one its own search adds, so name match tier stays first). Then
 	/// chats and flows (filtered on the device, from lists the server returns by recency) go newest
 	/// first; objects, files and agents keep the order their source gave them. The sort is stable
 	/// and consistent across kinds, so mixed input cannot confuse it.
-	public static func ordered(_ results: [SearchResult], query: String) -> [SearchResult] {
+	public static func ordered(
+		_ results: [SearchResult], query: String, bonuses: [String: Int] = [:]
+	) -> [SearchResult] {
 		let keyed = results.enumerated().map {
 			(
 				offset: $0.offset, group: SearchGroup.displayOrder.firstIndex(of: $0.element.group) ?? 0,
@@ -36,6 +41,9 @@ public enum SearchRanking {
 		return keyed.sorted { a, b in
 			if a.group != b.group { return a.group < b.group }
 			if a.tier != b.tier { return a.tier < b.tier }
+			let boostA = bonuses[a.result.entityId] ?? 0
+			let boostB = bonuses[b.result.entityId] ?? 0
+			if boostA != boostB { return boostA > boostB }
 			if ranksByRecency(a.result) {
 				let da = a.result.updatedAt ?? .distantPast
 				let db = b.result.updatedAt ?? .distantPast
