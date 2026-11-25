@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { sortByRank, usePageSearchRank } from '@/hooks/use-page-search-rank'
 import {
 	useUpdateUserDisplaySettings,
 	useUserDisplaySettings,
@@ -236,6 +237,9 @@ export function AgentsIndexView({
 		[rows, statusOnlyFilters, teamFilter, words],
 	)
 
+	// While words are typed the server's order wins over the Display sort, across groups too.
+	const rank = usePageSearchRank(workspaceId, query, 'agent')
+
 	const sortedRows = useMemo(() => {
 		const arr = [...visibleRows]
 		const dir = order === 'asc' ? 1 : -1
@@ -274,10 +278,11 @@ export function AgentsIndexView({
 			default:
 				arr.sort((a, b) => dir * byName(a, b))
 		}
-		return arr
-	}, [visibleRows, sort, order])
+		return sortByRank(arr, rank, (row) => row.agent.id)
+	}, [visibleRows, sort, order, rank])
 
 	const groups = useMemo(() => {
+		if (rank) return [{ id: 'all', label: undefined, note: undefined, rows: sortedRows }]
 		if (groupBy === 'status') {
 			// Filter the active statuses against the known buckets instead of
 			// casting: a stale persisted filter can't crash the group render
@@ -334,7 +339,7 @@ export function AgentsIndexView({
 				}))
 		}
 		return [{ id: 'all', label: undefined, note: undefined, rows: sortedRows }]
-	}, [groupBy, statusOnlyFilters, sortedRows])
+	}, [groupBy, statusOnlyFilters, sortedRows, rank])
 
 	const showTeam = columnVisibility.team !== false
 	const showActivity = columnVisibility.activity !== false
