@@ -542,6 +542,8 @@ describe('Accounting loop definition', () => {
 		it('stops and names the owner when the report tool is not there', () => {
 			expect(skill()).toMatch(/If the tool is not among your tools, say so in the first line/)
 			expect(skill()).toMatch(/Dinero connected by sign-in/)
+		})
+	})
 
 	// The daily receipt check rides the existing 06:00 daily trigger as another branch, so an
 	// install runs one daily session, not two.
@@ -551,12 +553,14 @@ describe('Accounting loop definition', () => {
 
 		it('rides the 06:00 daily trigger and ships no second daily cron', () => {
 			const dailies = ACCOUNTING_LOOP_TRIGGER_IDS.map((id) => getTriggerData(id)).filter(
-				(t) => t.type === 'cron' && (t.config as { expression?: string })?.expression?.startsWith('30 6'),
+				(t) =>
+					t.type === 'cron' &&
+					(t.config as { expression?: string })?.expression?.startsWith('30 6'),
 			)
 			expect(dailies).toEqual([])
 			const prompt = triggerByName('Daily check (06:00 UTC)').actionPrompt ?? ''
 			expect(prompt).toMatch(/skill accounting-daily-receipt-check/)
-			expect(prompt).toMatch(/post no comment and end the session/)
+			expect(prompt).toMatch(/posts no comment and ends the session/)
 		})
 
 		it('drafts new files, skips handled ones and does not draft twice', () => {
@@ -591,6 +595,18 @@ describe('Accounting loop definition', () => {
 			expect(text).toMatch(/end the session without a comment/)
 		})
 
+		it('names the chat first and email or command only if switched on', () => {
+			const text = skill()
+			expect(text).toMatch(/send the receipt in the flow's chat/)
+			expect(text).toMatch(
+				/Name email or command only if the owner has told you those routes are switched on/,
+			)
+			expect(text).not.toMatch(/in the chat, by email or by command/)
+			expect(ACCOUNTING_LOOP.description).toMatch(
+				/email or command where those routes are switched on/,
+			)
+		})
+
 		it('is named in the Bookkeeper prompt and in the listing text', () => {
 			expect(actorTexts().join('\n')).toMatch(/skill accounting-daily-receipt-check/)
 			expect(ACCOUNTING_LOOP.description).toMatch(/Every day it also drafts the receipt files/)
@@ -601,8 +617,6 @@ describe('Accounting loop definition', () => {
 				skillTexts().find((t) => t.startsWith('---\nname: bookkeeping-draft-method')) ?? ''
 			expect(method).toMatch(/Mark the receipt file/)
 			expect(method).toMatch(/plus handled/)
-		})
-	})
 		})
 	})
 
