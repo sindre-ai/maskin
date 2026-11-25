@@ -118,12 +118,12 @@ test.describe('Chats — full-screen multi-party chat', () => {
 			timeout: 10_000,
 		})
 
-		await (await headerMenuItem(page, 'Pin conversation')).click()
-		await expect(await headerMenuItem(page, 'Unpin conversation')).toBeVisible()
+		await (await headerMenuItem(page, /^Pin$/)).click()
+		await expect(await headerMenuItem(page, /^Unpin$/)).toBeVisible()
 		await page.keyboard.press('Escape')
 
 		await page.reload()
-		await expect(await headerMenuItem(page, 'Unpin conversation')).toBeVisible({
+		await expect(await headerMenuItem(page, /^Unpin$/)).toBeVisible({
 			timeout: 10_000,
 		})
 
