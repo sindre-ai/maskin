@@ -21,6 +21,12 @@ import {
 	writeYoutubeAudit,
 } from './actions'
 import {
+	YOUTUBE_CAPTION_DELETE_UNITS,
+	YOUTUBE_CAPTION_INSERT_UNITS,
+	YOUTUBE_CAPTION_MAX_BYTES,
+	YOUTUBE_CAPTION_UPDATE_UNITS,
+} from './captions'
+import {
 	buildInsertBody,
 	publishVideo,
 	startUploadSession,
@@ -45,8 +51,14 @@ import {
  * missed one.
  */
 
-/** Every write costs 50 quota units (videos.update, thumbnails.set, playlists, comments, rate). */
+/** Every write but a caption write costs 50 quota units (videos.update, thumbnails.set, playlists, comments, rate). */
 export const YOUTUBE_WRITE_UNITS = 50
+/** Caption writes cost more than the flat 50: Google meters captions.insert and captions.update higher. */
+const CAPTION_UNITS: Record<string, number> = {
+	upload_caption: YOUTUBE_CAPTION_INSERT_UNITS,
+	replace_caption: YOUTUBE_CAPTION_UPDATE_UNITS,
+	delete_caption: YOUTUBE_CAPTION_DELETE_UNITS,
+}
 const THUMBNAIL_MAX_BYTES = 2 * 1024 * 1024
 
 export interface ExecutorDeps {
@@ -157,6 +169,34 @@ async function loadThumbnail(
 	return { ok: true, image: { bytes, mimeType } }
 }
 
+type CaptionLoad = { ok: true; bytes: Uint8Array } | { ok: false; code: string }
+
+/** The caption file a person approved: used only if its bytes still hash to the approved value. */
+async function loadCaption(
+	db: Database,
+	storage: StorageProvider | undefined,
+	row: YoutubeActionRow,
+): Promise<CaptionLoad> {
+	const payload = row.payload as { fileId?: unknown; contentHash?: unknown }
+	if (typeof payload.fileId !== 'string' || typeof payload.contentHash !== 'string') {
+		return { ok: false, code: 'bad_payload' }
+	}
+	const [file] = await db
+		.select({ storageKey: files.storageKey, sizeBytes: files.sizeBytes })
+		.from(files)
+		.where(and(eq(files.id, payload.fileId), eq(files.workspaceId, row.workspaceId)))
+		.limit(1)
+	if (!file) return { ok: false, code: 'file_missing' }
+	if (!storage) return { ok: false, code: 'storage_unavailable' }
+	if (file.sizeBytes > YOUTUBE_CAPTION_MAX_BYTES) return { ok: false, code: 'file_too_large' }
+	const bytes = await storage.get(file.storageKey)
+	if (createHash('sha256').update(bytes).digest('hex') !== payload.contentHash) {
+		return { ok: false, code: 'file_changed' }
+	}
+	if (bytes.length > YOUTUBE_CAPTION_MAX_BYTES) return { ok: false, code: 'file_too_large' }
+	return { ok: true, bytes }
+}
+
 export type ExecutionOutcome =
 	| { ran: false }
 	| { ran: true; status: 'executed' | 'failed' | 'interrupted'; resultCode: string }
@@ -220,7 +260,11 @@ async function runClaimed(
 
 	// Charged now, when it runs, and not refunded if Google refuses: the same rule as every read.
 	try {
-		await (deps.chargeQuota ?? chargeYoutubeQuota)(db, row.workspaceId, YOUTUBE_WRITE_UNITS)
+		await (deps.chargeQuota ?? chargeYoutubeQuota)(
+			db,
+			row.workspaceId,
+			CAPTION_UNITS[row.kind] ?? YOUTUBE_WRITE_UNITS,
+		)
 	} catch (err) {
 		if (isYoutubeError(err)) return finish(db, row, 'failed', 'quota_exhausted')
 		logger.warn('YouTube action: quota charge failed', { actionId, error: String(err) })
@@ -239,6 +283,18 @@ async function runClaimed(
 		}
 	}
 
+	let caption: { bytes: Uint8Array } | undefined
+	if (row.kind === 'upload_caption' || row.kind === 'replace_caption') {
+		try {
+			const loaded = await loadCaption(db, deps.storage, row)
+			if (!loaded.ok) return finish(db, row, 'failed', loaded.code)
+			caption = { bytes: loaded.bytes }
+		} catch (err) {
+			logger.warn('YouTube action: caption could not be read', { actionId, error: String(err) })
+			return finish(db, row, 'failed', 'request_failed')
+		}
+	}
+
 	let accessToken: string
 	try {
 		accessToken = await deps.getAccessToken(db, row.integrationId)
@@ -253,6 +309,7 @@ async function runClaimed(
 			payload: row.payload as Record<string, unknown>,
 			accessToken,
 			...(image ? { image } : {}),
+			...(caption ? { caption } : {}),
 		})
 		return finish(db, row, result.ok ? 'executed' : 'failed', result.code)
 	} catch (err) {

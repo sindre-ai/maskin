@@ -449,6 +449,7 @@ function registerTools(server: McpServer, ctx: YoutubeMcpContext): void {
 	)
 
 	registerWriteTools(server, ctx)
+	registerCaptionTools(server, ctx)
 	registerUploadTools(server, ctx)
 }
 
@@ -602,6 +603,84 @@ function registerWriteTools(server: McpServer, ctx: YoutubeMcpContext): void {
 		},
 		({ object_id, note, ...args }, client) =>
 			propose(client, { object_id, note }, { tool: 'like', args }),
+		write,
+	)
+}
+
+/** Caption writes. Each only asks: the change goes out after a person approves the card. */
+function registerCaptionTools(server: McpServer, ctx: YoutubeMcpContext): void {
+	const propose = (client: ProposeContext, common: ProposeCommon, request: ProposeInput) =>
+		proposeYoutubeWrite(client, common, request)
+	const write = { write: true }
+	// Quota in the words: asking reads the channel and the video (about 2 units, plus the caption
+	// list at 50 for a replace or delete). Running it is charged when a person approves.
+	const held = (asking: string, running: number) =>
+		`Holds the change for a person to approve and returns the id of the held request. It never changes anything on YouTube itself: the change goes out only after a person approves the card, and the request lapses after 7 days. Only videos on the connected channel. Asking costs ${asking} of quota; running it costs ${running} units when a person approves, out of the workspace's daily YouTube quota. Needs the youtube.force-ssl permission, like youtube__get_own_captions.`
+	const captionFile = z
+		.string()
+		.uuid()
+		.describe('The id of an SRT or VTT file in this workspace, 1 MB at most.')
+
+	registerTool(
+		server,
+		ctx,
+		'upload_caption',
+		`Ask to add a caption track to one of your own videos from an SRT or VTT file. The file is fixed when you ask: if it changes before a person approves, nothing is sent. ${held('about 2 units', 400)}`,
+		{
+			object_id: objectIdField,
+			video_id: videoIdField,
+			file_id: captionFile,
+			language: z.string().min(2).max(16).describe('Language of the track, for example en or nb.'),
+			name: z
+				.string()
+				.max(150)
+				.optional()
+				.describe('Track name shown to viewers. Leave out for none.'),
+			is_draft: z
+				.boolean()
+				.optional()
+				.describe('True to save the track as a draft that viewers cannot see. Default false.'),
+			note: noteField,
+		},
+		({ object_id, note, ...args }, client) =>
+			propose(client, { object_id, note }, { tool: 'upload_caption', args }),
+		write,
+	)
+
+	registerTool(
+		server,
+		ctx,
+		'replace_caption',
+		`Ask to replace the text of an existing caption track with an SRT or VTT file. The track keeps its language and name. caption_id is the track id youtube__get_own_captions returns. The file is fixed when you ask: if it changes before a person approves, nothing is sent. ${held('about 52 units', 450)}`,
+		{
+			object_id: objectIdField,
+			video_id: videoIdField,
+			caption_id: z.string().min(1).max(128).describe('The id of the caption track to replace.'),
+			file_id: captionFile,
+			is_draft: z
+				.boolean()
+				.optional()
+				.describe('Set to change whether the track is a draft. Default: as it is now.'),
+			note: noteField,
+		},
+		({ object_id, note, ...args }, client) =>
+			propose(client, { object_id, note }, { tool: 'replace_caption', args }),
+		write,
+	)
+
+	registerTool(
+		server,
+		ctx,
+		'delete_caption',
+		`Ask to delete a caption track from one of your own videos. caption_id is the track id youtube__get_own_captions returns. The card shows the track's language, read from YouTube. ${held('about 52 units', 50)}`,
+		{
+			object_id: objectIdField,
+			video_id: videoIdField,
+			caption_id: z.string().min(1).max(128).describe('The id of the caption track to delete.'),
+			note: noteField,
+		},
+		({ object_id, note, ...args }, client) =>
+			propose(client, { object_id, note }, { tool: 'delete_caption', args }),
 		write,
 	)
 }

@@ -430,4 +430,184 @@ describe('YouTube write tools', () => {
 			expect(execute).not.toHaveBeenCalled()
 		})
 	})
+	describe('captions', () => {
+		const SRT = Buffer.from('1\n00:00:00,000 --> 00:00:01,000\nHello\n')
+		const hashOf = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex')
+		const TRACK = { id: 'cap1', snippet: { language: 'en', name: 'English', isDraft: false } }
+		let fileId: string
+
+		async function addFile(overrides: Record<string, unknown> = {}) {
+			const [file] = await db
+				.insert(files)
+				.values({
+					workspaceId,
+					name: 'talk.srt',
+					mimeType: 'application/x-subrip',
+					sizeBytes: SRT.length,
+					storageKey: `test/${crypto.randomUUID()}`,
+					contentHash: hashOf(SRT),
+					createdBy: humanId,
+					...overrides,
+				})
+				.returning()
+			return (file as { id: string }).id
+		}
+		/** The channel, the video's owner and the video's caption list, as Google would answer. */
+		const readsCaptions = (opts: { owner?: string | null; tracks?: object[] } = {}) =>
+			youtubeRead.mockImplementation(async (_ctx: unknown, read: { path: string }) => {
+				if (read.path === 'videos') {
+					const owner = opts.owner === undefined ? 'UC_own' : opts.owner
+					return { items: owner ? [{ snippet: { channelId: owner } }] : [] }
+				}
+				if (read.path === 'captions') return { items: opts.tracks ?? [TRACK] }
+				return OWN_CHANNEL
+			})
+		const upload = (extra: Record<string, unknown> = {}, id = fileId) =>
+			proposeYoutubeWrite(ctx(), common(), {
+				tool: 'upload_caption',
+				args: { video_id: 'vid12345', file_id: id, language: 'en', name: 'English', ...extra },
+			})
+		const replace = (extra: Record<string, unknown> = {}) =>
+			proposeYoutubeWrite(ctx(), common(), {
+				tool: 'replace_caption',
+				args: { video_id: 'vid12345', caption_id: 'cap1', file_id: fileId, ...extra },
+			})
+		const remove = (captionId = 'cap1') =>
+			proposeYoutubeWrite(ctx(), common(), {
+				tool: 'delete_caption',
+				args: { video_id: 'vid12345', caption_id: captionId },
+			})
+		const storageWith = (bytes: Buffer) => ({ get: vi.fn().mockResolvedValue(bytes) }) as never
+
+		beforeEach(async () => {
+			readsCaptions()
+			fileId = await addFile()
+		})
+
+		it('holds an upload with the language, file name and file hash, and calls Google for nothing', async () => {
+			const held = await upload()
+			const row = await rowOf(held.action_id)
+			expect(row?.kind).toBe('upload_caption')
+			expect(row?.targetVideoId).toBe('vid12345')
+			expect(row?.payload).toEqual({
+				videoId: 'vid12345',
+				language: 'en',
+				name: 'English',
+				isDraft: false,
+				fileId,
+				fileName: 'talk.srt',
+				sizeBytes: SRT.length,
+				contentHash: hashOf(SRT),
+			})
+			expect(execute).not.toHaveBeenCalled()
+		})
+
+		it('refuses a file that is not SRT or VTT, is unhashed, or is from another workspace', async () => {
+			await expect(upload({}, await addFile({ name: 'talk.mp3' }))).rejects.toMatchObject({
+				code: 'INVALID_INPUT',
+			})
+			await expect(upload({}, await addFile({ contentHash: null }))).rejects.toMatchObject({
+				code: 'INVALID_INPUT',
+			})
+			await expect(upload({}, crypto.randomUUID())).rejects.toMatchObject({
+				code: 'INVALID_INPUT',
+			})
+			expect(await db.select().from(youtubePendingActions)).toHaveLength(0)
+		})
+
+		it('refuses a video that is not on the connected channel, for all three', async () => {
+			readsCaptions({ owner: 'UC_other' })
+			for (const ask of [() => upload(), () => replace(), () => remove()]) {
+				await expect(ask()).rejects.toMatchObject({ code: 'PERMISSION_DENIED' })
+			}
+			expect(await db.select().from(youtubePendingActions)).toHaveLength(0)
+		})
+
+		it('holds a replace with the language and name read from YouTube, not from the agent', async () => {
+			readsCaptions({
+				tracks: [{ id: 'cap1', snippet: { language: 'nb', name: 'Norsk', isDraft: true } }],
+			})
+			const held = await replace()
+			expect((await rowOf(held.action_id))?.payload).toMatchObject({
+				captionId: 'cap1',
+				language: 'nb',
+				name: 'Norsk',
+				isDraft: true,
+				fileId,
+			})
+		})
+
+		it('refuses a replace or delete for a track the video does not have', async () => {
+			await expect(remove('nope')).rejects.toMatchObject({ code: 'NOT_FOUND' })
+			await expect(
+				proposeYoutubeWrite(ctx(), common(), {
+					tool: 'replace_caption',
+					args: { video_id: 'vid12345', caption_id: 'nope', file_id: fileId },
+				}),
+			).rejects.toMatchObject({ code: 'NOT_FOUND' })
+		})
+
+		it('holds a delete that names the track and its language', async () => {
+			const held = await remove()
+			const row = await rowOf(held.action_id)
+			expect(row?.kind).toBe('delete_caption')
+			expect(row?.payload).toEqual({
+				videoId: 'vid12345',
+				captionId: 'cap1',
+				language: 'en',
+				name: 'English',
+			})
+		})
+
+		it('sends the approved file and charges 400 units for an upload', async () => {
+			const held = await upload()
+			await approve(held.action_id)
+			const chargeQuota = vi.fn().mockResolvedValue(undefined)
+
+			expect(await run(held.action_id, { storage: storageWith(SRT), chargeQuota })).toMatchObject({
+				status: 'executed',
+			})
+			const request = execute.mock.calls[0]?.[0]
+			expect(request?.kind).toBe('upload_caption')
+			expect(Buffer.from(request?.caption?.bytes ?? []).equals(SRT)).toBe(true)
+			expect(chargeQuota).toHaveBeenCalledWith(expect.anything(), workspaceId, 400)
+		})
+
+		it('charges 450 units for a replace and 50 for a delete, which sends no file', async () => {
+			const chargeQuota = vi.fn().mockResolvedValue(undefined)
+			const replaced = await replace()
+			await approve(replaced.action_id)
+			await run(replaced.action_id, { storage: storageWith(SRT), chargeQuota })
+			expect(chargeQuota).toHaveBeenLastCalledWith(expect.anything(), workspaceId, 450)
+
+			const deleted = await remove()
+			await approve(deleted.action_id)
+			expect(await run(deleted.action_id, { chargeQuota })).toMatchObject({ status: 'executed' })
+			expect(chargeQuota).toHaveBeenLastCalledWith(expect.anything(), workspaceId, 50)
+			expect(execute.mock.calls[1]?.[0]?.caption).toBeUndefined()
+		})
+
+		it('does not send a caption file whose bytes changed after the request was made', async () => {
+			const held = await upload()
+			await approve(held.action_id)
+			expect(
+				await run(held.action_id, { storage: storageWith(Buffer.concat([SRT, Buffer.from('x')])) }),
+			).toEqual({ ran: true, status: 'failed', resultCode: 'file_changed' })
+			expect(execute).not.toHaveBeenCalled()
+		})
+
+		it('does not call Google when the quota is used up', async () => {
+			const held = await remove()
+			await approve(held.action_id)
+			const chargeQuota = vi
+				.fn()
+				.mockRejectedValue(new YoutubeError({ code: 'QUOTA_EXHAUSTED', message: 'used up' }))
+			expect(await run(held.action_id, { chargeQuota })).toMatchObject({
+				status: 'failed',
+				resultCode: 'quota_exhausted',
+			})
+			expect(chargeQuota).toHaveBeenCalledWith(expect.anything(), workspaceId, 50)
+			expect(execute).not.toHaveBeenCalled()
+		})
+	})
 })

@@ -59,12 +59,13 @@ describe('maskin-youtube tool server', () => {
 		trackYoutubeToolCalled.mockReset()
 	})
 
-	it('lists the read tools, the seven write tools and the three upload tools', async () => {
+	it('lists the read tools, the ten write tools and the three upload tools', async () => {
 		const { client } = await connect()
 		const { tools } = await client.listTools()
 		expect(tools.map((t) => t.name).sort()).toEqual([
 			'youtube__add_to_playlist',
 			'youtube__create_playlist',
+			'youtube__delete_caption',
 			'youtube__get_analytics',
 			'youtube__get_channel',
 			'youtube__get_own_captions',
@@ -77,10 +78,12 @@ describe('maskin-youtube tool server', () => {
 			'youtube__list_recent_videos',
 			'youtube__post_comment',
 			'youtube__publish_video',
+			'youtube__replace_caption',
 			'youtube__reply_to_comment',
 			'youtube__search',
 			'youtube__set_thumbnail',
 			'youtube__update_video_metadata',
+			'youtube__upload_caption',
 			'youtube__upload_video',
 		])
 	})
@@ -632,6 +635,15 @@ describe('youtube write tools', () => {
 		['post_comment', { video_id: 'v1', text: 'Nice one' }],
 		['reply_to_comment', { video_id: 'v1', comment_id: 'c1', text: 'Thanks' }],
 		['like', { video_id: 'v1' }],
+		[
+			'upload_caption',
+			{ video_id: 'v1', file_id: '22222222-2222-4222-8222-222222222222', language: 'en' },
+		],
+		[
+			'replace_caption',
+			{ video_id: 'v1', caption_id: 'cap1', file_id: '22222222-2222-4222-8222-222222222222' },
+		],
+		['delete_caption', { video_id: 'v1', caption_id: 'cap1' }],
 	] as const)('%s holds the change and returns the action id', async (tool, args) => {
 		proposeYoutubeWrite.mockResolvedValueOnce(HELD)
 		const { client, ctx } = await connect()
@@ -753,6 +765,9 @@ describe('youtube write tools', () => {
 			'post_comment',
 			'reply_to_comment',
 			'like',
+			'upload_caption',
+			'replace_caption',
+			'delete_caption',
 		]) {
 			expect(classifyTool('youtube', `youtube__${tool}`)).toBe('write')
 		}
