@@ -496,9 +496,10 @@ function tierExpression(tokens: string[], source: SearchSource): SQL {
 function scoreExpression(tokens: string[], source: SearchSource, hasDeep: boolean): SQL {
 	if (tokens.length === 0) return sql`0`
 	// Chats are ordered by tier, archive, unread and recency, never by score, so every chat scores the
-	// same: a title hit that fills the whole title. The score only places a chat among the other groups.
+	// same: just under a title that is the whole phrase. The score only places a chat among the other
+	// groups (a chat leads other rows of the same tier, a perfect title hit of another kind leads it).
 	if (source.unreadFirst) {
-		return sql`${tokens.length * (TITLE_HIT_WEIGHT + TITLE_COVERAGE_SCALE)}::int`
+		return sql`${tokens.length * (TITLE_HIT_WEIGHT + TITLE_COVERAGE_SCALE + TITLE_PHRASE_PREFIX_BONUS - 1)}::int`
 	}
 	const perToken = tokens.map((token) => {
 		const pattern = tokenIlikePattern(token)

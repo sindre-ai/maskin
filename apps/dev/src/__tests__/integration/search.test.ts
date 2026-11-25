@@ -522,7 +522,7 @@ describe('GET /api/search against real Postgres', () => {
 							// these capped candidates.
 							overScanCap: undefined,
 							candidates: (ctx: Parameters<typeof chats.candidates>[0]) => sql`
-								SELECT c2.id, c2.type, c2.title, c2.sub, c2.body, c2.status, c2.archived, c2.last_read, c2.updated_at,
+								SELECT c2.id, c2.type, c2.title, c2.rank_title, c2.sub, c2.body, c2.status, c2.archived, c2.last_read, c2.updated_at,
 									(row_number() OVER (ORDER BY c2.updated_at DESC NULLS LAST, c2.id) <= 1) AS deep
 								FROM (${chats.candidates(ctx)}) c2`,
 						}
