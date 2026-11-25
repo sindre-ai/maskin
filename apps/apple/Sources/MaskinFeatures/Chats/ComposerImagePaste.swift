@@ -3,10 +3,11 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-/// Lets the message field take a pasted picture. SwiftUI's `pasteDestination` is not available on iOS and the
+/// Lets the message field take a pasted picture or file. SwiftUI's `pasteDestination` is not available on iOS and the
 /// field only takes text, so the keyboard's "Paste from Screenshots" and the edit menu's Paste were dropped.
 /// Put this in the field's `.background`: it finds the text view behind the field, lets it accept images and
-/// hands each pasted picture to `onImage`. A paste that carries text stays a plain text paste.
+/// hands each pasted picture to `onImage` and each pasted file (a PDF, a document) to `onFile`. A paste that
+/// carries text stays a plain text paste.
 /// The text view is found beside this background first. On the iOS 18 selection field it does not sit there, so
 /// when the field takes focus the hook also looks for the text view that is the first responder, which is the
 /// one the edit menu belongs to.
@@ -15,6 +16,7 @@ import UniformTypeIdentifiers
 struct ComposerImagePasteHook: UIViewRepresentable {
 	var isFocused = false
 	let onImage: @MainActor (Data) -> Void
+	let onFile: @MainActor (URL) -> Void
 
 	func makeCoordinator() -> ComposerImagePasteHandler { ComposerImagePasteHandler() }
 
@@ -27,6 +29,7 @@ struct ComposerImagePasteHook: UIViewRepresentable {
 
 	func updateUIView(_ view: HookView, context: Context) {
 		context.coordinator.onImage = onImage
+		context.coordinator.onFile = onFile
 		view.attach(focused: isFocused)
 	}
 
@@ -91,6 +94,7 @@ struct ComposerImagePasteHook: UIViewRepresentable {
 @MainActor
 final class ComposerImagePasteHandler: NSObject, UITextPasteDelegate {
 	var onImage: @MainActor (Data) -> Void = { _ in }
+	var onFile: @MainActor (URL) -> Void = { _ in }
 	private weak var installed: UIView?
 
 	func install(on view: UIView) {
@@ -98,7 +102,7 @@ final class ComposerImagePasteHandler: NSObject, UITextPasteDelegate {
 		installed = view
 		// iOS 27.2 hands out the field's own configuration as read-only, so build a new one and set it.
 		let existing = view.pasteConfiguration?.acceptableTypeIdentifiers ?? [UTType.text.identifier]
-		view.pasteConfiguration = UIPasteConfiguration(acceptableTypeIdentifiers: existing + [UTType.image.identifier])
+		view.pasteConfiguration = UIPasteConfiguration(acceptableTypeIdentifiers: existing + [UTType.image.identifier, UTType.data.identifier])
 		if let textView = view as? UITextView {
 			textView.pasteDelegate = self
 		} else if let textField = view as? UITextField {
@@ -107,15 +111,23 @@ final class ComposerImagePasteHandler: NSObject, UITextPasteDelegate {
 		ComposerImagePasteOverride.apply(to: view, handler: self)
 	}
 
-	/// Hands every picture on the clipboard, in order, to `onImage`. Called from Paste in the edit menu, which iOS never prompts for.
-	func pasteImageFromClipboard() {
+	/// Hands every picture and file on the clipboard, in order, to `onImage` and `onFile`. Called from Paste in the edit
+	/// menu, which iOS never prompts for.
+	func pasteFromClipboard() {
 		let providers = UIPasteboard.general.itemProviders.filter {
-			$0.hasItemConformingToTypeIdentifier(UTType.image.identifier)
+			$0.hasItemConformingToTypeIdentifier(UTType.image.identifier) || ClipboardFiles.isFile($0)
 		}
 		guard !providers.isEmpty else { return }
-		let callback = onImage
+		let onImage = onImage
+		let onFile = onFile
 		Task { @MainActor in
-			for data in await ClipboardImages.load(providers).images { callback(data) }
+			for provider in providers {
+				if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+					for data in await ClipboardImages.load([provider]).images { onImage(data) }
+				} else if let url = await ClipboardFiles.copy(provider) {
+					onFile(url)
+				}
+			}
 		}
 	}
 
@@ -127,29 +139,45 @@ final class ComposerImagePasteHandler: NSObject, UITextPasteDelegate {
 		}
 	}
 
+	private func deliverFile(_ provider: NSItemProvider) {
+		let callback = onFile
+		Task { @MainActor in
+			if let url = await ClipboardFiles.copy(provider) { callback(url) }
+		}
+	}
+
 	func textPasteConfigurationSupporting(
 		_ textPasteConfigurationSupporting: any UITextPasteConfigurationSupporting, transform item: UITextPasteItem
 	) {
 		let provider = item.itemProvider
-		// Text, or text beside a picture: keep the normal paste.
-		guard provider.hasItemConformingToTypeIdentifier(UTType.image.identifier), !provider.canLoadObject(ofClass: NSString.self)
-		else {
+		// Text, or text beside a picture or file: keep the normal paste.
+		guard !provider.canLoadObject(ofClass: NSString.self) else {
 			item.setDefaultResult()
 			return
 		}
-		item.setNoResult()
-		deliver(provider)
+		if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+			item.setNoResult()
+			deliver(provider)
+		} else if ClipboardFiles.isFile(provider) {
+			item.setNoResult()
+			deliverFile(provider)
+		} else {
+			item.setDefaultResult()
+		}
 	}
 }
 
-/// Gives the live text input a subclass that also takes Paste while the clipboard holds a picture and no text.
-/// Text on the clipboard, with or without a picture, still goes to the input's own paste.
+/// Gives the live text input a subclass that also takes Paste while the clipboard holds a picture or a file and no
+/// text. Text on the clipboard, with or without a picture or file, still goes to the input's own paste.
 enum ComposerImagePasteOverride {
 	nonisolated(unsafe) private static var handlerKey: UInt8 = 0
 	private static let prefix = "MaskinImagePaste_"
 
-	private static var clipboardHoldsOnlyPicture: Bool {
-		UIPasteboard.general.hasImages && !UIPasteboard.general.hasStrings
+	/// Reads only what the pasteboard reports about itself (no "Allow Paste" prompt): a picture, or a file type.
+	private static var clipboardHoldsOnlyAttachments: Bool {
+		let board = UIPasteboard.general
+		guard !board.hasStrings else { return false }
+		return board.hasImages || ClipboardFiles.holdsFile(types: board.types)
 	}
 
 	static func apply(to view: UIView, handler: ComposerImagePasteHandler) {
@@ -172,14 +200,14 @@ enum ComposerImagePasteOverride {
 		let superPaste = unsafeBitCast(class_getMethodImplementation(base, pasteSelector), to: Paste.self)
 
 		let canPerform: @convention(block) (AnyObject, Selector, Any?) -> Bool = { object, action, sender in
-			if action == pasteSelector, clipboardHoldsOnlyPicture { return true }
+			if action == pasteSelector, clipboardHoldsOnlyAttachments { return true }
 			return superCanPerform(object, canPerformSelector, action, sender)
 		}
 		let paste: @convention(block) (AnyObject, Any?) -> Void = { object, sender in
-			if clipboardHoldsOnlyPicture,
+			if clipboardHoldsOnlyAttachments,
 				let handler = objc_getAssociatedObject(object, &handlerKey) as? ComposerImagePasteHandler
 			{
-				MainActor.assumeIsolated { handler.pasteImageFromClipboard() }
+				MainActor.assumeIsolated { handler.pasteFromClipboard() }
 				return
 			}
 			superPaste(object, pasteSelector, sender)

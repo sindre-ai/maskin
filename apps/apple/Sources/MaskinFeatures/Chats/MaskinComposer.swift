@@ -309,7 +309,10 @@ struct MaskinComposer: View {
 			.padding(.trailing, MaskinSpace.s1)
 			.frame(maxWidth: .infinity)
 			#if os(iOS)
-			.background { ComposerImagePasteHook(isFocused: focused) { model.attach([.image($0)]) } }
+			.background {
+				ComposerImagePasteHook(
+					isFocused: focused, onImage: { model.attach([.image($0)]) }, onFile: { model.attach([.file($0)]) })
+			}
 			#endif
 	}
 
@@ -647,7 +650,7 @@ struct MaskinComposer: View {
 					}
 					composer.photoItems = []
 				}
-			// Drop works on iPad and Mac. `pasteDestination` is Mac-only; on iPhone a pasted image reaches
+			// Drop works on iPad and Mac. `pasteDestination` is Mac-only; on iPhone a pasted image or file reaches
 			// the bar through `ComposerImagePasteHook` on the field, or the `+` menu's "Paste image" row.
 			#if os(macOS)
 			base
