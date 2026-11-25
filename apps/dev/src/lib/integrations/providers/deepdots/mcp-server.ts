@@ -237,7 +237,7 @@ export function createDeepdotsMcpServer(
 	register(
 		'deepdots_list_topics',
 		'topics',
-		'List Deepdots topics with how much feedback they carry and how that changed over 7 and 30 days. Returns items, has_more and next_skip.',
+		'List Deepdots topics with how many issues and values each carries (total_issues, total_values, total_combined). Pass a topic name from here to deepdots_list_issues. Returns items, has_more and next_skip.',
 		{ since: false, search: false },
 	)
 
