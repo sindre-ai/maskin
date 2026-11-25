@@ -209,23 +209,28 @@ export function createWordPressMcpServer(
 		inputSchema: S,
 		run: (creds: WordPressCredentials, input: z.infer<z.ZodObject<S>>) => Promise<Outcome>,
 	) => {
-		server.registerTool(
-			tool,
-			{ description, inputSchema },
-			async (input: z.infer<z.ZodObject<S>>) => {
-				const outcome = await runTool(ctx, tool, (creds) => run(creds, input))
-				await (ctx.trackToolCalled ?? trackIntegrationToolCalled)({
-					provider: WORDPRESS_SELF_HOSTED_PROVIDER,
-					tool,
-					outcome: outcome.errorCode ? 'error' : 'success',
-					errorCode: outcome.errorCode,
-					actorId: ctx.actorId,
-					sessionId: ctx.sessionId ?? null,
-					workspaceId: ctx.workspaceId,
-				})
-				return outcome.result
-			},
-		)
+		// The SDK's callback type is built from the schema's shape; the schema validates the input
+		// before it gets here, so the callback is typed from S directly.
+		const registerTool = server.registerTool.bind(server) as unknown as (
+			name: string,
+			config: { description: string; inputSchema: S },
+			cb: (input: unknown) => Promise<ToolResult>,
+		) => void
+		registerTool(tool, { description, inputSchema }, async (input) => {
+			const outcome = await runTool(ctx, tool, (creds) =>
+				run(creds, input as z.infer<z.ZodObject<S>>),
+			)
+			await (ctx.trackToolCalled ?? trackIntegrationToolCalled)({
+				provider: WORDPRESS_SELF_HOSTED_PROVIDER,
+				tool,
+				outcome: outcome.errorCode ? 'error' : 'success',
+				errorCode: outcome.errorCode,
+				actorId: ctx.actorId,
+				sessionId: ctx.sessionId ?? null,
+				workspaceId: ctx.workspaceId,
+			})
+			return outcome.result
+		})
 	}
 	const fetchImpl = ctx.fetchImpl
 
