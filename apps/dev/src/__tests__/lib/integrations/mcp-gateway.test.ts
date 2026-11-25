@@ -33,6 +33,7 @@ describe('GATEWAY_PROVIDERS', () => {
 			'box',
 			'brevo',
 			'brex',
+			'business-central',
 			'calendly',
 			'canva',
 			'clay',
