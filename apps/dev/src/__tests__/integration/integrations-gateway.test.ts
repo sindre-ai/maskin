@@ -277,6 +277,27 @@ describe('POST /api/integrations/:provider/gateway (Integration)', () => {
 		expect(await res.text()).toBe('upstream says no')
 	})
 
+	it('says so in a 502 when the provider refuses the token, even if the 401 carries a tool list', async () => {
+		const s = await setup()
+		fetchMock.mockResolvedValueOnce(
+			new Response(
+				JSON.stringify({ jsonrpc: '2.0', id: 1, result: { tools: [{ name: 'list_issues' }] } }),
+				{ status: 401, headers: { 'content-type': 'application/json' } },
+			),
+		)
+		const res = await post(appFor(s.reader.id), s.ws.id, {
+			jsonrpc: '2.0',
+			id: 1,
+			method: 'tools/list',
+		})
+		expect(res.status).toBe(502)
+		const text = JSON.stringify(await res.json())
+		expect(text).toContain('refused the sign-in')
+		expect(text).toContain('Settings')
+		expect(text).not.toContain('list_issues')
+		expect(text).not.toContain(PROVIDER_TOKEN)
+	})
+
 	it('answers 502 with a plain message when the provider cannot be reached', async () => {
 		const s = await setup()
 		fetchMock.mockRejectedValueOnce(new Error('ECONNRESET'))

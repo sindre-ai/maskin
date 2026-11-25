@@ -552,6 +552,24 @@ export async function proxyMcp(
 		return jsonRpcError(502, -32002, `${label} could not be reached. Try again shortly.`)
 	}
 	countToolCall(upstream.ok ? null : `HTTP_${upstream.status}`)
+	// A provider that refuses the token we sent. Google's hosted MCP answers 401 with its whole tool
+	// list in the body, so passing it on made the agent's client drop every tool while the server
+	// still showed as connected. Say what happened instead, and log the vendor's reason (never the token).
+	if (upstream.status === 401) {
+		logger.warn('Gateway upstream refused the provider token', {
+			workspaceId,
+			integrationId: integration.id,
+			provider,
+			method: rpc?.method ?? method,
+			wwwAuthenticate: upstream.headers.get('www-authenticate')?.slice(0, 300) ?? null,
+		})
+		await upstream.body?.cancel().catch(() => {})
+		return jsonRpcError(
+			502,
+			-32002,
+			`${label} refused the sign-in Maskin sent it (HTTP 401), so its tools are not available. Ask a workspace admin to reconnect it under Settings → Integrations.`,
+		)
+	}
 	// A draft saved in the customer's accounting system is counted once, when the vendor says it worked.
 	const draftConnector = toolName && allowed ? receiptDraftConnector(server.url, toolName) : null
 	if (draftConnector) {
