@@ -94,6 +94,26 @@ struct ComposerPasteTests {
 		#expect(try Data(contentsOf: loaded.files[0]) == Data([1, 2, 3]))
 	}
 
+	@Test("a spreadsheet and a zip paste too, each keeping its name and type")
+	func otherFileTypesPasteToo() async throws {
+		let sheetType = try #require(UTType(filenameExtension: "xlsx"))
+		let sheet = try fileProvider(named: "Budget.xlsx", type: sheetType, contents: Data([0x50, 0x4B, 3, 4]))
+		let archive = try fileProvider(named: "Receipts.zip", type: .zip, contents: Data([0x50, 0x4B, 5, 6]))
+		let unknown = try fileProvider(named: "Backup.dat", type: .data, contents: Data([9]))
+		#expect(ClipboardFiles.isFile(sheet))
+		#expect(ClipboardFiles.isFile(archive))
+		#expect(ClipboardFiles.isFile(unknown))
+		let loaded = await ClipboardFiles.load([sheet, archive, unknown])
+		#expect(loaded.unreadable == 0)
+		#expect(loaded.files.map(\.lastPathComponent) == ["Budget.xlsx", "Receipts.zip", "Backup.dat"])
+		let model = ChatComposerModel(uploader: Uploader(), selfActorID: "me")
+		model.attach(loaded.files.map { ComposerDrop.file($0) })
+		#expect(model.attachments.map(\.name) == ["Budget.xlsx", "Receipts.zip", "Backup.dat"])
+		#expect(model.attachments[0].mimeType == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+		#expect(model.attachments[1].mimeType == "application/zip")
+		#expect(model.attachments.allSatisfy { !$0.isImage })
+	}
+
 	@Test("a copied file with no extension gets the one its type has")
 	func addsMissingExtension() async throws {
 		let provider = try fileProvider(named: "Statement", type: .pdf, contents: Data([1]))
