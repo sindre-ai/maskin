@@ -168,6 +168,7 @@ import {
 import { serialize, serializeArray } from '../lib/serialize'
 import type { IntegrationConfig } from '../lib/types'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
+import { startConnectChecklistSession } from '../services/connect-checklist'
 import { type ResendDomainGetResponse, mapTopStatus } from '../services/resend-domain-verifier'
 
 type Env = {
@@ -2389,6 +2390,15 @@ app.openapi(callbackRoute, (async (c) => {
 			actorId: stateData.actorId,
 			integrationId,
 			authType: 'oauth',
+		})
+		// Same new-connect check as the event above, not the audit entry: that one is written on
+		// every callback, a refreshed login included.
+		void startConnectChecklistSession({
+			db,
+			workspaceId: stateData.workspaceId,
+			actorId: stateData.actorId,
+			integrationId,
+			provider: providerName,
 		})
 	}
 
