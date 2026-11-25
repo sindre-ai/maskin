@@ -61,7 +61,7 @@ struct ComposerPasteTests {
 		let source = folder.appendingPathComponent(name)
 		try contents.write(to: source)
 		let provider = NSItemProvider()
-		provider.suggestedName = "Statement"
+		provider.suggestedName = (name as NSString).deletingPathExtension
 		provider.registerFileRepresentation(forTypeIdentifier: type.identifier, fileOptions: [], visibility: .all) { done in
 			done(source, false, nil)
 			return nil
