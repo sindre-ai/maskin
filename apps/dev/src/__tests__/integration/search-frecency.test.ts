@@ -130,12 +130,12 @@ describe('search frecency against real Postgres', () => {
 
 	it('caps the bonus, so a huge count ranks like a capped one', async () => {
 		expect(FRECENCY_POINTS_PER_OPEN * 100).toBeGreaterThan(FRECENCY_MAX_BONUS)
-		// Both are over the cap (3 opens = 150 points is exactly the cap). Equal bonus, so the newer
-		// chat leads: a count of 1000 does not push the older one up.
+		// Both are over the cap (4 opens = 200 points, safely above it even after a moment of decay).
+		// Equal bonus, so the newer chat leads: a count of 1000 does not push the older one up.
 		const older = await seedChat('Plan alpha', 30)
 		const newer = await seedChat('Plan bravo', 1)
 		await setOpens(older.id, 1000)
-		await setOpens(newer.id, 3)
+		await setOpens(newer.id, 4)
 		expect(await ids('plan')).toEqual([newer.id, older.id])
 	})
 
@@ -200,13 +200,15 @@ describe('search frecency against real Postgres', () => {
 				jsonGet('/api/search/opens', { ...auth, 'X-Workspace-Id': workspaceId }),
 			)
 			expect(res.status).toBe(200)
-			expect(await res.json()).toEqual({
-				opens: [
-					{ entity_id: b, bonus: FRECENCY_MAX_BONUS },
-					{ entity_id: c, bonus: 75 },
-					{ entity_id: a, bonus: 50 },
-				],
-			})
+			const { opens } = (await res.json()) as { opens: Array<{ entity_id: string; bonus: number }> }
+			expect(opens.map((o) => o.entity_id)).toEqual([b, c, a])
+			expect(opens[0]?.bonus).toBe(FRECENCY_MAX_BONUS)
+			// The bonus is floored and decays a little between the write and the read, so it can be
+			// one point under the exact value.
+			expect(opens[1]?.bonus).toBeGreaterThanOrEqual(74)
+			expect(opens[1]?.bonus).toBeLessThanOrEqual(75)
+			expect(opens[2]?.bonus).toBeGreaterThanOrEqual(49)
+			expect(opens[2]?.bonus).toBeLessThanOrEqual(50)
 		})
 
 		it('rejects a body that is not a uuid', async () => {
