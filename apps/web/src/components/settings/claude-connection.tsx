@@ -14,7 +14,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { useDisconnectGrant, useOauthGrants } from '@/hooks/use-oauth'
 import { trackEvent } from '@/lib/analytics'
-import type { OauthGrantRow } from '@maskin/shared'
+import { MCP_OAUTH_CLAUDE_CLIENT_ID, type OauthGrantRow } from '@maskin/shared'
 import { ChevronDown, TriangleAlert } from 'lucide-react'
 import { useState } from 'react'
 
@@ -30,10 +30,22 @@ export function buildAddToClaudeUrl(mcpUrl: string): string {
 	return url.toString()
 }
 
+/**
+ * The person's connections for one app. Without a client id every connection counts, which is how
+ * the Claude tab reads while the ChatGPT tab is off. With one, only that app's connections.
+ */
+export function filterGrants(
+	grants: OauthGrantRow[] | undefined,
+	clientId?: string,
+): OauthGrantRow[] {
+	if (!grants) return []
+	return clientId ? grants.filter((grant) => grant.client_id === clientId) : grants
+}
+
 /** What the tab strip needs: whether the Claude tab reads Connected. */
-export function useClaudeConnected() {
+export function useClaudeConnected(split = false) {
 	const grants = useOauthGrants()
-	return (grants.data?.length ?? 0) > 0
+	return filterGrants(grants.data, split ? MCP_OAUTH_CLAUDE_CLIENT_ID : undefined).length > 0
 }
 
 function formatConnectedDate(iso: string): string {
@@ -114,7 +126,7 @@ function AddToClaude({ mcpUrl }: { mcpUrl: string }) {
 	)
 }
 
-function ConnectionRow({
+export function ConnectionRow({
 	grant,
 	onDisconnect,
 }: { grant: OauthGrantRow; onDisconnect: (grant: OauthGrantRow) => void }) {
@@ -159,12 +171,13 @@ function ConnectionRow({
 	)
 }
 
-function DisconnectDialog({
+export function DisconnectDialog({
 	grant,
+	appName,
 	onClose,
-}: { grant: OauthGrantRow | null; onClose: () => void }) {
-	const disconnect = useDisconnectGrant()
-	const name = grant?.client_name ?? 'Claude'
+}: { grant: OauthGrantRow | null; appName: string; onClose: () => void }) {
+	const name = grant?.client_name ?? appName
+	const disconnect = useDisconnectGrant(name)
 	const close = () => {
 		disconnect.reset()
 		onClose()
@@ -207,9 +220,38 @@ function DisconnectDialog({
 	)
 }
 
-export function ClaudeTabPanel({ mcpUrl }: { mcpUrl: string }) {
-	const grants = useOauthGrants()
+/** The connected state of an app tab: one row per workspace, the notes and the Disconnect dialog. */
+export function ConnectionList({ rows, appName }: { rows: OauthGrantRow[]; appName: string }) {
 	const [target, setTarget] = useState<OauthGrantRow | null>(null)
+	return (
+		<div className="space-y-3">
+			<ul className="space-y-2">
+				{rows.map((grant) => (
+					<ConnectionRow key={grant.id} grant={grant} onDisconnect={setTarget} />
+				))}
+			</ul>
+			{rows.length > 1 && (
+				<p className="text-xs text-muted-foreground">
+					One row per workspace. Connecting the same app again to a workspace replaces the old
+					connection.
+				</p>
+			)}
+			<p className="text-xs text-muted-foreground">
+				Each app acts as you, with your access in the workspace shown. Disconnect to end it right
+				away. Removing Maskin inside the app may not end access. Disconnect here too.
+			</p>
+			<DisconnectDialog grant={target} appName={appName} onClose={() => setTarget(null)} />
+		</div>
+	)
+}
+
+/** Newest connection first. */
+export function sortNewestFirst(rows: OauthGrantRow[]): OauthGrantRow[] {
+	return [...rows].sort((a, b) => b.created_at.localeCompare(a.created_at))
+}
+
+export function ClaudeTabPanel({ mcpUrl, split = false }: { mcpUrl: string; split?: boolean }) {
+	const grants = useOauthGrants()
 
 	if (grants.isPending) {
 		return (
@@ -220,30 +262,12 @@ export function ClaudeTabPanel({ mcpUrl }: { mcpUrl: string }) {
 		)
 	}
 
-	// Newest connection first.
-	const rows = [...(grants.data ?? [])].sort((a, b) => b.created_at.localeCompare(a.created_at))
+	const rows = sortNewestFirst(
+		filterGrants(grants.data, split ? MCP_OAUTH_CLAUDE_CLIENT_ID : undefined),
+	)
 
 	if (rows.length > 0) {
-		return (
-			<div className="space-y-3">
-				<ul className="space-y-2">
-					{rows.map((grant) => (
-						<ConnectionRow key={grant.id} grant={grant} onDisconnect={setTarget} />
-					))}
-				</ul>
-				{rows.length > 1 && (
-					<p className="text-xs text-muted-foreground">
-						One row per workspace. Connecting the same app again to a workspace replaces the old
-						connection.
-					</p>
-				)}
-				<p className="text-xs text-muted-foreground">
-					Each app acts as you, with your access in the workspace shown. Disconnect to end it right
-					away. Removing Maskin inside the app may not end access. Disconnect here too.
-				</p>
-				<DisconnectDialog grant={target} onClose={() => setTarget(null)} />
-			</div>
-		)
+		return <ConnectionList rows={rows} appName="Claude" />
 	}
 
 	return (

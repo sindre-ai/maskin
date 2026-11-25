@@ -1,8 +1,10 @@
+import { ChatGptTabPanel, useChatGptConnected } from '@/components/settings/chatgpt-connection'
 import { ClaudeTabPanel, useClaudeConnected } from '@/components/settings/claude-connection'
 import { Steps } from '@/components/settings/mcp-steps'
 import { CodeBlock } from '@/components/shared/code-block'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { trackEvent } from '@/lib/analytics'
 import { getApiKey } from '@/lib/auth'
 import { TriangleAlert } from 'lucide-react'
@@ -10,8 +12,8 @@ import { useEffect, useRef, useState } from 'react'
 
 type PanelTab = 'claude-code' | 'cursor' | 'vscode' | 'claude-desktop' | 'other'
 
-// The Claude tab sits in front of these.
-type TabValue = 'claude' | PanelTab
+// The Claude tab, then the ChatGPT tab (behind chatgpt-mcp-tab), sit in front of these.
+type TabValue = 'claude' | 'chatgpt' | PanelTab
 
 const tabs: { value: PanelTab; label: string }[] = [
 	{ value: 'claude-code', label: 'Claude Code' },
@@ -179,12 +181,17 @@ function NoKeyNotice() {
 }
 
 export function McpConnectionSection({ workspaceId }: { workspaceId: string }) {
-	const claudeConnected = useClaudeConnected()
+	// One read, here: with the flag on the Claude tab lists only Claude connections and ChatGPT gets its own.
+	const chatGptTab = useFeatureFlag('chatgpt-mcp-tab')
+	const claudeConnected = useClaudeConnected(chatGptTab)
+	const chatGptConnected = useChatGptConnected()
 	const [chosenTab, setChosenTab] = useState<TabValue | null>(null)
 	const listRef = useRef<HTMLDivElement>(null)
 
-	// The Claude tab opens first, until the person picks another.
-	const activeTab: TabValue = chosenTab ?? 'claude'
+	// The Claude tab opens first, until the person picks another. A ChatGPT choice falls back to Claude
+	// if the flag is off.
+	const activeTab: TabValue =
+		chosenTab === 'chatgpt' && !chatGptTab ? 'claude' : (chosenTab ?? 'claude')
 
 	// getApiKey is read on each render and again at click time for the install links, so the
 	// key is never held in state and never rendered into an href.
@@ -192,7 +199,7 @@ export function McpConnectionSection({ workspaceId }: { workspaceId: string }) {
 	const hasKey = !!storedKey
 	const mcpUrl = getMcpUrl()
 	const panels = buildPanels(mcpUrl, storedKey ?? KEY_PLACEHOLDER, workspaceId)
-	const panel = activeTab === 'claude' ? null : panels[activeTab]
+	const panel = activeTab === 'claude' || activeTab === 'chatgpt' ? null : panels[activeTab]
 
 	// On a narrow screen the strip scrolls; keep the selected tab in view so the next one peeks out.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: re-run when the active tab changes
@@ -232,6 +239,20 @@ export function McpConnectionSection({ workspaceId }: { workspaceId: string }) {
 								{claudeConnected ? 'Connected' : 'Sign in'}
 							</span>
 						</TabsTrigger>
+						{chatGptTab && (
+							<TabsTrigger value="chatgpt">
+								ChatGPT
+								<span
+									className={
+										chatGptConnected
+											? 'eyebrow ml-1.5 rounded bg-status-live-bg px-1.5 py-0.5 text-status-live-text!'
+											: 'eyebrow ml-1.5 rounded bg-brand-subtle px-1.5 py-0.5 text-brand-subtle-foreground!'
+									}
+								>
+									{chatGptConnected ? 'Connected' : 'Sign in'}
+								</span>
+							</TabsTrigger>
+						)}
 						{tabs.map((tab) => (
 							<TabsTrigger key={tab.value} value={tab.value}>
 								{tab.label}
@@ -239,8 +260,10 @@ export function McpConnectionSection({ workspaceId }: { workspaceId: string }) {
 						))}
 					</TabsList>
 					<TabsContent value={activeTab} className="mt-0 space-y-4 p-4">
-						{panel === null ? (
-							<ClaudeTabPanel mcpUrl={mcpUrl} />
+						{activeTab === 'chatgpt' ? (
+							<ChatGptTabPanel mcpUrl={mcpUrl} />
+						) : panel === null ? (
+							<ClaudeTabPanel mcpUrl={mcpUrl} split={chatGptTab} />
 						) : (
 							<>
 								{!hasKey && <NoKeyNotice />}
