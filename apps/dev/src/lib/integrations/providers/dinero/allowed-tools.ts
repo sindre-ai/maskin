@@ -1,5 +1,6 @@
 import type { IntegrationConfig } from '../../../types'
 import { DINERO_BRIDGE_BOOKING_TOOL_NAMES, DINERO_BRIDGE_DRAFT_TOOL_NAMES } from './bridge'
+import { DINERO_APP_TOOL_NAMES } from './vat-check-tool'
 
 /**
  * The only tools an agent may use on Dinero's hosted server (48 tools, read from the live list on
@@ -75,6 +76,8 @@ export const DINERO_DRAFT_ONLY_TOOLS: readonly string[] = [
 	'delete_purchase_credit_note_draft',
 	// Public API tools the gateway answers itself (./bridge.ts): a read, a draft edit and a draft delete.
 	...DINERO_BRIDGE_DRAFT_TOOL_NAMES,
+	// Answered from our own review log, never sent to Dinero: get_vat_report only reads.
+	...DINERO_APP_TOOL_NAMES,
 ]
 
 /**
