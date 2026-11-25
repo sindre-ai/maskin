@@ -65,6 +65,15 @@
 			"message": "Let us chat tomorrow"
 		},
 		{
+			"id": "new-message",
+			"title": "New chat",
+			"people": ["Ida"],
+			"archived": false,
+			"unread": false,
+			"minutesAgo": 1,
+			"message": "Let us chat later"
+		},
+		{
 			"id": "new-open",
 			"title": "New chat",
 			"people": ["Ida"],
@@ -122,8 +131,17 @@
 	"cases": [
 		{
 			"query": "chat",
-			"why": "Whole word first, unread before read, an archived chat after the open ones of its tier, then word starts, letters inside a word and message hits. A chat still on the default title is not found by its title.",
-			"expected": ["weekly", "redesign", "old-chat", "chatty", "chatbot", "inword", "mention"]
+			"why": "Whole word first, unread before read, an archived chat after the open ones of its tier, then word starts, letters inside a word and message hits. A chat still on the default title is not found by its title, only by a message, so it ranks with the message hits.",
+			"expected": [
+				"weekly",
+				"redesign",
+				"old-chat",
+				"chatty",
+				"chatbot",
+				"inword",
+				"new-message",
+				"mention"
+			]
 		},
 		{
 			"query": "relay",

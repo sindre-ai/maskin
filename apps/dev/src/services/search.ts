@@ -475,14 +475,15 @@ function wordPatterns(token: string) {
  */
 function tierExpression(tokens: string[], source: SearchSource): SQL {
 	if (tokens.length === 0) return sql`0`
+	const title = titleExpr(source)
 	const perToken = tokens.map((token) => {
 		const pattern = tokenIlikePattern(token)
 		const { start, whole } = wordPatterns(token)
 		const sub = (condition: SQL) => (source.rankSub ? sql` or ${condition}` : sql``)
 		return sql`(case
-			when s.title ~* ${whole}${sub(sql`s.sub ~* ${whole}`)} then ${TIER_WHOLE_WORD}::int
-			when s.title ~* ${start}${sub(sql`s.sub ~* ${start}`)} then ${TIER_WORD_START}::int
-			when s.title ilike ${pattern}${sub(sql`s.sub ilike ${pattern}`)} then ${TIER_CONTAINS}::int
+			when ${title} ~* ${whole}${sub(sql`s.sub ~* ${whole}`)} then ${TIER_WHOLE_WORD}::int
+			when ${title} ~* ${start}${sub(sql`s.sub ~* ${start}`)} then ${TIER_WORD_START}::int
+			when ${title} ilike ${pattern}${sub(sql`s.sub ilike ${pattern}`)} then ${TIER_CONTAINS}::int
 			else ${TIER_BODY_ONLY}::int end)`
 	})
 	return sql`greatest(${sql.join(perToken, sql`, `)})`
