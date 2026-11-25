@@ -299,6 +299,15 @@ export const FLAGS = {
 	 */
 	WORK_INTEGRATIONS: 'work-integrations',
 	/**
+	 * Gates connecting a self-hosted WordPress site (task
+	 * [Connect self-hosted WordPress sites](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/a6f93d68-34b7-42f1-a5a9-5f9811013dc9)).
+	 * Actor-scoped, read by the integrations routes: off means WordPress (self-hosted) is missing from
+	 * GET /api/integrations/providers and its connect call is refused, so Settings shows nothing new.
+	 * A workspace that is already connected keeps working through its tool server. Retire once a real
+	 * customer site has connected and it is on for everyone.
+	 */
+	WORDPRESS_SELF_HOSTED: 'wordpress-self-hosted',
+	/**
 	 * Gates the ChatGPT tab in Settings, MCP (task
 	 * [Add ChatGPT tab to MCP settings](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/ed2ca427-6de9-46fe-8054-d42941bdab1e)).
 	 * Frontend only: read once in McpConnectionSection with useFeatureFlag. Off means Settings looks

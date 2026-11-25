@@ -60,6 +60,17 @@ const READ_TOOLS: Record<string, ReadonlySet<string>> = {
 		'youtube__list_comments',
 		'youtube__get_own_captions',
 	]),
+	// Self-hosted WordPress, served by Maskin. Curated, so a tool added later is a write until it is
+	// listed here. The four create and edit tools are writes by omission.
+	'wordpress-self-hosted': new Set([
+		'wordpress_check_connection',
+		'wordpress_list_posts',
+		'wordpress_get_post',
+		'wordpress_list_pages',
+		'wordpress_get_page',
+		'wordpress_list_media',
+		'wordpress_get_media',
+	]),
 	// Outlook calendar, served by Maskin. Curated, so a tool added later is a write until it is listed here.
 	microsoft: new Set(['outlook_list_events', 'outlook_get_event', 'outlook_search_events']),
 	// Azure DevOps (core, repos, wit and pipelines toolsets), from Microsoft's published tool list

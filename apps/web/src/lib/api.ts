@@ -1067,6 +1067,10 @@ export const api = {
 				// Deepdots signs in with these (the connect route stores nothing if they fail).
 				email?: string
 				password?: string
+				// A self-hosted WordPress site signs in with these (nothing is stored if they fail).
+				site_url?: string
+				username?: string
+				application_password?: string
 			},
 		) =>
 			request<{

@@ -142,6 +142,7 @@ import {
 	slackInteractiveDeliveryId,
 } from '../lib/integrations/providers/slack/interactive'
 import { UNICONTA_PROVIDER } from '../lib/integrations/providers/uniconta/config'
+import { WORDPRESS_SELF_HOSTED_PROVIDER } from '../lib/integrations/providers/wordpress-self-hosted/config'
 import { WORK_INTEGRATIONS_PROVIDERS } from '../lib/integrations/providers/work-integrations'
 import { ZENDESK_PROVIDER } from '../lib/integrations/providers/zendesk/config'
 import { ZOOM_PROVIDER } from '../lib/integrations/providers/zoom/config'
@@ -272,7 +273,13 @@ app.openapi(listIntegrationsRoute, (async (c) => {
 		let missingScopes: string[] = []
 		let grantedScopes: string[] = []
 		// OAuth scopes only mean something for a registered provider; a saved key or login has none.
-		if (rest.status === 'active' && credentials && rest.providerMode === 'registered') {
+		if (
+			rest.status === 'active' &&
+			credentials &&
+			rest.providerMode === 'registered' &&
+			// An envelope credential (no OAuth scopes) is not readable with the single-key decrypt.
+			!_dekCiphertext
+		) {
 			try {
 				const provider = getProvider(rest.provider)
 				if (provider) {
@@ -342,6 +349,7 @@ const FLAGGED_PROVIDERS: ReadonlyMap<string, FlagId> = new Map([
 	]),
 	[UNICONTA_PROVIDER, FLAGS.UNICONTA_CONNECT],
 	[BUSINESS_CENTRAL_PROVIDER, FLAGS.BUSINESS_CENTRAL_CONNECT],
+	[WORDPRESS_SELF_HOSTED_PROVIDER, FLAGS.WORDPRESS_SELF_HOSTED],
 	...OWN_APP_PROVIDERS.map((name): [string, FlagId] => [name, FLAGS.OWN_APP_INTEGRATIONS]),
 	...WORK_INTEGRATIONS_PROVIDERS.map((name): [string, FlagId] => [name, FLAGS.WORK_INTEGRATIONS]),
 ])
