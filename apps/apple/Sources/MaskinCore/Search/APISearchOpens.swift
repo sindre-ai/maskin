@@ -1,4 +1,5 @@
 import Foundation
+import MaskinAPI
 
 /// What search needs to rank by what the person opened before (frecency). The server keeps one
 /// decayed open count per person and result; the phone ranks on the device, so it reads the ranking
