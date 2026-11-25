@@ -125,7 +125,7 @@ describe('ChatGPT tab in Settings, MCP', () => {
 		render(<McpConnectionSection workspaceId="ws-1" />)
 		await user.click(screen.getByRole('tab', { name: /ChatGPT/ }))
 		expect(screen.getByText("We couldn't check whether ChatGPT is connected.")).toBeInTheDocument()
-		expect(screen.getByText(/Add custom MCP server/)).toBeInTheDocument()
+		expect(screen.getByText(/then choose Add custom MCP server/)).toBeInTheDocument()
 		await user.click(screen.getByRole('button', { name: 'Try again' }))
 		expect(refetch).toHaveBeenCalled()
 	})
