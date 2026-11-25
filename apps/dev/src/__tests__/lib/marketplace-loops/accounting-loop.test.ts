@@ -27,7 +27,7 @@ describe('Accounting loop definition', () => {
 		expect(ACCOUNTING_LOOP.slug).toBe('accounting-loop')
 		expect(ACCOUNTING_LOOP.name).toBe('Accounting')
 		expect(ACCOUNTING_LOOP.useCase).toBe('Finance')
-		expect(ACCOUNTING_LOOP.version).toBe('1.2.0')
+		expect(ACCOUNTING_LOOP.version).toBe('1.2.1')
 		expect(ACCOUNTING_LOOP.description.length).toBeGreaterThan(0)
 	})
 
@@ -37,6 +37,19 @@ describe('Accounting loop definition', () => {
 		expect(settings.closeCondition).toMatch(/draft voucher/)
 		expect(settings.tags).toEqual(['Finance'])
 		expect(settings.targets).toBeUndefined()
+	})
+
+	it('names no adviser or accountant gate anywhere in the shipped text', () => {
+		const settings = loopSettingsSchema.parse(ACCOUNTING_LOOP.settings)
+		const all = [
+			ACCOUNTING_LOOP.description,
+			settings.entryCondition,
+			settings.closeCondition,
+			...actorTexts(),
+			...triggerTexts(),
+			...skillTexts(),
+		].join('\n')
+		expect(all).not.toMatch(/advis[eo]r|accountant/i)
 	})
 
 	it('ships one actor, two triggers and three skills, no duplicates', () => {
@@ -196,13 +209,13 @@ describe('Accounting loop definition', () => {
 			for (const row of rows) {
 				const parts = row.split(' | ')
 				expect(['flag', 'note']).toContain(parts[1])
-				expect(['sourced', 'confirm with adviser']).toContain(parts[2])
+				expect(['sourced', 'unsourced']).toContain(parts[2])
 				expect(row).toMatch(/Source: .+\. \| Owner line: .+/)
 			}
 		})
 
-		it('flags confirm-with-adviser rules instead of passing them', () => {
-			const unsourced = ruleRows().filter((r) => r.includes(' | confirm with adviser | '))
+		it('flags unsourced rules instead of passing them', () => {
+			const unsourced = ruleRows().filter((r) => r.includes(' | unsourced | '))
 			expect(unsourced.length).toBe(5)
 			expect(ruleCheck()).toMatch(/flags whenever the situation it describes is present/)
 			expect(ruleCheck()).toMatch(/not flagged by a rule just because the rule is unsourced/)
