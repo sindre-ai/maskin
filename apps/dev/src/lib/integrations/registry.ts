@@ -137,6 +137,7 @@ import { config as vantaConfig } from './providers/vanta/config'
 import { config as vercelConfig } from './providers/vercel/config'
 import { config as webflowConfig } from './providers/webflow/config'
 import { config as wixConfig } from './providers/wix/config'
+import { config as wordpressSelfHostedConfig } from './providers/wordpress-self-hosted/config'
 import { config as xeroConfig } from './providers/xero/config'
 import { config as youtubeConfig } from './providers/youtube/config'
 import { revokeYoutubeGrant } from './providers/youtube/disconnect'
@@ -337,6 +338,12 @@ providers.set('youtube', {
 
 providers.set('zoom', {
 	config: zoomConfig,
+})
+
+// wordpress-self-hosted — connects from a site address, username and application password form
+// (routes/integrations-wordpress-self-hosted.ts), mounted before the generic /api/integrations routes.
+providers.set('wordpress-self-hosted', {
+	config: wordpressSelfHostedConfig,
 })
 
 providers.set('salesforce', {

@@ -16,6 +16,7 @@ import {
 	useCompleteIntegration,
 	useConnectDeepdots,
 	useConnectIntegration,
+	useConnectWordPress,
 	useDeleteOAuthApp,
 	useLinkGithubInstallation,
 	useLinkableGithubInstallations,
@@ -214,6 +215,110 @@ export function DeepdotsConnectDialog({
 							type="submit"
 							disabled={!email.trim() || !password || connect.isPending || !canWrite}
 						>
+							{connect.isPending ? 'Checking…' : 'Connect'}
+						</Button>
+					</div>
+				</form>
+			</DialogContent>
+		</Dialog>
+	)
+}
+
+// A self-hosted WordPress site signs in with the site address, a username and an application
+// password (WordPress 5.6 or newer, https). Maskin checks the site and the sign-in on the spot and
+// refuses a wrong one, so what is stored always worked. New posts and pages are always drafts.
+export function WordPressConnectDialog({
+	workspaceId,
+	open,
+	onClose,
+}: {
+	workspaceId: string
+	open: boolean
+	onClose: () => void
+}) {
+	const connect = useConnectWordPress(workspaceId)
+	const canWrite = useCanWrite()
+	const [siteUrl, setSiteUrl] = useState('')
+	const [username, setUsername] = useState('')
+	const [password, setPassword] = useState('')
+
+	const close = () => {
+		setSiteUrl('')
+		setUsername('')
+		setPassword('')
+		connect.reset()
+		onClose()
+	}
+	const ready = siteUrl.trim() && username.trim() && password
+	const handleConnect = () => {
+		if (!canWrite || !ready) return
+		connect.mutate(
+			{ site_url: siteUrl.trim(), username: username.trim(), application_password: password },
+			{ onSuccess: close },
+		)
+	}
+
+	return (
+		<Dialog open={open} onOpenChange={(next) => !next && close()}>
+			<DialogContent>
+				<DialogHeader>
+					<DialogTitle>Connect a WordPress site</DialogTitle>
+					<DialogDescription>
+						For a site you host yourself. Create an application password under Users, Profile in
+						WordPress, and paste it here with the username. The site must be reachable over https.
+						Some hosts and security plugins block the REST address or application passwords. New
+						posts and pages agents write are always drafts. We suggest a user made only for Maskin,
+						for example an Editor.
+					</DialogDescription>
+				</DialogHeader>
+				<form
+					className="space-y-3"
+					onSubmit={(e) => {
+						e.preventDefault()
+						handleConnect()
+					}}
+				>
+					<div className="space-y-2">
+						<Label htmlFor="wordpress-site">Site address</Label>
+						<Input
+							id="wordpress-site"
+							type="url"
+							autoComplete="off"
+							value={siteUrl}
+							onChange={(e) => setSiteUrl(e.target.value)}
+							placeholder="https://www.example.com"
+						/>
+					</div>
+					<div className="space-y-2">
+						<Label htmlFor="wordpress-username">Username</Label>
+						<Input
+							id="wordpress-username"
+							autoComplete="off"
+							value={username}
+							onChange={(e) => setUsername(e.target.value)}
+						/>
+					</div>
+					<div className="space-y-2">
+						<Label htmlFor="wordpress-password">Application password</Label>
+						<Input
+							id="wordpress-password"
+							type="password"
+							autoComplete="new-password"
+							value={password}
+							onChange={(e) => setPassword(e.target.value)}
+							placeholder="abcd efgh ijkl mnop qrst uvwx"
+						/>
+					</div>
+					{connect.isError && (
+						<p role="alert" className="text-sm text-destructive">
+							{connect.error.message}
+						</p>
+					)}
+					<div className="flex justify-end gap-2">
+						<Button type="button" variant="ghost" onClick={close}>
+							Cancel
+						</Button>
+						<Button type="submit" disabled={!ready || connect.isPending || !canWrite}>
 							{connect.isPending ? 'Checking…' : 'Connect'}
 						</Button>
 					</div>

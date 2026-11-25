@@ -85,6 +85,8 @@ import integrationsOAuthAppRoutes from './routes/integrations-oauth-app'
 import integrationsResendRoutes from './routes/integrations-resend'
 import integrationsSkjaldConnectRoutes from './routes/integrations-skjald-connect'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
+import integrationsWordpressSelfHostedRoutes from './routes/integrations-wordpress-self-hosted'
+import integrationsWordpressSelfHostedMcpRoutes from './routes/integrations-wordpress-self-hosted-mcp'
 import integrationsYoutubeMcpRoutes from './routes/integrations-youtube-mcp'
 import keychainAdminRoutes from './routes/keychain-admin'
 import liveActivitiesRoutes from './routes/live-activities'
@@ -622,6 +624,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/integrations/skjald', integrationsSkjaldConnectRoutes)
 	// Deepdots connects from an email and password form, not an OAuth redirect.
 	app.route('/api/integrations/deepdots', integrationsDeepdotsRoutes)
+	// A self-hosted WordPress site connects from a site address and application password form.
+	app.route('/api/integrations/wordpress-self-hosted', integrationsWordpressSelfHostedRoutes)
 	app.route('/api/integrations/linkedin-unipile/mcp', integrationsLinkedinMcpRoutes)
 	app.route('/api/integrations/linkedin-unipile', integrationsLinkedinRoutes)
 	// google-meet MCP surface — same trie-ordering constraint as linkedin's:
@@ -634,6 +638,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// generic /api/integrations/{provider}/... routes never see these paths.
 	app.route('/api/integrations/google-drive', integrationsGoogleDriveRoutes)
 	app.route('/api/integrations/deepdots/mcp', integrationsDeepdotsMcpRoutes)
+	app.route('/api/integrations/wordpress-self-hosted/mcp', integrationsWordpressSelfHostedMcpRoutes)
 	app.route('/api/integrations/microsoft/mcp', integrationsMicrosoftMcpRoutes)
 	app.route('/api/integrations/google-search-console/mcp', integrationsGoogleSearchConsoleMcpRoutes)
 	// youtube MCP surface — same ordering constraint as google-meet's above.

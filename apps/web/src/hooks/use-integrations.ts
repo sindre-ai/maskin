@@ -84,6 +84,18 @@ export function useConnectDeepdots(workspaceId: string) {
 	})
 }
 
+/** Connect a self-hosted WordPress site: the backend checks the site and the login and stores them only if both work. */
+export function useConnectWordPress(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (input: { site_url: string; username: string; application_password: string }) =>
+			api.integrations.connect(workspaceId, 'wordpress-self-hosted', input),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		},
+	})
+}
+
 /** Whether this workspace saved its own sign-in app for a tool, and its app id. */
 export function useOAuthApp(
 	workspaceId: string,
