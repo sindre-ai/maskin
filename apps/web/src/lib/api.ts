@@ -900,6 +900,11 @@ export const api = {
 				workspaceId,
 			}),
 	},
+	dineroBooking: {
+		get: (workspaceId: string) => request<DineroBookingState>('/dinero-booking', { workspaceId }),
+		set: (workspaceId: string, body: { enabled: boolean; acknowledged?: boolean }) =>
+			request<DineroBookingState>('/dinero-booking', { method: 'PUT', body, workspaceId }),
+	},
 	sendPermissions: {
 		get: (workspaceId: string) =>
 			request<SendPermissionsView>('/send-permissions', { workspaceId }),
@@ -3953,6 +3958,13 @@ interface InstalledLoopForkResponse {
 	installedAt: string | null
 	updatedAt: string | null
 	detached: { actors: number; triggers: number; skills: number; integrations: number }
+}
+
+export interface DineroBookingState {
+	enabled: boolean
+	statement: string
+	set_by: string | null
+	set_at: string | null
 }
 
 export interface DineroReviewLine {

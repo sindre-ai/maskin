@@ -1,3 +1,4 @@
+import { DineroBookingCard } from '@/components/settings/dinero-booking-card'
 import { DineroReviewSection } from '@/components/settings/dinero-review-section'
 import { RouteError } from '@/components/shared/route-error'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
@@ -20,6 +21,7 @@ function DineroReviewPage() {
 
 	return (
 		<div className="flex flex-col gap-6">
+			<DineroBookingCard workspaceId={workspaceId} />
 			<DineroReviewSection workspaceId={workspaceId} />
 		</div>
 	)
