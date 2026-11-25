@@ -62,9 +62,9 @@ export function ProviderCard({
 	const [open, setOpen] = useState(defaultOpen)
 	if (logo && layout === 'row' && tone === 'available') {
 		return (
-			<div className="flex items-center gap-3 border-b border-border-subtle py-3">
+			<div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border-subtle py-3">
 				{logo}
-				<div className="min-w-0 flex-1">
+				<div className="min-w-0 flex-1 basis-28">
 					<div className="flex items-center gap-2">
 						<p className="truncate text-[15px] font-semibold text-foreground">{name}</p>
 						{badge}
