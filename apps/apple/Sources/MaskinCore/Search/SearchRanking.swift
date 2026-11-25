@@ -1,31 +1,25 @@
 import Foundation
 
-/// The one rule that orders search hits: a title match first, then (for chats) a participant
-/// match, then a match only in the preview text. Pure, so the phone and the TV list agree.
+/// The one rule that orders search hits: the match tier first, then (for chats) unread before
+/// read, then newest first. Pure, so the phone and the TV list agree.
 public enum SearchRanking {
-	public enum Tier: Int, Sendable, Comparable {
-		case title = 0
-		case participants = 1
-		case preview = 2
-
-		public static func < (lhs: Tier, rhs: Tier) -> Bool { lhs.rawValue < rhs.rawValue }
-	}
-
-	/// Where `query` hits `result`. An empty query (only people picked) ranks everything alike.
-	/// Only chats have participants in the subtitle; for other kinds the subtitle is a status or
-	/// file type, so a hit there counts as a preview hit.
-	public static func tier(of result: SearchResult, query: String) -> Tier {
+	/// Lower is better. A chat is ranked like everywhere else (`ChatSearchOrder.tier`) over its title
+	/// and the names of its people, the subtitle; a chat on the placeholder title passes no title.
+	/// For other kinds 0 is a hit in the title and 3 anything else. An empty query (only people
+	/// picked) ranks everything alike.
+	public static func tier(of result: SearchResult, query: String) -> Int {
 		let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
-		if needle.isEmpty { return .title }
-		if SearchHighlight.matches(needle, in: result.title) { return .title }
-		if result.kind == .chat, SearchHighlight.matches(needle, in: result.subtitle) { return .participants }
-		return .preview
+		if needle.isEmpty { return 0 }
+		guard result.kind == .chat else { return SearchHighlight.matches(needle, in: result.title) ? 0 : 3 }
+		let people = result.subtitle.components(separatedBy: ", ")
+		return ChatSearchOrder.tier(names: (result.hasPlaceholderTitle ? [] : [result.title]) + people, query: needle)
 	}
 
 	/// Keeps the groups in display order and, inside each group, sorts by tier. Inside a tier,
-	/// chats and flows (filtered on the device, from lists the server returns by recency) go newest
-	/// first; objects, files and agents keep the order their source gave them. The sort is stable
-	/// and consistent across kinds, so mixed input cannot confuse it.
+	/// unread chats come before read ones, then chats and flows (filtered on the device, from lists
+	/// the server returns by recency) go newest first. The chat list holds no archived chats, so the
+	/// archive rule has nothing to do here. Objects, files and agents keep the order their source
+	/// gave them. The sort is stable and consistent across kinds, so mixed input cannot confuse it.
 	public static func ordered(_ results: [SearchResult], query: String) -> [SearchResult] {
 		let keyed = results.enumerated().map {
 			(
@@ -36,6 +30,7 @@ public enum SearchRanking {
 		return keyed.sorted { a, b in
 			if a.group != b.group { return a.group < b.group }
 			if a.tier != b.tier { return a.tier < b.tier }
+			if a.result.kind == .chat, a.result.isUnread != b.result.isUnread { return a.result.isUnread }
 			if ranksByRecency(a.result) {
 				let da = a.result.updatedAt ?? .distantPast
 				let db = b.result.updatedAt ?? .distantPast

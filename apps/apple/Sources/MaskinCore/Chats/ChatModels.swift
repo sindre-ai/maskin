@@ -156,6 +156,14 @@ public struct ConversationSummary: Identifiable, Hashable, Sendable, Codable {
 	/// A stopped chat can run its last person message again.
 	public var canRetry: Bool { stopReason != nil && retryMessageID != nil }
 	public var isUnread: Bool { unreadCount > 0 }
+	/// The title every new chat starts with. It names nothing, so a search never counts its words.
+	public static let placeholderTitle = "New chat"
+	/// The chat has no title of its own yet: empty, or still the placeholder.
+	public var hasPlaceholderTitle: Bool { Self.isPlaceholder(title) }
+	public static func isPlaceholder(_ title: String) -> Bool {
+		let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+		return trimmed.isEmpty || trimmed.caseInsensitiveCompare(placeholderTitle) == .orderedSame
+	}
 	/// The pair's direct message, as opposed to a topical chat with the same two people.
 	public var isDirect: Bool { directPairKey != nil }
 }

@@ -620,14 +620,17 @@ public struct TeamLayout: Equatable, Sendable {
 
 	// MARK: Search
 
-	/// A search lists its matches as one list, best name match first and newest first within a
-	/// match, so a chat with someone named like the query is not buried under newer chats that only
-	/// contain those letters inside another word. Sections merge into "Results" unless only one is left.
+	/// A search lists its matches as one list, best name match first, then unread before read, then
+	/// newest first, so a chat with someone named like the query is not buried under newer chats that
+	/// only contain those letters inside another word. This is the order of the server search too
+	/// (`search-chat-order.json` holds the cases both sides test). Archived chats are not in these
+	/// sections; they sit in `archivedMatches`. Sections merge into "Results" unless only one is left.
 	private static func ranked(_ sections: [Section], query: String, me: String?) -> [Section] {
 		let rows = sections.flatMap(\.rows).enumerated()
 			.map { (offset: $0.offset, tier: searchTier($0.element, query: query, me: me), row: $0.element) }
 			.sorted { a, b in
 				if a.tier != b.tier { return a.tier < b.tier }
+				if a.row.isUnread != b.row.isUnread { return a.row.isUnread }
 				let da = a.row.activityDate ?? .distantPast, db = b.row.activityDate ?? .distantPast
 				return da != db ? da > db : a.offset < b.offset
 			}
@@ -640,19 +643,17 @@ public struct TeamLayout: Equatable, Sendable {
 		return [Section(id: "results", kind: .filtered, label: "Results", count: rows.count, rows: rows)]
 	}
 
-	/// Lower is better: 0 a whole word of a name, 1 a name that starts with the query, 2 and 3 other
-	/// name matches (`ActorSearch.rank`), 4 a hit only in the title or last message.
+	/// Lower is better: see `ChatSearchOrder.tier`.
 	private static func searchTier(_ row: Row, query: String, me: String?) -> Int {
 		let names: [String]
 		switch row.kind {
-		case .conversation(let c): names = [displayedTitle(of: row.kind, me: me)] + c.others(excluding: me).map(\.name)
+		case .conversation(let c):
+			// A chat still on the placeholder title has no title to rank by, only its people.
+			names = (c.hasPlaceholderTitle ? [] : [displayedTitle(of: row.kind, me: me)]) + c.others(excluding: me).map(\.name)
 		case .person(let p): names = [p.name]
 		case .flow(let f): names = [f.name]
 		}
-		return names.map { name -> Int in
-			if ActorSearch.isWholeWord(name: name, query: query) { return 0 }
-			return ActorSearch.rank(name: name, query: query).map { $0 + 1 } ?? 4
-		}.min() ?? 4
+		return ChatSearchOrder.tier(names: names, query: query)
 	}
 
 	private static func matches(_ row: Row, query: String) -> Bool {
