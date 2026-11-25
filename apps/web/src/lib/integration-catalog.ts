@@ -111,6 +111,11 @@ const CATALOG: Record<string, CatalogEntry> = {
 	ubersuggest: { category: 'Analytics', domain: 'neilpatel.com' },
 	dinero: { category: 'Accounting', domain: 'dinero.dk', addedOn: '2026-11-22' },
 	uniconta: { category: 'Accounting', domain: 'uniconta.com', addedOn: '2026-11-22' },
+	'business-central': {
+		category: 'Accounting',
+		domain: 'dynamics.microsoft.com',
+		addedOn: '2026-11-24',
+	},
 	zendesk: { category: 'Docs & data', domain: 'zendesk.com', addedOn: '2026-11-22' },
 	zoom: { category: 'Chat & social', domain: 'zoom.us', addedOn: '2026-11-20' },
 	apollo: { category: 'Sales & payments', domain: 'apollo.io', addedOn: '2026-11-22' },

@@ -1,5 +1,6 @@
 import * as Sentry from '@sentry/node'
 import { createSentryDedupe } from './sentry-dedupe'
+import { createSentryHourlyCap } from './sentry-hourly-cap'
 import { scrubBreadcrumbHook, scrubEvent, scrubLog } from './sentry-scrub'
 
 // Imported first (before any route/service modules) so the client exists
@@ -15,6 +16,7 @@ import { scrubBreadcrumbHook, scrubEvent, scrubLog } from './sentry-scrub'
 const dsn = process.env.SENTRY_DSN_DEV
 const enabled = process.env.NODE_ENV === 'production' || process.env.SENTRY_FORCE_ENABLE === 'true'
 const dedupe = createSentryDedupe()
+const hourlyCap = createSentryHourlyCap()
 if (dsn && enabled) {
 	// Guarded — this runs at module-import time, before the HTTP listener
 	// exists, so an uncaught throw here would crash the process on boot.
@@ -32,9 +34,11 @@ if (dsn && enabled) {
 			beforeSendLog: scrubLog,
 			// Repeats of the few messages that exhausted the free quota are sent at most
 			// once an hour per workspace (see sentry-dedupe.ts), then scrubbed.
+			// Then at most 8 events an hour in total, errors first (see sentry-hourly-cap.ts).
 			beforeSend: (event) => {
 				const kept = dedupe(event)
-				return kept && scrubEvent(kept)
+				const capped = kept && hourlyCap(kept)
+				return capped && scrubEvent(capped)
 			},
 			beforeBreadcrumb: scrubBreadcrumbHook,
 		})
