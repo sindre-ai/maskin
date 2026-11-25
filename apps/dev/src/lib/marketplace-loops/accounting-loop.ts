@@ -33,7 +33,7 @@ const ACCOUNTING_CHECKLIST: LoopChecklist = {
 		},
 		{
 			title: 'Run the first connection check',
-			body: 'Needed: the connection check from the skill accounting-connection-check run once with no receipt. It must read the right company, show only Dinero tools on the allowed list, and offer no tool that books, changes, deletes, pays or sends. Do it as soon as Dinero is connected. If it fails, say the line that fits the failure and what the owner must do.',
+			body: 'Needed: the connection check from the skill accounting-connection-check run once with no receipt. It must read the right company and offer no tool that books, pays or sends. If Dinero was added as a custom tool, it must also show only Dinero tools on the allowed list. Do it as soon as Dinero is connected. If it fails, say the line that fits the failure and what the owner must do.',
 		},
 		{
 			title: 'Say which Dinero plan you have',
