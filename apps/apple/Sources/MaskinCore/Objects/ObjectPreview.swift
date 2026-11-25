@@ -90,6 +90,16 @@ public struct ObjectPreview: Sendable, Equatable, Hashable, Codable {
 		return trimmed.isEmpty ? nil : trimmed
 	}
 
+	/// "Mette Holm wrote": the person the draft goes to, who sent the original. "In reply to" when no
+	/// recipient has a name, the same words as the web.
+	public var originalMessageLabel: String { Self.originalMessageLabel(for: recipients) }
+
+	public static func originalMessageLabel(for recipients: [Recipient]) -> String {
+		let to = recipients.first { $0.role == "to" } ?? recipients.first
+		let name = to?.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+		return name.isEmpty ? "In reply to" : "\(name) wrote"
+	}
+
 	/// A draft with nothing missing can be approved.
 	public var canApprove: Bool { missing.isEmpty }
 

@@ -67,14 +67,6 @@ struct LinkedDraftCard: View {
 	private var isApproving: Bool { phase == .approving }
 	private var isSkipped: Bool { skipped || skippedInChat }
 
-	/// "Mette Holm wrote": the person the draft goes to, who sent the original.
-	private var originalLabel: String {
-		let to = preview.recipients.first { $0.role == "to" } ?? preview.recipients.first
-		let name = [to?.name, to?.address].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
-			.first { !$0.isEmpty }
-		return name.map { "\($0) wrote" } ?? "They wrote"
-	}
-
 	private var isEmail: Bool { preview.kind == "email" }
 	private var original: DraftEdit { DraftEdit(preview: preview) }
 	private var current: DraftEdit { edit ?? original }
@@ -147,7 +139,9 @@ struct LinkedDraftCard: View {
 	private var details: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 			ObjectPreviewMetaView(preview: metaPreview)
-			if let original = preview.originalMessage { originalMessage(original) }
+			if let original = preview.originalMessage {
+				OriginalMessageView(label: preview.originalMessageLabel, text: original)
+			}
 			if canEdit && isEmail { subjectField }
 			if canEdit {
 				bodyEditor
@@ -165,28 +159,6 @@ struct LinkedDraftCard: View {
 		}
 		.padding(.horizontal, MaskinSpace.s6)
 		.padding(.vertical, MaskinSpace.s5)
-	}
-
-	/// The message this draft answers, above the draft text. Read only, and not part of what Approve
-	/// is bound to.
-	private func originalMessage(_ text: String) -> some View {
-		HStack(alignment: .top, spacing: MaskinSpace.s4) {
-			RoundedRectangle(cornerRadius: MaskinRadius.tag, style: .continuous)
-				.fill(MaskinColor.sigHi).frame(width: MaskinSpace.s1 + 1)
-			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
-				Text(originalLabel)
-					.font(MaskinTypeface.sans(MaskinFontSize.t12, weight: .bold))
-					.foregroundStyle(MaskinColor.ink4)
-				Text(text)
-					.font(MaskinTypeface.sans(MaskinFontSize.t14))
-					.foregroundStyle(MaskinColor.ink3)
-					.frame(maxWidth: .infinity, alignment: .leading)
-					.fixedSize(horizontal: false, vertical: true)
-			}
-		}
-		.fixedSize(horizontal: false, vertical: true)
-		.accessibilityElement(children: .combine)
-		.accessibilityLabel("\(originalLabel): \(text)")
 	}
 
 	/// What the agent asked beside the draft, and why it suggests yes. Read only: the buttons below
