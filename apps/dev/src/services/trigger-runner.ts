@@ -40,7 +40,6 @@ import {
 } from '../lib/comment-responder-claims'
 import { findDecisionCardAsker } from '../lib/decision-card-asker'
 import { recordEvent } from '../lib/events/record-event'
-import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { mentionStartsNoRun } from '../lib/flow-handover'
 import {
 	type PrecheckResult,
