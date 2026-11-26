@@ -59,6 +59,9 @@ public final class IntegrationsStore {
 	public private(set) var connectPhase: ConnectPhase = .idle
 	public private(set) var connectNotice: IntegrationConnectNotice?
 	public private(set) var installationPicker: InstallationPicker?
+	/// Set when a tool wants the workspace's own sign-in app and none is saved (or Change app was
+	/// chosen): the screen shows the paste form for it.
+	public private(set) var ownAppPrompt: OwnAppPrompt?
 
 	/// Names for the native providers if the provider list hasn't loaded; never a slug.
 	private static let fallbackNames = [
@@ -83,15 +86,18 @@ public final class IntegrationsStore {
 	]
 
 	@ObservationIgnored private let api: any IntegrationsAPI
+	@ObservationIgnored private let ownApp: (any OwnAppAPI)?
 	@ObservationIgnored private let webAuth: (any WebAuthenticating)?
 	@ObservationIgnored private var generation = 0
 
 	public init(
-		api: any IntegrationsAPI, currentRole: MemberRole, webAuth: (any WebAuthenticating)? = nil
+		api: any IntegrationsAPI, currentRole: MemberRole, webAuth: (any WebAuthenticating)? = nil,
+		ownApp: (any OwnAppAPI)? = nil
 	) {
 		self.api = api
 		self.currentRole = currentRole
 		self.webAuth = webAuth
+		self.ownApp = ownApp
 	}
 
 	public var isConnectInFlight: Bool { connectPhase != .idle }
@@ -256,14 +262,40 @@ public final class IntegrationsStore {
 		provider(for: providerID)?.displayName ?? Self.fallbackNames[providerID] ?? "The integration"
 	}
 
+	/// Whether the vendor wants the workspace's own sign-in app for this provider (Salesforce).
+	public func needsOwnApp(_ providerID: String) -> Bool {
+		ownApp != nil && provider(for: providerID)?.customerApp == true
+	}
+
+	/// Opens the form to replace or remove the saved app of a provider that wants one.
+	public func changeApp(providerID: String) {
+		guard canManage, needsOwnApp(providerID) else { return }
+		ownAppPrompt = OwnAppPrompt(
+			providerID: providerID, providerName: connectName(providerID), connected: true)
+	}
+
+	public func dismissOwnApp() { ownAppPrompt = nil }
+
 	/// Runs the whole connect. Ignored while another connect is in flight or for a non-manager.
-	public func connect(providerID: String) async {
+	/// A provider that wants the workspace's own app opens its form first when none is saved;
+	/// `appChecked` is set by the form once it has saved one.
+	public func connect(providerID: String, appChecked: Bool = false) async {
 		guard canManage, supportsNativeConnect(providerID), let webAuth, connectPhase == .idle
 		else { return }
 		let name = connectName(providerID)
 		connectNotice = nil
 		actionError = nil
 		connectPhase = .starting(provider: providerID)
+
+		if !appChecked, needsOwnApp(providerID), let ownApp {
+			// A lookup that fails reads as "no app saved", as on the web: the form is the way forward.
+			let saved = (try? await ownApp.status(provider: providerID))?.configured == true
+			if !saved {
+				connectPhase = .idle
+				ownAppPrompt = OwnAppPrompt(providerID: providerID, providerName: name, connected: false)
+				return
+			}
+		}
 
 		let start: IntegrationConnectStart
 		do {

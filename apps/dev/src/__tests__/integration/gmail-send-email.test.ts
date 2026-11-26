@@ -1,16 +1,27 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, integrations, objects, sendPermissions, workspaceMembers } from '@maskin/db/schema'
+import {
+	events,
+	agentChatGrants,
+	conversations,
+	integrations,
+	objects,
+	sendPermissions,
+	triggers,
+	workspaceMembers,
+} from '@maskin/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encrypt } from '../../lib/crypto'
 import { approvedSendHashFor } from '../../lib/integrations/providers/gmail/approval-hash'
 import {
+	buildTrigger,
 	insertActor,
 	insertAgentGrant,
 	insertObject,
 	insertRelationship,
 	insertSendMode,
+	insertSession,
 	insertWorkspace,
 } from '../factories'
 import { db, getTestActorId } from './global-setup'
@@ -372,6 +383,92 @@ describe('gmail_send_email: Ask first still needs a person', () => {
 		expect((await post(s.agent.id, s.workspace.id, { approval_comment_id: card.id })).status).toBe(
 			200,
 		)
+	})
+})
+
+describe('gmail_send_email: several Gmail accounts', () => {
+	/** A second, newer account next to the one setup() connected. */
+	async function addSecondAccount(
+		s: Awaited<ReturnType<typeof setup>>,
+		access: 'read' | 'read_write' | null,
+	) {
+		const [second] = await db
+			.insert(integrations)
+			.values({
+				workspaceId: s.workspace.id,
+				provider: 'gmail',
+				status: 'active',
+				externalId: 'second@example.com',
+				credentials: encrypt(
+					JSON.stringify({ accessToken: 'second-token', expiresAt: Date.now() + 60 * 60 * 1000 }),
+				),
+				createdBy: s.human,
+				defaultAgentAccess: 'none',
+				createdAt: new Date(Date.now() + 60_000),
+			})
+			.returning()
+		if (!second) throw new Error('second gmail integration was not inserted')
+		if (access) {
+			await insertAgentGrant(db, {
+				workspaceId: s.workspace.id,
+				integrationId: second.id,
+				actorId: s.agent.id,
+				access,
+			})
+		}
+		return second
+	}
+
+	const bearerOfLastCall = () =>
+		(fetchMock.mock.calls.at(-1)?.[1] as { headers: Record<string, string> }).headers?.Authorization
+
+	it('sends from the account named in the request', async () => {
+		const s = await setup({ sendMode: 'always_allow' })
+		const second = await addSecondAccount(s, 'read_write')
+		fetchMock.mockResolvedValueOnce(gmailOk())
+
+		const res = await post(s.agent.id, s.workspace.id, { ...DIRECT, account: 'second@example.com' })
+
+		expect(res.status).toBe(200)
+		expect(bearerOfLastCall()).toBe('Bearer second-token')
+		expect(await sendEvents(s.workspace.id, second.id)).not.toHaveLength(0)
+	})
+
+	it('sends from the first connected account when none is named', async () => {
+		const s = await setup({ sendMode: 'always_allow' })
+		await addSecondAccount(s, 'read_write')
+		fetchMock.mockResolvedValueOnce(gmailOk())
+
+		const res = await post(s.agent.id, s.workspace.id, DIRECT)
+
+		expect(res.status).toBe(200)
+		expect(bearerOfLastCall()).toBe('Bearer live-token')
+	})
+
+	it('checks write access on the chosen account: Read there cannot send, even with write on the first', async () => {
+		const s = await setup({ sendMode: 'always_allow' })
+		await addSecondAccount(s, 'read')
+
+		const res = await post(s.agent.id, s.workspace.id, { ...DIRECT, account: 'second@example.com' })
+
+		expect(res.status).toBe(404)
+		const message = JSON.stringify(await res.json())
+		expect(message).toContain('sender@example.com')
+		expect(message).not.toContain('Accounts you can use: second@example.com')
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('answers an unknown account with a list of the accounts the agent may use', async () => {
+		const s = await setup({ sendMode: 'always_allow' })
+		await addSecondAccount(s, 'read_write')
+
+		const res = await post(s.agent.id, s.workspace.id, { ...DIRECT, account: 'nobody@example.com' })
+
+		expect(res.status).toBe(404)
+		const message = JSON.stringify(await res.json())
+		expect(message).toContain('sender@example.com')
+		expect(message).toContain('second@example.com')
+		expect(fetchMock).not.toHaveBeenCalled()
 	})
 })
 
@@ -1209,5 +1306,172 @@ describe('gmail_send_email: an approval covers the exact text the person saw', (
 
 		expect(res.status).toBe(200)
 		expect(sentMime()).toContain('Subject: Approved subject')
+	})
+})
+
+describe('gmail_send_email: with an Allow in this chat on Gmail', () => {
+	/**
+	 * A chat of the agent's, a running session in it, and a chat grant on Gmail written directly
+	 * (so these tests do not depend on the allowlist): the agent's standing level is Read, and the
+	 * lift is the only thing that makes it read & write.
+	 */
+	async function liftedChat(s: Setup, expiresAt: Date | null = new Date(Date.now() + 3_600_000)) {
+		const [conversation] = await db
+			.insert(conversations)
+			.values({ workspaceId: s.workspace.id, title: 'Chat', createdBy: s.human })
+			.returning()
+		if (!conversation) throw new Error('conversation was not inserted')
+		const session = await insertSession(db, s.workspace.id, s.agent.id, s.human, {
+			interactive: true,
+			conversationId: conversation.id,
+			status: 'running',
+		})
+		await db.insert(agentChatGrants).values({
+			workspaceId: s.workspace.id,
+			integrationId: s.gmail.id,
+			actorId: s.agent.id,
+			conversationId: conversation.id,
+			createdBy: s.human,
+			expiresAt,
+		})
+		return { conversation, session }
+	}
+
+	const postIn = (s: Setup, sessionId: string, body: Record<string, unknown>) =>
+		appFor(s.agent.id).request('/api/integrations/gmail/send', {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				'X-Workspace-Id': s.workspace.id,
+				'X-Maskin-Session-Id': sessionId,
+			},
+			body: JSON.stringify(body),
+		})
+
+	it('still refuses an email nobody approved, and sends nothing', async () => {
+		const s = await setup({ agentAccess: 'read' })
+		const { session } = await liftedChat(s)
+
+		const res = await postIn(s, session.id, DIRECT)
+
+		expect(res.status).toBe(403)
+		// The access check passed (the lift is on); the approval is what refused it.
+		const text = JSON.stringify(await res.json())
+		expect(text).toContain('approve')
+		expect(text).not.toContain('needs write access to Gmail')
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('sends the email a person approved, with the text they approved', async () => {
+		const s = await setup({ agentAccess: 'read' })
+		const { session } = await liftedChat(s)
+		const { card } = await insertApprovalCard(s)
+		fetchMock.mockResolvedValueOnce(gmailOk())
+
+		const res = await postIn(s, session.id, { approval_comment_id: card.id })
+
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({ message_id: 'sent-1', mode: 'approved_draft' })
+	})
+
+	it('gives an email the person did not answer no way through', async () => {
+		const s = await setup({ agentAccess: 'read' })
+		const { session } = await liftedChat(s)
+		const { card } = await insertApprovalCard(s, { answers: [] })
+
+		expect((await postIn(s, session.id, { approval_comment_id: card.id })).status).toBe(409)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('does not lift a call with no session header, or when the grant has expired', async () => {
+		const s = await setup({ agentAccess: 'read' })
+		const { session } = await liftedChat(s)
+		const { card } = await insertApprovalCard(s)
+
+		const bare = await post(s.agent.id, s.workspace.id, { approval_comment_id: card.id })
+		expect(bare.status).toBe(403)
+		expect(JSON.stringify(await bare.json())).toContain('needs write access to Gmail')
+
+		const expired = await setup({ agentAccess: 'read' })
+		const old = await liftedChat(expired, new Date(Date.now() - 1000))
+		const again = await insertApprovalCard(expired)
+		const res = await postIn(expired, old.session.id, { approval_comment_id: again.card.id })
+		expect(res.status).toBe(403)
+		expect(JSON.stringify(await res.json())).toContain('needs write access to Gmail')
+		expect(session.id).not.toBe(old.session.id)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+})
+
+describe('gmail_send_email: a flow in pilot, called with a session key and no header', () => {
+	// An agent's computer calls the route with its session key and no X-Maskin-Session-Id header.
+	// The key names the session, so leaving the header off must not skip the pilot hold.
+	function postWithSessionKey(
+		actorId: string,
+		workspaceId: string,
+		apiKeySessionId: string,
+		body: Record<string, unknown>,
+	) {
+		const app = new OpenAPIHono<{
+			Variables: { db: Database; actorId: string; apiKeySessionId: string }
+		}>()
+		app.use('*', async (c, next) => {
+			c.set('db', db)
+			c.set('actorId', actorId)
+			c.set('apiKeySessionId', apiKeySessionId)
+			await next()
+		})
+		app.route('/api/integrations/gmail', gmailRoutes as never)
+		return app.request('/api/integrations/gmail/send', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json', 'X-Workspace-Id': workspaceId },
+			body: JSON.stringify(body),
+		})
+	}
+
+	async function sessionUnderFlow(s: Setup, flowStatus: string) {
+		const [trigger] = await db
+			.insert(triggers)
+			.values(
+				buildTrigger({
+					workspaceId: s.workspace.id,
+					targetActorId: s.agent.id,
+					createdBy: s.agent.id,
+				}),
+			)
+			.returning()
+		if (!trigger) throw new Error('trigger was not inserted')
+		await insertObject(db, s.workspace.id, s.human, {
+			type: 'loop',
+			title: 'Flow',
+			status: flowStatus,
+			metadata: { trigger_ids: [trigger.id] },
+		})
+		const session = await insertSession(db, s.workspace.id, s.agent.id, s.human, {
+			triggerId: trigger.id,
+		})
+		if (!session) throw new Error('session was not inserted')
+		return session
+	}
+
+	it('holds an always-allow send in a pilot flow', async () => {
+		const s = await setup({ sendMode: 'always_allow' })
+		const session = await sessionUnderFlow(s, 'pilot')
+
+		const res = await postWithSessionKey(s.agent.id, s.workspace.id, session.id, DIRECT)
+
+		expect(res.status).toBe(403)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('sends as before in a supervised flow', async () => {
+		const s = await setup({ sendMode: 'always_allow' })
+		const session = await sessionUnderFlow(s, 'supervised')
+		fetchMock.mockResolvedValueOnce(gmailOk())
+
+		const res = await postWithSessionKey(s.agent.id, s.workspace.id, session.id, DIRECT)
+
+		expect(res.status).toBe(200)
+		expect(fetchMock).toHaveBeenCalledTimes(1)
 	})
 })

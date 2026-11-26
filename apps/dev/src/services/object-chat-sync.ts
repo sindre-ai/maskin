@@ -129,16 +129,19 @@ export async function importObjectComments(
 			),
 		)
 		.where(and(inArray(actors.id, authorIds), eq(actors.type, 'human')))
-	await db
-		.insert(conversationParticipants)
-		.values(
-			humans.map((h) => ({
-				conversationId: args.conversationId,
-				actorId: h.id,
-				addedBy: args.actorId,
-			})),
-		)
-		.onConflictDoNothing()
+	// Every comment may be from an agent; drizzle rejects an empty values().
+	if (humans.length > 0) {
+		await db
+			.insert(conversationParticipants)
+			.values(
+				humans.map((h) => ({
+					conversationId: args.conversationId,
+					actorId: h.id,
+					addedBy: args.actorId,
+				})),
+			)
+			.onConflictDoNothing()
+	}
 
 	await db
 		.update(conversationParticipants)

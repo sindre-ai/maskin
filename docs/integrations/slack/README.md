@@ -4,7 +4,9 @@ This directory holds the source of truth for the Slack app behind Maskin's
 bot identity:
 
 - `manifest.yml` — the Slack [app manifest](https://api.slack.com/reference/manifests) that defines display info, the bot user, OAuth scopes, and event subscriptions.
-- `icon-placeholder.svg` — temporary brand mark for the app icon. Replace with the 512×512 PNG produced by the branded-profile spec (T2 on `bet/slack-trust-surface`) before the next operator-facing install.
+- `icon-512.png` — the 512×512 app icon to upload (the Maskin "M" mark, same file as `apps/web/public/icon-512.png`).
+- `icon-placeholder.svg` — the earlier temporary mark, kept only for reference. Do not upload it.
+- `permissions.md` — for each permission the app asks for, what Maskin does with it and why. Ready to paste into Slack's Marketplace review form, and it lists where the app and the manifest disagree.
 
 ## Upload steps
 
@@ -13,7 +15,7 @@ bot identity:
 3. Switch the editor to **YAML**, paste the contents of `manifest.yml`, and **Save changes**.
 4. Before saving, replace **both** occurrences of `REPLACE_WITH_ENV_URL` — in `settings.event_subscriptions.request_url` and in `oauth_config.redirect_urls` — with the public hostname of the target environment. Production is `maskin.io` (request URL → `/api/webhooks/slack`, redirect → `/api/integrations/slack/callback`).
 5. Slack will show a diff against the current app state and list every change. **Read it.** Any change to scopes or events flips the app into a state where existing installations must re-authorise (see below).
-6. Go to **Settings → Basic Information → App Icon** and upload the icon. Use the T2 PNG when ready; until then use `icon-placeholder.svg` exported to PNG at 512×512.
+6. Go to **Settings → Basic Information → App Icon** and upload `icon-512.png` (512×512 PNG, already the right size).
 7. Go to **Settings → Install App** and re-install to every workspace that needs the new identity (mesh-firm first).
 
 ## Re-install warning
@@ -30,7 +32,7 @@ Workflow when changing scopes:
 
 The Slack app icon is **not** part of the manifest YAML — it is uploaded separately under **Settings → Basic Information → App Icon**. The runtime per-message `icon_url` override (set on every `chat.postMessage` call via the `chat:write.customize` scope) is governed by the `MASKIN_MACHINE_ICON_URL` env var consumed in `apps/dev/src/lib/integrations/providers/slack/mcp-server.ts`. Both should point at the same brand asset.
 
-Until the T2 PNG lands, `icon-placeholder.svg` documents the placeholder. It is not loaded by any runtime path — it exists to show reviewers what is being uploaded and to give the next session an obvious "replace me" target.
+`icon-512.png` is the final icon. `icon-placeholder.svg` is not loaded by any runtime path and is kept only for reference.
 
 ## Scopes — bot vs user
 
@@ -140,3 +142,11 @@ org-shared fields (`previous_names`, `pending_shared`, `shared_team_ids`,
 `pending_connected_team_ids`, topic/purpose creator metadata) are
 intentionally not exposed. `include_num_members: true` adds `num_members`
 (defaults to false to skip the small Slack-side cost).
+
+## Marketplace listing: the add link
+
+Every link from a Slack Marketplace listing to Maskin carries the source tag `slack`, so a sign-up can be traced to the listing:
+
+`https://maskin.io/signup?utm_source=slack&utm_medium=marketplace`
+
+Use it wherever the listing asks for a website or a direct install link. The sign-up page already saves `utm_source` as the person's `signup_source`; carrying it onto the `signup_form_started` and `signup_completed` events is the job of the separate "Tag signups with their marketplace source" task. Check a test sign-up from this link in PostHog once that task has merged.

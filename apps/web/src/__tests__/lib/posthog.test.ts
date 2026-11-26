@@ -12,6 +12,9 @@ import {
 	setCapturingEnabled,
 	setWorkspaceGroup,
 	signupSourceFrom,
+	siteAreaForPath,
+	utmSourceFrom,
+	utmSourceProps,
 	withSharedProperties,
 } from '@/lib/posthog'
 import posthog from 'posthog-js'
@@ -387,6 +390,41 @@ describe('signupSourceFrom', () => {
 	})
 })
 
+describe('utmSourceFrom', () => {
+	it('reads the tag from the page, then from the first visit', () => {
+		expect(utmSourceFrom('?utm_source=Slack', { utmSource: 'linkedin' })).toBe('slack')
+		expect(utmSourceFrom('', { utmSource: 'Cursor' })).toBe('cursor')
+		expect(utmSourceFrom('?utm_source=linkedin')).toBe('linkedin')
+	})
+
+	it('is empty when there is no tag, and never falls back to a referrer', () => {
+		expect(utmSourceFrom('')).toBe('')
+		expect(utmSourceFrom('?utm_source=', { referringDomain: 'google.com' })).toBe('')
+		expect(utmSourceFrom('', { utmSource: 42 })).toBe('')
+	})
+
+	it('keeps free text out', () => {
+		expect(utmSourceFrom('?utm_source=a%20b%3Cscript%3E')).toBe('abscript')
+		expect(utmSourceFrom(`?utm_source=${'x'.repeat(200)}`)).toHaveLength(60)
+	})
+})
+
+describe('utmSourceProps', () => {
+	afterEach(() => {
+		window.history.replaceState({}, '', '/')
+	})
+
+	it('sends the tag on the page', () => {
+		window.history.replaceState({}, '', '/signup?utm_source=Test_Marketplace')
+		expect(utmSourceProps()).toEqual({ utm_source: 'test_marketplace' })
+	})
+
+	it('sends nothing, not an empty string, when there is no tag', () => {
+		window.history.replaceState({}, '', '/signup')
+		expect(utmSourceProps()).toEqual({})
+	})
+})
+
 describe('firstTouchFromPosthog', () => {
 	it('reads the first-visit tag and referring site that posthog stored', () => {
 		const persistence = {
@@ -421,11 +459,39 @@ describe('firstTouchFromPosthog', () => {
 })
 
 describe('withSharedProperties', () => {
+	const siteAreaOf = (properties: Record<string, unknown>) => {
+		const out = withSharedProperties({ event: 'x', properties })
+		return (out?.properties as { site_area?: unknown } | undefined)?.site_area
+	}
+
 	it('adds surface web and defaults actor_type to human, internal and paying to false', () => {
 		expect(withSharedProperties({ event: 'x', properties: { a: 1 } })).toEqual({
 			event: 'x',
-			properties: { a: 1, actor_type: 'human', internal: false, paying: false, surface: 'web' },
+			properties: {
+				a: 1,
+				actor_type: 'human',
+				internal: false,
+				paying: false,
+				surface: 'web',
+				site_area: 'landing',
+			},
 		})
+	})
+
+	it('tags the area from the path posthog-js stamped on the event', () => {
+		const area = (path: string) => siteAreaOf({ $pathname: path })
+		expect(area('/7f0c2a64-1b1e-4c1c-9d2e-3a5f6b7c8d9e/chats')).toBe('app')
+		expect(area('/7f0c2a64-1b1e-4c1c-9d2e-3a5f6b7c8d9e')).toBe('app')
+		expect(area('/workspaces')).toBe('app')
+		expect(area('/')).toBe('landing')
+		expect(area('/login')).toBe('landing')
+		expect(area('/signup')).toBe('landing')
+	})
+
+	it('falls back to the page path when the event carries none', () => {
+		window.history.pushState({}, '', '/7f0c2a64-1b1e-4c1c-9d2e-3a5f6b7c8d9e/loops')
+		expect(siteAreaOf({})).toBe('app')
+		window.history.pushState({}, '', '/')
 	})
 
 	it('keeps the internal and paying values the workspace mount registered', () => {
@@ -463,5 +529,24 @@ describe('withSharedProperties', () => {
 
 	it('passes a dropped event through', () => {
 		expect(withSharedProperties(null)).toBeNull()
+	})
+})
+
+describe('siteAreaForPath', () => {
+	it.each([
+		['/7f0c2a64-1b1e-4c1c-9d2e-3a5f6b7c8d9e/objects/abc', 'app'],
+		['/start-trial/7f0c2a64-1b1e-4c1c-9d2e-3a5f6b7c8d9e', 'app'],
+		['/invite', 'app'],
+		['/oauth/authorize', 'app'],
+		['/', 'landing'],
+		['/da/', 'landing'],
+		['/docs/mcp', 'landing'],
+		['/marketplace', 'landing'],
+		['/login', 'landing'],
+		['/signup', 'landing'],
+		['/forgot-password', 'landing'],
+		['/workspaces-and-more', 'landing'],
+	])('%s is %s', (path, area) => {
+		expect(siteAreaForPath(path)).toBe(area)
 	})
 })

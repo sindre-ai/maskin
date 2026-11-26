@@ -18,24 +18,24 @@ vi.mock('@/hooks/use-actors', () => ({
 }))
 
 const mockUseEntityEvents = vi.fn(() => ({ data: undefined }))
+const mockCreateComment = vi.fn(async (_input: unknown) => undefined)
 vi.mock('@/hooks/use-events', () => ({
 	useEntityEvents: (...args: unknown[]) => mockUseEntityEvents(...(args as [])),
+	useCreateComment: () => ({ mutateAsync: mockCreateComment, isPending: false }),
 }))
 
 // The real composer pulls in uploads, drafts, the slash picker and dictation;
-// the card only cares that it renders one, wired to the right object.
-vi.mock('@/components/activity/comment-input', () => ({
-	CommentInput: ({
-		objectId,
-		parentEventId,
-		onSubmitted,
+// the card only needs to render one with the right words and to hear what it sent.
+vi.mock('@/components/chat/chat', () => ({
+	Composer: ({
+		placeholder,
+		onSend,
 	}: {
-		objectId?: string
-		parentEventId?: number
-		onSubmitted?: (content: string) => void
+		placeholder: string
+		onSend: (content: string) => Promise<void>
 	}) => (
-		<div data-testid="comment-input" data-object-id={objectId} data-parent={parentEventId}>
-			<button type="button" onClick={() => onSubmitted?.('Use the blue one')}>
+		<div data-testid="chat-composer" data-placeholder={placeholder}>
+			<button type="button" onClick={() => onSend('Use the blue one')}>
 				mock send
 			</button>
 		</div>
@@ -138,7 +138,7 @@ describe('FeedCard — row state', () => {
 		expect(age.tagName).toBe('TIME')
 		expect(age.className).toContain('tabular-nums')
 		// The body only exists in the expanded state.
-		expect(screen.queryByTestId('comment-input')).not.toBeInTheDocument()
+		expect(screen.queryByTestId('chat-composer')).not.toBeInTheDocument()
 
 		await user.click(screen.getByText('Merge the trigger settings rewrite?'))
 		expect(onToggleExpanded).toHaveBeenCalledTimes(1)
@@ -285,11 +285,11 @@ describe('FeedCard — full state', () => {
 		expect(screen.getByRole('button', { name: 'Send back' })).toBeInTheDocument()
 		expect(screen.queryByText(/^Suggested:/)).not.toBeInTheDocument()
 		expect(screen.getByText('Ships with tonight deploy')).toBeInTheDocument()
-		// The composer renders stacked with its default placeholder until the
-		// Object detail split lands `variant`/`placeholder` on the v2 composer —
-		// see the TODO in feed-card.tsx. Assert it is wired to the object, not
-		// the addressed-to copy this card cannot yet pass through.
-		expect(screen.getByTestId('comment-input')).toHaveAttribute('data-object-id', 'task-1')
+		// The message box is the chat composer, named for the agent that asked.
+		expect(screen.getByTestId('chat-composer')).toHaveAttribute(
+			'data-placeholder',
+			'Message Code Reviewer',
+		)
 	})
 
 	// A review-status task used to be enough to invent Approve / Send back. Only
@@ -305,7 +305,7 @@ describe('FeedCard — full state', () => {
 		})
 		expect(screen.queryByRole('button', { name: 'Merge now' })).not.toBeInTheDocument()
 		expect(screen.getByText('Can you confirm the launch date?')).toBeInTheDocument()
-		expect(screen.getByTestId('comment-input')).toBeInTheDocument()
+		expect(screen.getByTestId('chat-composer')).toBeInTheDocument()
 	})
 
 	// The reader answers on the card, so the whole comment is on the card. There
@@ -331,10 +331,11 @@ ${tail}`,
 	// An item whose events were pruned still has to render something.
 	it('falls back to the object title when there is no mention payload', () => {
 		renderCard({ item: buildItem({ latest_mention: undefined }) })
-		expect(screen.getByText('Trigger settings rewrite')).toBeInTheDocument()
-		// It is the headline, so the meta link does not repeat it.
-		expect(screen.getByRole('link', { name: /Open/ })).toBeInTheDocument()
-		expect(screen.getByTestId('comment-input')).toBeInTheDocument()
+		// The headline fell back to the object title, and the card's first line names the object.
+		expect(screen.getAllByText('Trigger settings rewrite')).toHaveLength(2)
+		// Nothing to take, so the card offers the way to decide. No author, so no message box.
+		expect(screen.getByRole('link', { name: 'Open the task to decide' })).toBeInTheDocument()
+		expect(screen.queryByTestId('chat-composer')).not.toBeInTheDocument()
 	})
 
 	it('hands the taken option up to the feed', async () => {
@@ -350,9 +351,13 @@ ${tail}`,
 	// A typed answer belongs under the question, the same as a taken option.
 	// Without it the reply lands as a loose comment on the object and the agent
 	// that asked has to infer which of its asks was just answered.
-	it('threads the composer under the comment that raised the card', () => {
+	it('threads the composer under the comment that raised the card', async () => {
+		mockCreateComment.mockClear()
 		renderCard()
-		expect(screen.getByTestId('comment-input')).toHaveAttribute('data-parent', '42')
+		await userEvent.click(screen.getByRole('button', { name: 'mock send' }))
+		expect(mockCreateComment).toHaveBeenCalledWith(
+			expect.objectContaining({ entity_id: 'task-1', parent_event_id: 42 }),
+		)
 	})
 
 	// Sending a typed reply used to clear the box and show nothing; the feed now settles the
@@ -360,7 +365,7 @@ ${tail}`,
 	it('hands the sent text up to the feed', async () => {
 		const { props } = renderCard()
 		await userEvent.click(screen.getByRole('button', { name: 'mock send' }))
-		expect(props.onReplied).toHaveBeenCalledWith('Use the blue one')
+		await waitFor(() => expect(props.onReplied).toHaveBeenCalledWith('Use the blue one'))
 	})
 
 	// The option is acknowledged with a 260ms beat before `onDecide` fires, and
@@ -414,7 +419,7 @@ describe('FeedCard — card with no object', () => {
 		renderCard({ item: buildObjectlessItem() })
 		expect(screen.getByText('Yesterday: 38 runs, $3.20.')).toBeInTheDocument()
 		expect(screen.getByText(/Today: .* \$0\.00 of \$10\.00 so far\./)).toBeInTheDocument()
-		expect(screen.queryByTestId('comment-input')).not.toBeInTheDocument()
+		expect(screen.queryByTestId('chat-composer')).not.toBeInTheDocument()
 		expect(screen.queryByRole('link')).not.toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: /Show timeline history/ })).not.toBeInTheDocument()
 	})
@@ -428,7 +433,7 @@ describe('FeedCard — card with no object', () => {
 
 	it('still gives a card tied to an object its link and composer', () => {
 		renderCard()
-		expect(screen.getByTestId('comment-input')).toBeInTheDocument()
+		expect(screen.getByTestId('chat-composer')).toBeInTheDocument()
 		expect(screen.getByRole('link')).toBeInTheDocument()
 	})
 })

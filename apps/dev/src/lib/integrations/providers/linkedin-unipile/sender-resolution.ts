@@ -222,7 +222,7 @@ export async function findContactsBySlug(
 	db: Database,
 	workspaceId: string,
 	publicIdentifier: string,
-): Promise<Array<ResolvedContact & { url: string | null }>> {
+): Promise<Array<ResolvedContact & { url: string | null; firstContactChannel: string | null }>> {
 	const slug = slugFromLinkedinUrl(`/in/${encodeURIComponent(publicIdentifier)}`)
 	if (!slug) return []
 	const url = sql<string | null>`${objects.metadata}->>'linkedin_url'`
@@ -231,7 +231,13 @@ export async function findContactsBySlug(
 		...new Set([slug, encodeURIComponent(slug).toLowerCase()].map((s) => `%/in/${escapeLike(s)}%`)),
 	]
 	const rows = await db
-		.select({ id: objects.id, status: objects.status, driver: objects.driver, url })
+		.select({
+			id: objects.id,
+			status: objects.status,
+			driver: objects.driver,
+			url,
+			channel: sql<string | null>`${objects.metadata}->>'first_contact_channel'`,
+		})
 		.from(objects)
 		.where(
 			and(
@@ -243,7 +249,13 @@ export async function findContactsBySlug(
 		.orderBy(objects.createdAt, objects.id)
 	return rows
 		.filter((row) => slugFromLinkedinUrl(row.url) === slug)
-		.map((row) => ({ id: row.id, status: row.status, driverId: row.driver, url: row.url }))
+		.map((row) => ({
+			id: row.id,
+			status: row.status,
+			driverId: row.driver,
+			url: row.url,
+			firstContactChannel: row.channel,
+		}))
 }
 
 async function findContactById(

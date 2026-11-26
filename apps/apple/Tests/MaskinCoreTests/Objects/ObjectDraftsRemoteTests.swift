@@ -94,6 +94,26 @@ struct ObjectDraftsRemoteTests {
 		#expect(try JSONDecoder().decode([String: String].self, from: body) == ["content_hash": "abc123"])
 	}
 
+	@Test("the comment edit request names the event and carries the new words and the person's credentials")
+	func editCommentRequest() async throws {
+		let api = remote(raw: true)
+		let transport = try #require(api.rawTransportForTesting)
+		let request = await api.makeEditCommentRequest(eventId: 42, content: "New words", transport: transport)
+		#expect(request.url?.path == "/api/events/42")
+		#expect(request.httpMethod == "PATCH")
+		#expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer ank_x")
+		#expect(request.value(forHTTPHeaderField: "X-Workspace-Id") == "7d1f0c52-0e0a-4f43-9c1e-aaaaaaaaaaaa")
+		let body = try #require(request.httpBody)
+		#expect(try JSONDecoder().decode([String: String].self, from: body) == ["content": "New words"])
+	}
+
+	@Test("without a transport a comment edit says it isn't available")
+	func editCommentNoTransport() async {
+		await #expect(throws: ObjectsError("Editing a comment isn't available here.")) {
+			try await remote().editComment(eventId: 1, content: "x")
+		}
+	}
+
 	@Test("without a transport the card says approving isn't available")
 	func noTransport() async {
 		await #expect(throws: ObjectApprovalError.other("Approving isn't available here.")) {

@@ -19,6 +19,7 @@ public struct RootView: View {
 	@State private var links: InternalLinkDirectory
 	/// Thumbnails for the photos attached to chat messages.
 	@State private var chatImages: ChatImageLoader
+	@State private var attachmentDownloader: AttachmentDownloader
 private let onRuntimeReady: (AppRuntime) -> Void
 	/// Resolves the seeded Chief of Staff conversation's id for the signed-in workspace, if one
 	/// exists. The first-use screen offers "Open the welcome chat" only when this returns an id.
@@ -65,6 +66,11 @@ private let onRuntimeReady: (AppRuntime) -> Void
 		_chatImages = State(
 			initialValue: ChatImageLoader(
 				files: APIFilesRemote(client: environment.client, credentials: environment.auth.credentialsProvider)))
+		_attachmentDownloader = State(
+			initialValue: AttachmentDownloader(
+				remote: APIFilesRemote(
+					client: environment.client, credentials: environment.auth.credentialsProvider,
+					baseURL: environment.baseURL, clientSource: environment.clientSource)))
 		_links = State(
 			initialValue: InternalLinkDirectory(store: { [weak environment] in
 				environment.flatMap { LinkedItemStores.store(for: $0) }
@@ -149,6 +155,7 @@ private let onRuntimeReady: (AppRuntime) -> Void
 				cached: { [chatImages] id in chatImages.cachedImage(for: id) },
 				load: { [chatImages] id in await chatImages.image(for: id) })
 		)
+		.environment(\.attachmentDownloader, attachmentDownloader)
 		.environment(\.openAttachment, { @MainActor [runtime] id in runtime.openFile(id) })
 		.task { onRuntimeReady(runtime) }
 		.task { ThreadWarmup.run() }

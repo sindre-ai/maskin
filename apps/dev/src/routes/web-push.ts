@@ -6,7 +6,7 @@ import {
 	webPushConfigResponseSchema,
 	webPushSubscriptionResponseSchema,
 } from '@maskin/shared'
-import { and, desc, eq, inArray } from 'drizzle-orm'
+import { and, desc, eq, inArray, or } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
@@ -89,7 +89,7 @@ const subscribeRoute = createRoute({
 	tags: ['Web Push'],
 	summary: 'Register (or refresh) a browser push subscription for the current actor',
 	description:
-		'Upserts on the subscription endpoint. Re-registering an endpoint that belongs to another actor moves it to the caller.',
+		'Upserts on the subscription endpoint. An endpoint that belongs to another actor is refused (409) unless the request carries that subscription’s own keys, which only the browser that created it holds.',
 	request: {
 		body: { content: { 'application/json': { schema: registerWebPushSubscriptionSchema } } },
 	},
@@ -100,6 +100,10 @@ const subscribeRoute = createRoute({
 		},
 		400: {
 			description: 'Invalid request',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		409: {
+			description: 'The endpoint is registered to another actor',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 	},
@@ -132,11 +136,24 @@ app.openapi(subscribeRoute, async (c) => {
 				userAgent: body.user_agent ?? null,
 				lastSeenAt: now,
 			},
+			// A row held by another actor is only taken over by a caller that also holds the
+			// subscription's keys (the same browser signing in as someone else). The endpoint URL
+			// alone is not enough. A skipped update returns no row.
+			setWhere: or(
+				eq(webPushSubscriptions.actorId, actorId),
+				and(
+					eq(webPushSubscriptions.p256dh, body.keys.p256dh),
+					eq(webPushSubscriptions.auth, body.keys.auth),
+				),
+			),
 		})
 		.returning()
 
 	if (!row) {
-		return c.json(createApiError('INTERNAL_ERROR', 'Failed to register subscription'), 400)
+		return c.json(
+			createApiError('CONFLICT', 'This subscription is registered to another account'),
+			409,
+		)
 	}
 
 	// Keep only the most recently seen subscriptions; the one just written is always newest.

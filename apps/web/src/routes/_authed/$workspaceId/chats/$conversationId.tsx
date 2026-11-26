@@ -31,6 +31,7 @@ import { useConversationLinked, useResolvedLinkedItems } from '@/hooks/use-conve
 import { useConversationProduced } from '@/hooks/use-conversation-produced'
 import { useConversationThreads } from '@/hooks/use-conversation-threads'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useHeightVar } from '@/hooks/use-height-var'
 import { useMarkConversationRead } from '@/hooks/use-mark-conversation-read'
 import { useIsWideDesktopViewport } from '@/hooks/use-mobile'
@@ -82,6 +83,8 @@ function ConversationThreadPage() {
 	const { conversationId } = Route.useParams()
 	const { msg: deepLinkMessageId, thread: openThreadRootId } = Route.useSearch()
 	const { workspaceId } = useWorkspace()
+	// New chat list (bet 57d0ac81): this page only adds the "agents are working" line to the thread.
+	const chatListV2 = useFeatureFlag('chat-list-v2')
 	const planPercent = usePlanPercentEnabled()
 	const { data: conversation } = useConversation(conversationId, workspaceId)
 	useDocumentTitle(conversation?.title)
@@ -388,6 +391,7 @@ function ConversationThreadPage() {
 							sendingStep={sendMessage.isPending}
 							onOpenReplies={openReplies}
 							editRequest={editRequest}
+							showWorkingLine={chatListV2}
 						/>
 						{/* Live region for the Origin deep-link jump — announced once per
 				    navigation (spec §7 accessibility). Kept out of ThreadMessages so

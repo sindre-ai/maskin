@@ -6,7 +6,7 @@ import Testing
 private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
 private func row(
-	_ id: String, status: LoopPill = .learning, waiting: Int = 0, days: Double = 0, name: String? = nil
+	_ id: String, status: LoopPill = .pilot, waiting: Int = 0, days: Double = 0, name: String? = nil
 ) -> LoopSummary {
 	LoopSummary(
 		id: id, name: name ?? id, status: status, waitingCount: waiting,
@@ -38,7 +38,7 @@ struct FlowsDisplayTests {
 	@Test("the Show filter maps onto the needs-you and running flags")
 	func filterMapping() async {
 		let loops = [
-			row("run", status: .learning), row("wait", status: .supervised, waiting: 2),
+			row("run", status: .pilot), row("wait", status: .supervised, waiting: 2),
 			row("off", status: .paused),
 		]
 		let store = await store(loops)

@@ -46,6 +46,7 @@ export function DecisionOptions({
 	onChoose,
 	variant = 'card',
 	defaultLine = null,
+	hideTagWhenAlone = false,
 }: {
 	/** `row` is the For You feed: no "Suggested" line, the recommended option's first consequence sits under its bar. */
 	variant?: 'card' | 'row'
@@ -55,11 +56,15 @@ export function DecisionOptions({
 	onChoose: (option: DecisionOption) => void
 	/** What happens if nobody answers, when the card names a default (see `defaultOnSilenceLine`). */
 	defaultLine?: string | null
+	/** A lone option has nothing to be recommended over, so its "Recommended" tag is left off. */
+	hideTagWhenAlone?: boolean
 }) {
 	// Answering posts a comment, which a viewer cannot do.
 	const canWrite = useCanWrite()
-	const primary = options.filter((option) => option.recommended)
-	const others = options.filter((option) => !option.recommended)
+	// A lone option is the bar, recommended or not, when the caller drops the tag for it.
+	const alone = hideTagWhenAlone && options.length === 1
+	const primary = alone ? options : options.filter((option) => option.recommended)
+	const others = alone ? [] : options.filter((option) => !option.recommended)
 	const line = variant === 'card' ? suggestedLine(options) : null
 	const label = (option: DecisionOption) =>
 		pendingId === option.id ? `${option.label}…` : option.label
@@ -78,9 +83,11 @@ export function DecisionOptions({
 						>
 							<span className="min-w-0">{label(option)}</span>
 							{/* Out of the accessible name on purpose: the button is its label. */}
-							<span aria-hidden className="shrink-0 text-[11px] font-semibold opacity-70">
-								Recommended
-							</span>
+							{!alone && (
+								<span aria-hidden className="shrink-0 text-[11px] font-semibold opacity-70">
+									Recommended
+								</span>
+							)}
 						</Button>
 						{variant === 'row' && option.consequences[0] && (
 							<p className="text-[13px] leading-[1.45] text-muted-foreground">

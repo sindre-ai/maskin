@@ -60,7 +60,8 @@ together with `DEVELOPMENT_TEAM` in `Config/Local.xcconfig`.
 ## Release checklist (outside the repo)
 
 - Enable Push Notifications + Associated Domains on the App ID; App Store Connect records for
-  `io.maskin.app`, `io.maskin.app.watchkitapp`, `io.maskin.app.tv`.
+  `io.maskin.app` (one record, iOS and tvOS as platforms; the TV app and its Top Shelf extension
+  `io.maskin.app.topshelf` use the same bundle id as the iPhone app) and `io.maskin.app.watchkitapp`.
 - Privacy nutrition label must match `Apps/*/PrivacyInfo.xcprivacy`: Email Address, User ID,
   Other User Content (all linked, app functionality, no tracking); iOS/macOS also Device ID (APNs token).
 - Review the generated tvOS/watch art (`scripts/gen-app-icons.swift` regenerates it).

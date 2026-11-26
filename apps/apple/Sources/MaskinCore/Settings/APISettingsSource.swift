@@ -9,10 +9,15 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 	APIKeysAPI, SkillsAPI, BillingAPI, SchemaAPI, MCPAPI
 {
 	private let client: Client
+	/// Only `startConnect` uses it: the OAuth state cookie is set on the host that answers, and the
+	/// provider's callback lands on the web host. The same as `client` unless the app talks to a
+	/// separate API host.
+	private let connectClient: Client
 	public let workspaceID: String
 
-	public init(client: Client, workspaceID: String) {
+	public init(client: Client, workspaceID: String, connectClient: Client? = nil) {
 		self.client = client
+		self.connectClient = connectClient ?? client
 		self.workspaceID = workspaceID
 	}
 
@@ -157,7 +162,8 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 				}
 				return IntegrationProvider(
 					id: row.name, displayName: row.displayName, authKind: kind,
-					showsEmail: row.externalIdDisplay == .email, eventCount: row.events.count)
+					showsEmail: row.externalIdDisplay == .email, eventCount: row.events.count,
+					customerApp: row.customerApp == true)
 			}
 		default:
 			throw SettingsError("Couldn't load integrations.")
@@ -202,7 +208,7 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 			let integrationId: String?
 			if provider == "linkedin-unipile" {
 				let output = try await IdempotencyKey.bind(idempotencyKey) {
-					try await client.post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect(
+					try await connectClient.post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect(
 						.init(headers: .init(x_hyphen_workspace_hyphen_id: workspaceID), body: linkedInBody))
 				}
 				guard case .ok(let ok) = output else { throw SettingsError("Couldn't start connecting.") }
@@ -211,7 +217,7 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 				integrationId = json.integration_id
 			} else {
 				let output = try await IdempotencyKey.bind(idempotencyKey) {
-					try await client.post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect(
+					try await connectClient.post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect(
 						.init(
 							path: .init(provider: provider),
 							headers: .init(x_hyphen_workspace_hyphen_id: workspaceID), body: body))
@@ -271,7 +277,7 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 
 	/// A transport failure that means "no connection" becomes `SettingsError.offline`; anything
 	/// else is a fixed sentence (no response bodies or URLs in messages).
-	private static func map(_ error: any Error) -> SettingsError {
+	static func map(_ error: any Error) -> SettingsError {
 		var underlying: any Error = error
 		if let client = error as? ClientError { underlying = client.underlyingError }
 		if let url = underlying as? URLError {
@@ -421,6 +427,63 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 		case .forbidden: throw SettingsError("Only a workspace admin can change object types.")
 		case .badRequest: throw SettingsError("That change isn't allowed.")
 		default: throw SettingsError("Couldn't save that change.")
+		}
+	}
+
+	// MARK: Own sign-in app
+
+	/// The server's own sentence when it sent one: these routes name fields and never echo a value,
+	/// so it is safe to show. Otherwise the fixed sentence.
+	static func sentence(_ message: String?, fallback: String) -> String {
+		let text = message?.trimmingCharacters(in: .whitespacesAndNewlines)
+		return (text?.isEmpty == false) ? text! : fallback
+	}
+
+	public func status(provider: String) async throws -> OwnAppStatus {
+		do {
+			let output = try await client.get_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app(
+				.init(
+					path: .init(provider: provider),
+					headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
+			switch output {
+			case .ok(let ok):
+				let body = try ok.body.json
+				return OwnAppStatus(
+					configured: body.configured, clientId: body.clientId, callbackURL: body.callbackUrl)
+			case .forbidden: throw SettingsError("You can't see the sign-in app here.")
+			default: throw SettingsError("Couldn't load the app.")
+			}
+		} catch let error as SettingsError {
+			throw error
+		} catch {
+			throw Self.map(error)
+		}
+	}
+
+	public func remove(provider: String, idempotencyKey: String) async throws {
+		do {
+			let output = try await IdempotencyKey.bind(idempotencyKey) {
+				try await client.delete_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app(
+					.init(
+						path: .init(provider: provider),
+						headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
+			}
+			switch output {
+			case .noContent: return
+			case .forbidden:
+				throw SettingsError("Only a workspace admin or owner can change the sign-in app.")
+			case .notFound: throw SettingsError("No sign-in app is saved for this tool.")
+			case .conflict(let response):
+				throw SettingsError(
+					Self.sentence(
+						(try? response.body.json)?.error.message,
+						fallback: "Disconnect the tool first: it still signs in and renews with this app."))
+			default: throw SettingsError("Couldn't remove the app.")
+			}
+		} catch let error as SettingsError {
+			throw error
+		} catch {
+			throw Self.map(error)
 		}
 	}
 }

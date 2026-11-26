@@ -126,30 +126,30 @@ public struct MainShell: View {
 			actions: { Button("OK", role: .cancel) {} }, message: { Text(liveCalls.problem ?? "") })
 		.focusedSceneValue(\.appRuntime, runtime)
 		.sheet(isPresented: $showQueue) { OutboxQueueSheet(queue: queue) }
-		.safeAreaInset(edge: .top, spacing: 0) {
-			OfflineBanner(
-				isVisible: awaitingCard, message: TrialCardStep.notStartedMessage, symbol: "creditcard",
-				actionTitle: TrialCardStep.actionTitle
-			) { openCardStep() }
-				.padding(.horizontal, MaskinSpace.s8)
-				.animation(MaskinMotion.standard, value: awaitingCard)
-		}
-		.safeAreaInset(edge: .top, spacing: 0) {
-			OfflineBanner(
-				isVisible: !runtime.isOnline || previewOffline, message: offlineMessage, symbol: "icloud.slash",
-				actionTitle: queuedCount > 0 ? "View" : "Retry"
-			) {
-				if queuedCount > 0 {
-					showQueue = true
-				} else {
-					Task {
-						runtime.syncCoordinator?.requestRefresh(reason: "retry")
-						await runtime.forYou.store.refresh()
+		.topBanner(isVisible: awaitingCard || !runtime.isOnline || previewOffline) {
+			VStack(spacing: 0) {
+				OfflineBanner(
+					isVisible: !runtime.isOnline || previewOffline, message: offlineMessage, symbol: "icloud.slash",
+					actionTitle: queuedCount > 0 ? "View" : "Retry"
+				) {
+					if queuedCount > 0 {
+						showQueue = true
+					} else {
+						Task {
+							runtime.syncCoordinator?.requestRefresh(reason: "retry")
+							await runtime.forYou.store.refresh()
+						}
 					}
 				}
-			}
 				.padding(.horizontal, MaskinSpace.s8)
 				.animation(MaskinMotion.standard, value: runtime.isOnline || previewOffline)
+				OfflineBanner(
+					isVisible: awaitingCard, message: TrialCardStep.notStartedMessage, symbol: "creditcard",
+					actionTitle: TrialCardStep.actionTitle
+				) { openCardStep() }
+					.padding(.horizontal, MaskinSpace.s8)
+					.animation(MaskinMotion.standard, value: awaitingCard)
+			}
 		}
 		// A decision is on screen: the moment to explain notifications (never at first launch).
 		.onChange(of: runtime.forYou.store.needsCount, initial: true) { _, count in
@@ -248,8 +248,70 @@ private struct AdaptiveTabs: View {
 	@Bindable var runtime: AppRuntime
 	let badges: ShellBadges
 	@State private var showWorkspaces = false
+	@State private var sidebar = ShellSidebarState()
+	@State private var isPortrait = false
+	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 
 	var body: some View {
+		shell
+			.environment(\.shellIsPortrait, isPortrait)
+			.sheet(isPresented: $showWorkspaces) {
+				WorkspaceSwitcher(environment: environment)
+					.presentationDetents([.medium, .large])
+					.environment(\.shellShowsAvatar, false)
+			}
+	}
+
+	@ViewBuilder private var shell: some View {
+		#if os(iOS)
+			if ShellIdiom.hasRail {
+				// The iPad: the sidebar (landscape), the rail (a narrow window) or our own bottom bar (portrait)
+				// picks the tab; the tab view only holds each tab's state, with its own bar hidden.
+				PadShell(runtime: runtime, badges: badges) {
+					if !isPortrait && horizontalSizeClass == .regular {
+						ShellSidebar(
+							environment: environment, runtime: runtime, badges: badges, isExpanded: sidebar.isExpanded,
+							toggle: { sidebar.toggle() }, switchWorkspace: { showWorkspaces = true })
+					} else {
+						ShellRail(
+							environment: environment, runtime: runtime, badges: badges, switchWorkspace: { showWorkspaces = true })
+					}
+				} tabs: {
+					tabs
+						.tabViewStyle(.tabBarOnly)
+						.toolbarVisibility(.hidden, for: .tabBar)
+				}
+				.background {
+					GeometryReader { proxy in
+						Color.clear.onChange(of: proxy.size, initial: true) { _, size in
+							isPortrait = ChatsPadLayout.isPortrait(size)
+						}
+					}
+				}
+				.animation(reduceMotion ? nil : ShellSidebar.resize, value: sidebar.isExpanded)
+				// A chat open on the Chats tab folds the sidebar; any other screen gives it back.
+				.onChange(of: runtime.chatIsOpen && runtime.selectedTab == .chats, initial: true) { _, open in
+					sidebar.setChatOpen(open)
+				}
+			} else {
+				standardTabs
+			}
+		#else
+			standardTabs
+		#endif
+	}
+
+	private var standardTabs: some View {
+		tabs
+			.modifier(ShellTabStyle(environment: environment, runtime: runtime, showWorkspaces: $showWorkspaces))
+			.modifier(TeamFoldingTabBar(runtime: runtime))
+			#if canImport(UIKit) && !os(watchOS) && !os(tvOS)
+				.background { TabBarBadgeStyler().frame(width: 0, height: 0) }
+			#endif
+	}
+
+	private var tabs: some View {
 		TabView(selection: $runtime.selectedTab) {
 			ForEach(ShellTab.primary) { tab in
 				Tab(tab.title, systemImage: tab.systemImage, value: tab) {
@@ -258,35 +320,115 @@ private struct AdaptiveTabs: View {
 				.badge(tab.badge(runtime: runtime, badges: badges).label.map { Text($0) })
 			}
 			// The detached round button on iOS 26 (a plain trailing tab before that, a sidebar entry
-			// on iPad and the Mac). It rides the system search role for the detached look, but it is a
+			// on the Mac). It rides the system search role for the detached look, but it is a
 			// button: picking it starts a chat with the Chief of Staff (see `AppRuntime.selectedTab`)
-			// and the tab you were on stays. Search lives in the profile sheet.
-			Tab(ShellTab.newChat.title, systemImage: ShellTab.newChat.systemImage, value: ShellTab.newChat, role: .search) {
-				Color.clear
+			// and the tab you were on stays. Search lives in the profile sheet. Not on the iPad: its
+			// "+" is on each screen (For you starts the same chat).
+			if !ShellIdiom.isPad {
+				Tab(ShellTab.newChat.title, systemImage: ShellTab.newChat.systemImage, value: ShellTab.newChat, role: .search) {
+					Color.clear
+				}
 			}
 		}
-		.tabViewStyle(.sidebarAdaptable)
-		// The sidebar opens with the workspace and a Switch button (4-iPad.md).
-		.tabViewSidebarHeader { SidebarWorkspaceHeader(name: environment.workspaces.selected?.name) { showWorkspaces = true } }
-		// The profile lives at the foot of the sidebar too (4-iPad.md).
-		.tabViewSidebarFooter {
-			SidebarProfileRow(
-				name: environment.auth.session?.name, actorID: environment.auth.session?.actorId
-			) { runtime.showProfile = true }
-		}
-		.sheet(isPresented: $showWorkspaces) {
-			WorkspaceSwitcher(environment: environment)
-				.presentationDetents([.medium, .large])
-				.environment(\.shellShowsAvatar, false)
-		}
-		.modifier(TeamFoldingTabBar(runtime: runtime))
-		#if canImport(UIKit) && !os(watchOS) && !os(tvOS)
-			.background { TabBarBadgeStyler().frame(width: 0, height: 0) }
-		#endif
 	}
 }
 
-/// The top of the iPad sidebar: the logo tile, the workspace name, and Switch.
+/// The iPad's shell. Landscape (and Slide Over, a one-third split) has the rail down the left.
+/// Portrait at regular width has no rail: the bottom bar picks the tab, full while no chat is open
+/// and icons only under the chat list while one is.
+@available(iOS 18, *)
+private struct PadShell<Rail: View, Tabs: View>: View {
+	let runtime: AppRuntime
+	let badges: ShellBadges
+	@ViewBuilder let rail: () -> Rail
+	@ViewBuilder let tabs: () -> Tabs
+	@Environment(\.horizontalSizeClass) private var horizontal
+
+	var body: some View {
+		// Read here, not inside the geometry closure, so a change to any of them redraws the bar.
+		let selectedTab = runtime.selectedTab
+		let shape = PadBarLayout.shape(
+			tab: selectedTab, chatOpen: runtime.chatOpenBesideList,
+			covered: runtime.presentation != nil || !runtime.padBarHiders.isEmpty)
+		return GeometryReader { proxy in
+			let bottomBar = PadBarLayout.usesBottomBar(
+				portrait: ChatsPadLayout.isPortrait(proxy.size), regularWidth: horizontal == .regular)
+			HStack(spacing: 0) {
+				if !bottomBar { rail() }
+				tabs()
+					// The full bar takes room at the foot of every screen. The compact one sits under the
+					// list only: the Chats list leaves its own room, and the thread keeps its full height.
+					.safeAreaInset(edge: .bottom, spacing: 0) {
+						if bottomBar, shape == .full { Color.clear.frame(height: PadBarLayout.reserve) }
+					}
+			}
+			.overlay(alignment: .bottom) {
+				if bottomBar {
+					PadBottomBar(
+						shape: shape, selected: selectedTab,
+						badge: { $0.badge(runtime: runtime, badges: badges) },
+						select: { runtime.selectedTab = $0 },
+						newConversation: { runtime.requestNewConversation() }
+					)
+					.ignoresSafeArea(.container, edges: .bottom)
+				}
+			}
+		}
+	}
+}
+
+/// A notice at the top of the app. iPhone and Mac inset it above the content. The iPad's bar (the rail,
+/// or the top tab bar on iOS 17) reaches the top of the screen, so an inset would cover it: there the
+/// notice sits across the full width above the app and pushes it down, with a little room below it.
+private struct TopBanner<Banner: View>: ViewModifier {
+	let isVisible: Bool
+	let banner: Banner
+
+	@ViewBuilder
+	func body(content: Content) -> some View {
+		if ShellIdiom.isPad {
+			VStack(spacing: 0) {
+				banner.padding(.bottom, isVisible ? MaskinSpace.s3 : 0)
+				// With no notice the content keeps running under the status bar, as before.
+				content.ignoresSafeArea(.container, edges: isVisible ? [] : .top)
+			}
+		} else {
+			content.safeAreaInset(edge: .top, spacing: 0) { banner }
+		}
+	}
+}
+
+extension View {
+	fileprivate func topBanner<Banner: View>(
+		isVisible: Bool, @ViewBuilder _ banner: () -> Banner
+	) -> some View {
+		modifier(TopBanner(isVisible: isVisible, banner: banner()))
+	}
+}
+
+/// The tab view's style: a bottom bar on the iPhone, a sidebar on the Mac. (The iPad has the rail
+/// and never gets here.)
+@available(iOS 18, macOS 15, *)
+private struct ShellTabStyle: ViewModifier {
+	let environment: AppEnvironment
+	let runtime: AppRuntime
+	@Binding var showWorkspaces: Bool
+
+	func body(content: Content) -> some View {
+		content
+			.tabViewStyle(.sidebarAdaptable)
+			// The sidebar opens with the workspace and a Switch button (4-iPad.md).
+			.tabViewSidebarHeader { SidebarWorkspaceHeader(name: environment.workspaces.selected?.name) { showWorkspaces = true } }
+			// The profile lives at the foot of the sidebar too (4-iPad.md).
+			.tabViewSidebarFooter {
+				SidebarProfileRow(
+					name: environment.auth.session?.name, actorID: environment.auth.session?.actorId
+				) { runtime.showProfile = true }
+			}
+	}
+}
+
+/// The top of the Mac sidebar: the logo tile, the workspace name, and Switch.
 private struct SidebarWorkspaceHeader: View {
 	let name: String?
 	let switchWorkspace: () -> Void
@@ -308,7 +450,7 @@ private struct SidebarWorkspaceHeader: View {
 	}
 }
 
-/// The signed-in person at the foot of the iPad sidebar; opens the profile.
+/// The signed-in person at the foot of the Mac sidebar; opens the profile.
 private struct SidebarProfileRow: View {
 	let name: String?
 	let actorID: String?
@@ -414,7 +556,7 @@ extension ShellTab {
 	/// The badge on the tab: open decisions on For you (a dot when only updates are unread), unread
 	/// conversations on Team. Nothing when there is nothing.
 	@MainActor
-	fileprivate func badge(runtime: AppRuntime, badges: ShellBadges) -> TabBadge {
+	func badge(runtime: AppRuntime, badges: ShellBadges) -> TabBadge {
 		switch self {
 		case .forYou:
 			let store = runtime.forYou.store

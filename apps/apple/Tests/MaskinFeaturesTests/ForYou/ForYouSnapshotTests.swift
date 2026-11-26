@@ -219,16 +219,6 @@ struct ForYouSnapshotTests {
 		}
 	}
 
-	@Test("the suggested line names the recommended option and its first two consequences")
-	func suggested() {
-		#expect(
-			DecisionCardView.suggestedLine(for: decision)
-				== "Suggested: 7-day window. Ships with cycle 1 tomorrow. Adds 18 support tickets in week one.")
-		#expect(
-			DecisionCardView.suggestedLine(
-				for: DecisionPrompt(title: "t", summary: "s", ask: "a", options: [DecisionOption(label: "Hold")])) == nil)
-	}
-
 	@Test("story cards render unseen and seen", arguments: [false, true])
 	func storyCards(dark: Bool) throws {
 		let card = StoryCard(

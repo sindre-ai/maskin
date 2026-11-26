@@ -47,6 +47,8 @@ export function useForYou(workspaceId: string) {
 			}
 		},
 		enabled: !!workspaceId,
+		// Comment and notification events refetch it once per window.
+		staleTime: 2 * 60_000,
 	})
 }
 

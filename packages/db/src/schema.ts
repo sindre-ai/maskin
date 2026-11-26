@@ -415,6 +415,21 @@ export const events = pgTable(
 		index('events_daily_budget_summary_day_idx')
 			.on(t.workspaceId, sql`(${t.data} ->> 'day')`)
 			.where(sql`${t.action} = 'daily_budget_summary'`),
+		// The newest approved, delivered or auto_sent event of one object, behind the draft cards on
+		// For You (lib/object-delivery.ts). Partial, so it holds only those three actions. Built
+		// CONCURRENTLY in migration 0170.
+		index('events_approval_lookup_idx')
+			.on(t.workspaceId, t.entityId, t.id)
+			.where(sql`${t.action} IN ('approved', 'delivered', 'auto_sent')`),
+		// "Was this notification card already sent?" before a card is written (self-start limits,
+		// run-death alerts, daily-budget cards). Built CONCURRENTLY in migration 0174.
+		index('events_notification_dedupe_idx')
+			.on(
+				t.workspaceId,
+				sql`(${t.data} -> 'metadata' ->> 'source')`,
+				sql`(${t.data} -> 'metadata' ->> 'dedupe_key')`,
+			)
+			.where(sql`${t.entityType} = 'notification' AND ${t.action} = 'created'`),
 	],
 )
 
@@ -456,7 +471,13 @@ export type IntegrationStatus =
 /** The one status meaning "connected and usable". See `IntegrationStatus`. */
 export const INTEGRATION_STATUS_ACTIVE = 'active' satisfies IntegrationStatus
 
-export type IntegrationProviderMode = 'registered' | 'byo_apikey' | 'byo_login' | 'byo_oauth'
+export type IntegrationProviderMode =
+	| 'registered'
+	| 'byo_apikey'
+	| 'byo_login'
+	| 'byo_oauth'
+	/** A workspace's own sign-in app (id in config, secret in credentials). Settings, not an integration: no agent access. */
+	| 'oauth_app'
 
 export type IntegrationSource = 'admin_ui' | 'chat_capture' | 'oauth_callback' | 'registry_install'
 
@@ -653,6 +674,8 @@ export const agentChatGrants = pgTable(
 			.notNull(),
 		createdBy: uuid('created_by').references(() => actors.id, { onDelete: 'set null' }),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		/** Null: lasts until the chat or the credential is removed (Keychain). Set: an Allow in this chat that stops counting at this time. */
+		expiresAt: timestamp('expires_at', { withTimezone: true }),
 	},
 	(t) => [
 		unique('agent_chat_grants_uniq').on(t.integrationId, t.actorId, t.conversationId),
@@ -1183,6 +1206,11 @@ export const nextSteps = pgTable(
 			.on(t.objectId)
 			.where(sql`${t.status} in ('open', 'blocked')`),
 		index('next_steps_open_due_idx').on(t.dueAt).where(sql`${t.status} = 'open'`),
+		// ON DELETE CASCADE FK to objects: a deleted object finds its blocked steps here. Built
+		// CONCURRENTLY in migration 0168.
+		index('next_steps_blocked_on_object_idx')
+			.on(t.blockedOnObjectId)
+			.where(sql`${t.blockedOnObjectId} IS NOT NULL`),
 		check('next_steps_status_check', sql`${t.status} in ('open', 'blocked', 'done', 'skipped')`),
 		check(
 			'next_steps_blocked_on_check',
@@ -1230,6 +1258,27 @@ export const readings = pgTable(
 		check('readings_measure_check', sql`${t.measure} ~ '^[a-z0-9_]+(\\.[a-z0-9_]+)+$'`),
 		check('readings_value_check', sql`${t.value} <> 'NaN'::double precision`),
 	],
+)
+
+// ── Comment Mentions ───────────────────────────────────────────────────────
+
+// Who was mentioned by someone else's comment, on which entity: one row per person and entity,
+// however many comments mention them. Filled by the comment_mentions_record trigger on `events`
+// as each comment is inserted (plus a one-time backfill), so it is never written from app code.
+// It answers "which entities can have an unread mention for this person?" without reading every
+// comment (GET /api/subscriptions/unread, apps/dev/src/lib/unread-candidates.ts). actor_id and
+// entity_id have no foreign keys on purpose: mentions come straight from the request body and may
+// name actors that no longer exist, and entities are not only objects. See 0171_comment_mentions.sql.
+export const commentMentions = pgTable(
+	'comment_mentions',
+	{
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id').notNull(),
+		entityId: uuid('entity_id').notNull(),
+	},
+	(t) => [primaryKey({ columns: [t.workspaceId, t.actorId, t.entityId] })],
 )
 
 // ── Plan Limit Emails ──────────────────────────────────────────────────────
@@ -1400,6 +1449,73 @@ export const doneWhenSkips = pgTable(
 	],
 )
 
+// ── Outcome checks ─────────────────────────────────────────────────────────
+
+// One row per check round on a job with an approved done-when list: one mark per line, who made it,
+// the readings used, the ending and the time. Every round is kept, so a person can pick an earlier
+// one. kind blind is a person's own mark of the same lines, made without seeing the checker's, and
+// is the blind sample. Not object metadata, so no writer of the object can edit a mark. See
+// 0164_outcome_checks.sql.
+export const outcomeChecks = pgTable(
+	'outcome_checks',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		objectId: uuid('object_id')
+			.references(() => objects.id, { onDelete: 'cascade' })
+			.notNull(),
+		kind: text('kind').notNull().default('round'),
+		round: integer('round'),
+		marks: jsonb('marks').notNull().default([]),
+		readings: jsonb('readings').notNull().default([]),
+		ending: text('ending'),
+		flags: jsonb('flags').notNull().default([]),
+		requestedStatus: text('requested_status'),
+		checkerModel: text('checker_model'),
+		sessionId: uuid('session_id'),
+		createdBy: uuid('created_by').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('outcome_checks_object_idx').on(t.objectId, t.createdAt),
+		index('outcome_checks_workspace_idx').on(t.workspaceId),
+		uniqueIndex('outcome_checks_round_idx').on(t.objectId, t.round).where(sql`${t.kind} = 'round'`),
+		check('outcome_checks_kind_check', sql`${t.kind} in ('round', 'blind')`),
+		check(
+			'outcome_checks_ending_check',
+			sql`${t.ending} is null or ${t.ending} in ('checks_passed', 'sent_back', 'round_limit_reached', 'list_does_not_fit', 'stopped_by_person')`,
+		),
+	],
+)
+
+// How checking of a job ended, and whether a person accepted it. Two separate things: the check
+// sets the ending and never touches accepted_by / accepted_at. One row per job.
+export const jobOutcomes = pgTable(
+	'job_outcomes',
+	{
+		objectId: uuid('object_id')
+			.primaryKey()
+			.references(() => objects.id, { onDelete: 'cascade' }),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		ending: text('ending'),
+		endedAt: timestamp('ended_at', { withTimezone: true }),
+		acceptedBy: uuid('accepted_by').references(() => actors.id, { onDelete: 'set null' }),
+		acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('job_outcomes_workspace_idx').on(t.workspaceId),
+		check(
+			'job_outcomes_ending_check',
+			sql`${t.ending} is null or ${t.ending} in ('checks_passed', 'sent_back', 'round_limit_reached', 'list_does_not_fit', 'stopped_by_person')`,
+		),
+	],
+)
+
 // ── Session Logs ───────────────────────────────────────────────────────────
 
 export const sessionLogs = pgTable(
@@ -1510,6 +1626,11 @@ export const conversationParticipants = pgTable(
 		leftAt: timestamp('left_at', { withTimezone: true }),
 		pinned: boolean('pinned').notNull().default(false),
 		archived: boolean('archived').notNull().default(false),
+		// When this person put the chat on Later; null when they have not. The chat counts as Later
+		// only while no message has arrived since (later_at is not before conversations.last_message_at),
+		// so a new message brings it back without writing to anyone's row. Set from the database
+		// clock so it compares with last_message_at on the same clock. See migration 0165.
+		laterAt: timestamp('later_at', { withTimezone: true }),
 		// High-water mark into messages.id (bigserial, monotonic).
 		lastReadMessageId: bigint('last_read_message_id', { mode: 'number' }),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -2066,6 +2187,10 @@ export const notifications = pgTable(
 		index('notifications_session_id_idx')
 			.on(t.sessionId)
 			.where(sql`${t.sessionId} IS NOT NULL`),
+		// ON DELETE SET NULL FK to objects. Built CONCURRENTLY in migration 0167.
+		index('notifications_object_id_idx')
+			.on(t.objectId)
+			.where(sql`${t.objectId} IS NOT NULL`),
 	],
 )
 
@@ -2776,6 +2901,11 @@ export const installedLoops = pgTable(
 	(t) => [
 		unique('installed_loops_ws_source_uniq').on(t.workspaceId, t.sourceLoopId),
 		index('installed_loops_source_locked_idx').on(t.sourceLoopId, t.isLocked),
+		// NO ACTION FK to objects: deleting an object checks this column. Built CONCURRENTLY in
+		// migration 0169.
+		index('installed_loops_object_id_idx')
+			.on(t.objectId)
+			.where(sql`${t.objectId} IS NOT NULL`),
 	],
 )
 
@@ -3645,5 +3775,243 @@ export const apiRouteTimingMinutes = pgTable(
 				t.clientVersion,
 			],
 		}),
+	],
+)
+
+// ── Receipt intake ──────────────────────────────────────────────────────────
+//
+// How an owner hands receipts to an accounting flow besides uploading in chat (task: Let owners
+// send receipts three ways). One row per flow object. The email route is one address with a long
+// random part (email_token) on a domain Maskin owns; only senders in allowed_senders are read, and
+// everything else is counted in held_count and dropped before any agent sees it. day_utc and
+// day_count are the daily cap shared by both routes. Counters hold numbers only, never mail text.
+export const receiptIntakes = pgTable(
+	'receipt_intakes',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		// The flow (an object of type loop) the receipts belong to. One intake per flow.
+		loopObjectId: uuid('loop_object_id')
+			.references(() => objects.id, { onDelete: 'cascade' })
+			.notNull()
+			.unique(),
+		// The owner who set it up. Receipt files are created under this actor, so the intake goes
+		// with them (account deletion erases it by hand, as the actor row is kept).
+		createdBy: uuid('created_by')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		// The random part of the receiving address. Rotating it makes the old address dead.
+		emailToken: text('email_token').notNull().unique(),
+		emailEnabled: boolean('email_enabled').notNull().default(false),
+		// Lowercase addresses the owner allows. Empty means the owner's own login email only.
+		allowedSenders: text('allowed_senders').array().notNull().default(sql`'{}'::text[]`),
+		acceptedCount: integer('accepted_count').notNull().default(0),
+		heldCount: integer('held_count').notNull().default(0),
+		// The UTC day (YYYY-MM-DD) day_count counts receipts for.
+		dayUtc: text('day_utc'),
+		dayCount: integer('day_count').notNull().default(0),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index('receipt_intakes_workspace_idx').on(t.workspaceId)],
+)
+export type ReceiptIntake = typeof receiptIntakes.$inferSelect
+
+/**
+ * Keys for the command route. Not an actor API key: a key here can only add receipt files to its
+ * one flow and opens nothing else (the route reads only this table). key_hash is the hex SHA-256
+ * of the full key; last4 is what the owner sees. A key works while revoked_at is null.
+ */
+export const receiptIntakeKeys = pgTable(
+	'receipt_intake_keys',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		intakeId: uuid('intake_id')
+			.references(() => receiptIntakes.id, { onDelete: 'cascade' })
+			.notNull(),
+		keyHash: text('key_hash').notNull().unique(),
+		last4: text('last4').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		revokedAt: timestamp('revoked_at', { withTimezone: true }),
+		lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+	},
+	(t) => [index('receipt_intake_keys_intake_idx').on(t.intakeId)],
+)
+export type ReceiptIntakeKey = typeof receiptIntakeKeys.$inferSelect
+
+// ── Owner approvals ────────────────────────────────────────────────────────
+
+// The owner approval record: one row per "the owner approved this", shared by every step that needs
+// one. kind says what was approved (dinero_books: the final approval of a period's books), subject
+// says which one, figures_hash is the sha256 of the figures the owner saw. expires_at and used_at
+// are for steps that consume an approval once. approved_by carries no foreign key: it is a record.
+// See 0175_owner_approvals.sql.
+export const ownerApprovals = pgTable(
+	'owner_approvals',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		kind: text('kind').notNull(),
+		subject: text('subject').notNull(),
+		figuresHash: text('figures_hash').notNull(),
+		approvedBy: uuid('approved_by').notNull(),
+		approvedAt: timestamp('approved_at', { withTimezone: true }).notNull().defaultNow(),
+		expiresAt: timestamp('expires_at', { withTimezone: true }),
+		usedAt: timestamp('used_at', { withTimezone: true }),
+	},
+	(t) => [
+		// One open approval per subject: two clicks at the same instant cannot write two rows. A used
+		// approval is out of the way, so a later step can approve the same subject again.
+		uniqueIndex('owner_approvals_open_ws_kind_subject_uniq')
+			.on(t.workspaceId, t.kind, t.subject)
+			.where(sql`${t.usedAt} IS NULL`),
+	],
+)
+
+// ── Search opens (frecency) ────────────────────────────────────────────────
+
+// One row per person and result they opened from a search. decayed_opens is the open count with
+// age folded in: each open adds 1 to the old value halved per 14 days, last_opened_at says when
+// the value was current. Search reads it back decayed to now. Only the caller's own rows are read.
+// entity_id has no foreign key: it points at a chat, object, agent or person. See 0177_search_opens.sql.
+export const searchOpens = pgTable(
+	'search_opens',
+	{
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		entityId: uuid('entity_id').notNull(),
+		decayedOpens: doublePrecision('decayed_opens').notNull().default(0),
+		lastOpenedAt: timestamp('last_opened_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [primaryKey({ columns: [t.workspaceId, t.actorId, t.entityId] })],
+)
+
+// ── YouTube approval gate ──────────────────────────────────────────────────
+
+// One write an agent wants to make on YouTube, held until a person approves it. A tool call only
+// ever creates a row here; the server-side executor is the one caller of the Google write client,
+// and it runs a row only after a person approved it. payload is the exact request; it is cleared
+// when the action ends (executed, rejected, expired, failed) and never kept past 30 days.
+// requested_by_actor, requested_by_session and approved_by carry no foreign key: they are a record.
+// The person who approved is read from approved_by, never from anything an agent wrote.
+// status: pending, approved, rejected, expired, executed, failed. claimed_at is set once, by the
+// executor, in one conditional update, which is what makes an approved action run at most once.
+// See 0167_youtube_pending_actions.sql.
+export const youtubePendingActions = pgTable(
+	'youtube_pending_actions',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		integrationId: uuid('integration_id')
+			.references(() => integrations.id, { onDelete: 'cascade' })
+			.notNull(),
+		kind: text('kind').notNull(),
+		payload: jsonb('payload'),
+		payloadHash: text('payload_hash').notNull(),
+		targetVideoId: text('target_video_id'),
+		// The channel's public name, resolved by the server when the action was made, for the card.
+		channelLabel: text('channel_label'),
+		agentNote: text('agent_note'),
+		// sha256 of a comment's normalized text, so "no identical comment twice" holds after the
+		// payload is cleared. Null for every other kind. See 0168_youtube_action_text_hash.sql.
+		textHash: text('text_hash'),
+		requestedByActor: uuid('requested_by_actor').notNull(),
+		requestedBySession: uuid('requested_by_session'),
+		cardEventId: bigint('card_event_id', { mode: 'number' }),
+		status: text('status').notNull().default('pending'),
+		approvedBy: uuid('approved_by'),
+		approvedPayloadHash: text('approved_payload_hash'),
+		decidedAt: timestamp('decided_at', { withTimezone: true }),
+		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+		claimedAt: timestamp('claimed_at', { withTimezone: true }),
+		executedAt: timestamp('executed_at', { withTimezone: true }),
+		resultCode: text('result_code'),
+		// Upload progress (kind upload_video), written back so a cut-off upload resumes. The session
+		// address is cleared when the action ends. See 0169_youtube_upload_progress.sql.
+		uploadSessionUri: text('upload_session_uri'),
+		uploadBytesSent: bigint('upload_bytes_sent', { mode: 'number' }),
+		uploadAttempts: integer('upload_attempts').notNull().default(0),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('youtube_pending_actions_workspace_status_idx').on(t.workspaceId, t.status),
+		index('youtube_pending_actions_status_expires_idx').on(t.status, t.expiresAt),
+		index('youtube_pending_actions_text_hash_idx')
+			.on(t.workspaceId, t.textHash)
+			.where(sql`${t.textHash} is not null`),
+		check(
+			'youtube_pending_actions_status_check',
+			sql`${t.status} in ('pending', 'approved', 'rejected', 'expired', 'executed', 'failed')`,
+		),
+	],
+)
+
+// One row per decision on a YouTube action, kept 12 months. Ids, counts and codes only: never the
+// payload, a comment, a title or an error string. The safety line "no public action without
+// approval" is read from here (an executed row with no approved row for the same action). No
+// foreign key to the action or the integration, so the record outlives both.
+// decision: approved, rejected, expired, executed, failed, refused. See 0167_youtube_pending_actions.sql.
+export const youtubeActionAudit = pgTable(
+	'youtube_action_audit',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		pendingActionId: uuid('pending_action_id').notNull(),
+		integrationId: uuid('integration_id').notNull(),
+		kind: text('kind').notNull(),
+		decision: text('decision').notNull(),
+		actorId: uuid('actor_id'),
+		actorType: text('actor_type'),
+		payloadHash: text('payload_hash'),
+		resultCode: text('result_code'),
+		requestedBySession: uuid('requested_by_session'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('youtube_action_audit_action_idx').on(t.pendingActionId),
+		index('youtube_action_audit_workspace_created_idx').on(t.workspaceId, t.createdAt),
+		check(
+			'youtube_action_audit_decision_check',
+			sql`${t.decision} in ('approved', 'rejected', 'expired', 'executed', 'failed', 'refused')`,
+		),
+	],
+)
+
+// ── YouTube quota ──────────────────────────────────────────────────────────
+
+// Units charged against the YouTube Data API today. One row per (Pacific date, scope, bucket):
+// scope is the word global or a workspace id, bucket is the Google quota bucket (data, search,
+// upload, analytics). Holds no YouTube data, only the date, the scope, the bucket and a count. See
+// 0166_youtube_quota_usage.sql and 0170_youtube_quota_bucket.sql.
+export const youtubeQuotaUsage = pgTable(
+	'youtube_quota_usage',
+	{
+		quotaDate: date('quota_date').notNull(),
+		scope: text('scope').notNull(),
+		bucket: text('bucket').notNull().default('data'),
+		unitsUsed: integer('units_used').notNull().default(0),
+	},
+	(t) => [
+		primaryKey({
+			columns: [t.quotaDate, t.scope, t.bucket],
+			name: 'youtube_quota_usage_pkey',
+		}),
+		check('youtube_quota_usage_units_check', sql`${t.unitsUsed} >= 0`),
+		check(
+			'youtube_quota_usage_bucket_check',
+			sql`${t.bucket} IN ('data', 'search', 'upload', 'analytics')`,
+		),
 	],
 )

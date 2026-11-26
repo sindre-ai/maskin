@@ -64,6 +64,27 @@ export function scrubAuthorizeUrls<
 	return event
 }
 
+// Which half of maskin.io an event came from: the public pages (home, docs, marketplace, sign-in and
+// sign-up) or the signed-in app. They share one host and one PostHog project, so the path decides.
+// The app is a workspace id first (/<workspace id>/chats and so on) or one of the signed-in routes
+// below. Everything else is public, including login and signup. Dashboards derive the same split
+// from $pathname for events captured before this property existed (see the tracking plan page).
+export type SiteArea = 'landing' | 'app'
+
+const WORKSPACE_PATH = /^\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\/|$)/i
+const APP_PATH = /^\/(workspaces|start-trial|invite|oauth|connect|tv|prototypes)(\/|$)/
+
+export function siteAreaForPath(pathname: string): SiteArea {
+	return WORKSPACE_PATH.test(pathname) || APP_PATH.test(pathname) ? 'app' : 'landing'
+}
+
+// The path the event happened on: the one posthog-js stamped on it, else the page's own.
+function eventPathname(properties: Record<string, unknown>): string {
+	const stamped = properties.$pathname
+	if (typeof stamped === 'string') return stamped
+	return typeof window === 'undefined' ? '/' : window.location.pathname
+}
+
 // Every web event says where it came from and who acted. The web is only ever
 // used by a signed-in or signing-up person, so an event with no actor_type yet
 // (pageviews before the workspace mounts, sign-up events) is a human's. The
@@ -89,6 +110,7 @@ export function withSharedProperties<
 			...(area ? { feature_area: area } : {}),
 			...properties,
 			surface: 'web',
+			site_area: siteAreaForPath(eventPathname(properties)),
 		},
 	} as T
 }
@@ -256,6 +278,30 @@ export function firstTouchFromPosthog(): FirstTouch {
 	}
 }
 
+function cleanSourceTag(value: unknown): string {
+	return (typeof value === 'string' ? value : '')
+		.trim()
+		.toLowerCase()
+		.replace(/[^a-z0-9._-]/g, '')
+		.slice(0, 60)
+}
+
+// The campaign tag (one lower-case name per marketplace, or linkedin, internal, outbound) a visit came in
+// with: the utm_source on this page, else the one saved from the first visit. Empty when there is none.
+export function utmSourceFrom(search: string, firstTouch: FirstTouch = {}): string {
+	return (
+		cleanSourceTag(new URLSearchParams(search).get('utm_source') ?? '') ||
+		cleanSourceTag(firstTouch.utmSource)
+	)
+}
+
+// The utm_source property for the sign-up events. Left out when the visit had no tag, never an empty
+// string, so an untagged sign-up reads the same as before.
+export function utmSourceProps(): { utm_source?: string } {
+	const utmSource = utmSourceFrom(window.location.search, firstTouchFromPosthog())
+	return utmSource ? { utm_source: utmSource } : {}
+}
+
 // The channel a sign-up came from: the utm_source on the page, else the one from the first visit, else
 // the site that sent the person (this page's referrer, then the first visit's), else direct. Lower case,
 // short, and only letters, digits and . _ - so a crafted link cannot put free text on a person.
@@ -265,19 +311,13 @@ export function signupSourceFrom(
 	ownHost: string,
 	firstTouch: FirstTouch = {},
 ): string {
-	const clean = (value: unknown) =>
-		(typeof value === 'string' ? value : '')
-			.trim()
-			.toLowerCase()
-			.replace(/[^a-z0-9._-]/g, '')
-			.slice(0, 60)
+	const clean = cleanSourceTag
 	const own = clean(ownHost.replace(/^www\./, ''))
 	const outside = (host: unknown) => {
 		const value = clean(typeof host === 'string' ? host.replace(/^www\./, '') : '')
 		return value && value !== own ? value : ''
 	}
-	const utm =
-		clean(new URLSearchParams(search).get('utm_source') ?? '') || clean(firstTouch.utmSource)
+	const utm = utmSourceFrom(search, firstTouch)
 	if (utm) return utm
 	let pageHost = ''
 	try {

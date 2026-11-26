@@ -59,20 +59,31 @@ describe('pickWeekOpen', () => {
 
 describe('summary email with a pick', () => {
 	const base = {
-		summary: {
-			title: '1 thing needs you',
-			body: '1 thing needs you',
-			waiting: 1,
-			finished: 0,
-			workspaceId: 'w',
-			workspaceName: 'W',
-			multiWorkspace: false,
-			topObjectId: null,
-			topHeadline: null,
-			waitingElsewhere: 0,
-			finishedRuns: [],
+		digest: {
+			waitingCount: 1,
+			waiting: [
+				{
+					workspaceId: 'w',
+					title: 'Approve the launch email',
+					line: null,
+					typeLabel: 'Task',
+					typeKind: 'task',
+					at: new Date('2026-03-10T07:00:00Z'),
+					dueAt: null,
+					path: '/w/objects/o',
+					buttonLabel: 'Review' as const,
+				},
+			],
+			groups: [],
+			updatesCount: 0,
+			anchorWorkspaceId: 'w',
 		},
 		step: 'daily' as const,
+		appUrl: 'https://maskin.test',
+		timezone: 'UTC',
+		now: new Date('2026-03-10T08:00:00Z'),
+		sendTime: '08:00',
+		rhythm: null,
 		buttonUrl: 'https://maskin.test/w?surface=email&block=summary',
 		stopUrl: 'https://maskin.test/api/email/stop?token=x',
 		nextStep: null,
@@ -88,14 +99,14 @@ describe('summary email with a pick', () => {
 	it('puts the pick below the summary button and above the stop link, in text and html', () => {
 		const mail = buildSummaryEmail({ ...base, pick })
 		const { text, html } = mail
-		expect(text.indexOf('Open it:')).toBeLessThan(text.indexOf('Marketplace pick'))
+		expect(text.indexOf('Open Maskin:')).toBeLessThan(text.indexOf('Marketplace pick'))
 		expect(text.indexOf('Marketplace pick')).toBeLessThan(text.indexOf('Stop these emails'))
 		expect(text).toContain('Why you see this: you already use Alpha Watch')
 		expect(text).toContain(`Not useful: ${pick.dismissUrl}`)
 		expect(html).toContain('Not useful</a>')
 		expect(html).toContain('&lt;b&gt;for you&lt;/b&gt;')
 		expect(html).not.toContain('<b>for you</b>')
-		expect(mail.subject).toBe('1 thing needs you')
+		expect(mail.subject).toBe('1 needs you')
 	})
 
 	it('has no pick block, no price talk and no urgency without one', () => {

@@ -22,7 +22,6 @@ import {
 import { and, asc, eq, isNull } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
-import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
 import { logger } from '../lib/logger'
 import {
 	captureAuthorizeStarted,
@@ -45,7 +44,7 @@ import { errorSchema, idParamSchema } from '../lib/openapi-schemas'
 // itself is a web route; it calls these with the person's own API key.
 //
 // preview, approve and deny issue new access, so they sit behind the MASKIN_MCP_OAUTH_ENABLED
-// switch (404 when off) and the mcp-oauth-consent flag (403 access_denied for non-testers). List
+// switch (404 when off), and only a person may use them (403 access_denied for an agent). List
 // and revoke do not: a person must always be able to see and end their connections. A Claude
 // token (mat_) never gets here: authMiddleware refuses every /api/oauth route for it, because an
 // OAuth client must not approve its own access.
@@ -70,7 +69,7 @@ const authorizeErrorResponses = {
 		content: jsonContent(oauthErrorBodySchema),
 	},
 	403: {
-		description: 'access_denied: flag off for this person, or the caller is not a person',
+		description: 'access_denied: the caller is not a person',
 		content: jsonContent(oauthErrorBodySchema),
 	},
 	404: {
@@ -88,20 +87,14 @@ type Gate = {
 }
 
 /**
- * The checks shared by preview, approve and deny, in the order the spec fixes: switch, person
- * and flag, rate limit. Returns the refusal to send, or null to carry on. The switch and flag
- * refusals are not events: a person who is not let in is not part of the funnel.
+ * The checks shared by preview, approve and deny, in the order the spec fixes: switch, person,
+ * rate limit. Returns the refusal to send, or null to carry on. The switch and person
+ * refusals are not events: a caller who is not let in is not part of the funnel.
  */
 function gateAuthorize(caller: { actorId: string; actorType: string }): Gate | null {
 	if (!isMcpOAuthEnabled()) return { status: 404, body: createApiError('NOT_FOUND', 'Not found') }
 	if (caller.actorType !== 'human') {
 		return { status: 403, body: accessDeniedBody('Only a person can approve a connection') }
-	}
-	if (!isFlagEnabled(caller.actorId, FLAGS.MCP_OAUTH_CONSENT)) {
-		return {
-			status: 403,
-			body: accessDeniedBody('Connecting apps is not available for your account yet'),
-		}
 	}
 	if (!allowAuthorize(caller.actorId)) {
 		return {

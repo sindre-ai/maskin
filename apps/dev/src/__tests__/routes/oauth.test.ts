@@ -8,7 +8,6 @@ const { capturePosthogEvent } = vi.hoisted(() => ({
 }))
 vi.mock('../../lib/analytics/posthog', () => ({ capturePosthogEvent }))
 
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import oauthRoutes from '../../routes/oauth'
 import { buildWorkspaceMember } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
@@ -39,12 +38,9 @@ function previewPath(overrides: Record<string, string | undefined> = {}) {
 	return `/api/oauth/authorize/preview?${new URLSearchParams(authorizeParams(overrides))}`
 }
 
-/** A person, switched on for the flag, on a fresh actor id so the per-person limiter starts empty. */
-function setup(options: { actorType?: string; flag?: boolean } = {}) {
+/** A person on a fresh actor id, on no tester list, so the per-person limiter starts empty. */
+function setup(options: { actorType?: string } = {}) {
 	const actorId = randomUUID()
-	vi.stubEnv('FF_TESTER_FEATURES', options.flag === false ? '' : 'mcp-oauth-consent')
-	vi.stubEnv('FF_TESTER_ACTOR_IDS', actorId)
-	_resetFeatureFlagConfig()
 	const ctx = createTestApp(oauthRoutes, '/api/oauth', actorId, options.actorType ?? 'human')
 	return { actorId, ...ctx }
 }
@@ -57,7 +53,6 @@ beforeEach(() => {
 
 afterEach(() => {
 	vi.unstubAllEnvs()
-	_resetFeatureFlagConfig()
 })
 
 describe('GET /api/oauth/authorize/preview', () => {
@@ -89,16 +84,7 @@ describe('GET /api/oauth/authorize/preview', () => {
 		expect(res.status).toBe(404)
 	})
 
-	it('answers 403 access_denied when the flag is off for the person', async () => {
-		const { app } = setup({ flag: false })
-
-		const res = await app.request(jsonGet(previewPath()))
-
-		expect(res.status).toBe(403)
-		expect((await res.json()).error).toBe('access_denied')
-	})
-
-	it('answers 403 access_denied for an agent actor even with the flag on', async () => {
+	it('answers 403 access_denied for an agent actor', async () => {
 		const { app } = setup({ actorType: 'agent' })
 
 		const res = await app.request(jsonGet(previewPath()))
@@ -107,7 +93,7 @@ describe('GET /api/oauth/authorize/preview', () => {
 		expect((await res.json()).error).toBe('access_denied')
 	})
 
-	it('answers the env switch before the flag: 404 for an agent when the switch is off', async () => {
+	it('answers the env switch before the person check: 404 for an agent when the switch is off', async () => {
 		const { app } = setup({ actorType: 'agent' })
 		vi.stubEnv('MASKIN_MCP_OAUTH_ENABLED', '')
 
@@ -204,9 +190,9 @@ describe('GET /api/oauth/authorize/preview', () => {
 		expect(JSON.stringify([first, second])).not.toContain(STATE)
 	})
 
-	it('sends no event when the switch or the flag turns the person away', async () => {
-		const flagOff = setup({ flag: false })
-		await flagOff.app.request(jsonGet(previewPath()))
+	it('sends no event when the switch or the person check turns the caller away', async () => {
+		const agent = setup({ actorType: 'agent' })
+		await agent.app.request(jsonGet(previewPath()))
 		const switchOff = setup()
 		vi.stubEnv('MASKIN_MCP_OAUTH_ENABLED', '')
 		await switchOff.app.request(jsonGet(previewPath()))
@@ -287,9 +273,9 @@ describe('POST /api/oauth/authorize/approve', () => {
 		expect(calls.inserts).toHaveLength(0)
 	})
 
-	it('answers 403 access_denied with the flag off and 404 with the switch off', async () => {
-		const off = setup({ flag: false })
-		const flagOff = await off.app.request(
+	it('answers 403 access_denied for an agent and 404 with the switch off', async () => {
+		const agent = setup({ actorType: 'agent' })
+		const agentRes = await agent.app.request(
 			jsonRequest('POST', '/api/oauth/authorize/approve', approveBody()),
 		)
 		const on = setup()
@@ -298,7 +284,7 @@ describe('POST /api/oauth/authorize/approve', () => {
 			jsonRequest('POST', '/api/oauth/authorize/approve', approveBody()),
 		)
 
-		expect(flagOff.status).toBe(403)
+		expect(agentRes.status).toBe(403)
 		expect(switchOff.status).toBe(404)
 	})
 
@@ -379,8 +365,8 @@ describe('POST /api/oauth/authorize/deny', () => {
 })
 
 describe('connections list and disconnect', () => {
-	it('lists with the flag off and the env switch off: they are not behind either', async () => {
-		const { app, mockResults } = setup({ flag: false })
+	it('lists with the env switch off: it is not behind the switch', async () => {
+		const { app, mockResults } = setup()
 		vi.stubEnv('MASKIN_MCP_OAUTH_ENABLED', '')
 		mockResults.select = []
 
@@ -391,7 +377,7 @@ describe('connections list and disconnect', () => {
 	})
 
 	it("answers 404 when disconnecting a connection that is not the caller's own", async () => {
-		const { app, mockResults } = setup({ flag: false })
+		const { app, mockResults } = setup()
 		vi.stubEnv('MASKIN_MCP_OAUTH_ENABLED', '')
 		mockResults.select = []
 

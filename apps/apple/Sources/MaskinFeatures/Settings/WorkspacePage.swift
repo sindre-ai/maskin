@@ -51,6 +51,15 @@ struct PageRowModel: Identifiable {
 	var accessory: Accessory = .none
 	var showsChevron = false
 	var action: (() -> Void)?
+	/// A Message icon after the row (Members): its own button, so it never nests inside the row's.
+	var message: MessageAction?
+
+	struct MessageAction {
+		/// "Message Sam": what VoiceOver reads.
+		var label: String
+		var isEnabled = true
+		var action: () -> Void
+	}
 }
 
 extension PageStateTone {
@@ -87,12 +96,29 @@ private struct PageRow: View {
 	let model: PageRowModel
 
 	var body: some View {
-		if let action = model.action {
-			Button(action: action) { content }
-				.buttonStyle(.maskinPressed)
-		} else {
-			content
+		HStack(spacing: 0) {
+			if let action = model.action {
+				Button(action: action) { content }
+					.buttonStyle(.maskinPressed)
+			} else {
+				content
+			}
+			if let message = model.message { messageButton(message) }
 		}
+	}
+
+	private func messageButton(_ message: PageRowModel.MessageAction) -> some View {
+		Button(action: message.action) {
+			Image(systemName: "message")
+				.maskinSymbol(MaskinSpace.s9, weight: .semibold)
+				.foregroundStyle(message.isEnabled ? MaskinColor.ink3 : MaskinColor.ink5)
+				.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
+				.contentShape(Rectangle())
+		}
+		.buttonStyle(.maskinPressed)
+		.disabled(!message.isEnabled)
+		.accessibilityLabel(message.label)
+		.padding(.trailing, MaskinSpace.s4)
 	}
 
 	private var content: some View {

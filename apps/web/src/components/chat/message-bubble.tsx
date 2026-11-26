@@ -1,4 +1,5 @@
 import {
+	DraftNotesContext,
 	renderLinkedCard,
 	renderLinkedChip,
 	renderLinkedGithubChip,
@@ -25,6 +26,7 @@ import { useLinkedChat } from '@/hooks/use-linked-chat'
 import { useLoop } from '@/hooks/use-loops'
 import { useToggleReaction } from '@/hooks/use-message-reactions'
 import { useObject } from '@/hooks/use-objects'
+import { useQuestionDraftNote } from '@/hooks/use-question-draft-notes'
 import { useTrigger } from '@/hooks/use-triggers'
 import type { MessageContextNotification, MessageContextObject, MessageResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
@@ -43,6 +45,7 @@ import {
 	splitOwnLinks,
 } from '@/lib/linked-objects'
 import { hasMarkdownSyntax } from '@/lib/markdown-syntax'
+import type { QuestionAnswer } from '@/lib/question-answers'
 import { type TagSegment, isTaggable, splitTextByTags, tagLabel } from '@/lib/tag-input-model'
 import { useIsEnterpriseWorkspace } from '@/lib/workspace-context'
 import { formatQuestionsAsMarkdown } from '@maskin/shared'
@@ -65,6 +68,7 @@ import { Fragment, type Ref, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { ComputerRequestCard } from './computer-request-card'
 import { EditMessageCard } from './edit-message-card'
+import { FailedTurnNotice, isPermanentFailure } from './failed-turn-notice'
 import { HandedOffStrip } from './handed-off-strip'
 import { HandoffCard } from './handoff-card'
 import { IntegrationAccessRequestCard } from './integration-access-request-card'
@@ -95,8 +99,8 @@ interface MessageBubbleProps {
 	 *  message, rendered as a muted line under the name (mockup screenshots).
 	 *  Only ever present on an agent message. */
 	activity?: React.ReactNode
-	/** A later message in the thread already answered this message's question. */
-	questionAnswered?: boolean
+	/** What a later message in the thread answered to this message's question; absent while it is open. */
+	questionAnswer?: QuestionAnswer
 	/** S2 · bet 34706e2f, task 5. When set, this message spawned an agent
 	 *  session — render the persistent vertical --brand bar to the bubble's
 	 *  right and the spawn chip below it. */
@@ -136,7 +140,7 @@ export function MessageBubble({
 	workspaceId,
 	message,
 	activity,
-	questionAnswered = false,
+	questionAnswer,
 	spawnInfo,
 	shownLinkedObjectIds,
 	updatedLinkedObjectIds,
@@ -228,6 +232,17 @@ export function MessageBubble({
 	const question = message.metadata?.question
 	const isQuestionTwin =
 		question !== undefined && message.content === formatQuestionsAsMarkdown(question.questions)
+	// A question asked together with a draft that can still be approved goes into the draft's card.
+	const draftQuestion = useQuestionDraftNote(
+		workspaceId,
+		message.content,
+		question,
+		shownLinkedObjectIds,
+	)
+	const draftNotes = useMemo(
+		() => new Map(draftQuestion ? [[draftQuestion.draftId, draftQuestion.note]] : []),
+		[draftQuestion],
+	)
 	const shownContent =
 		isOwn && answers && answers.length > 0 && message.content.startsWith('**')
 			? answers
@@ -588,35 +603,43 @@ export function MessageBubble({
 						    line as a card where it stands (a draft can be approved without leaving
 						    the chat) and a link in a sentence as a chip; an id another message holds
 						    the card for is a chip here, and a revised draft's card is tagged Updated. */}
-						<MarkdownContent
-							content={message.content}
-							size="sm"
-							renderVisuals
-							linkedCards={{
-								workspaceId,
-								enterprise,
-								conversationId: message.conversationId,
-								agentId: message.actorId,
-								skipIds: shownLinkedObjectIds,
-								updatedIds: updatedLinkedObjectIds,
-								renderCard: renderLinkedCard,
-								renderChip: renderLinkedChip,
-								renderGithubChip: renderLinkedGithubChip,
-								renderSettingsChip: renderLinkedSettingsChip,
-							}}
-						/>
+						<DraftNotesContext.Provider value={draftNotes}>
+							<MarkdownContent
+								content={message.content}
+								size="sm"
+								renderVisuals
+								linkedCards={{
+									workspaceId,
+									enterprise,
+									conversationId: message.conversationId,
+									agentId: message.actorId,
+									skipIds: shownLinkedObjectIds,
+									updatedIds: updatedLinkedObjectIds,
+									renderCard: renderLinkedCard,
+									renderChip: renderLinkedChip,
+									renderGithubChip: renderLinkedGithubChip,
+									renderSettingsChip: renderLinkedSettingsChip,
+								}}
+							/>
+						</DraftNotesContext.Provider>
 					</div>
+				) : null}
+				{isPermanentFailure(message) ? (
+					<FailedTurnNotice message={message} workspaceId={workspaceId} onRetried={onRetried} />
 				) : null}
 				{/* An agent's AskUserQuestion, surfaced as pickable options. The card carries
 				    the questions and each option's description; the message's markdown twin
-				    (`isQuestionTwin`) is only for readers that have no card. */}
-				{message.metadata?.question ? (
+				    (`isQuestionTwin`) is only for readers that have no card. When the message also
+				    links a draft that can still be approved, the question is a note in the draft's
+				    card instead (`draftQuestion`), so the person is asked once. */}
+				{message.metadata?.question && !draftQuestion ? (
 					<QuestionOptions
 						conversationId={message.conversationId}
 						workspaceId={workspaceId}
 						questionMessageId={message.id}
 						question={message.metadata.question}
-						answered={questionAnswered}
+						answered={questionAnswer !== undefined}
+						answer={questionAnswer}
 						threadRootId={message.threadRootId}
 					/>
 				) : null}

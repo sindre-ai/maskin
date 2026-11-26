@@ -1,8 +1,13 @@
 import type { Database } from '@maskin/db'
-import { AGENT_ACCESS_EFFECT, AGENT_ACCESS_LABELS } from '@maskin/shared'
+import {
+	AGENT_ACCESS_EFFECT,
+	AGENT_ACCESS_LABELS,
+	isPilotHeldIntegrationTool,
+} from '@maskin/shared'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { recordEvent } from '../events/record-event'
 import { logger } from '../logger'
+import { checkPilotHold } from '../pilot-hold'
 import { type AgentAccess, canRead, canWrite, resolveAgentAccess } from './agent-access'
 import { type ToolKind, classifyTool } from './tool-kinds'
 
@@ -24,6 +29,11 @@ export interface ToolGateConfig {
 	/** Name a person recognises: "Slack", "LinkedIn". */
 	providerLabel: string
 	access: AgentAccess
+	/**
+	 * The calling session, from X-Maskin-Session-Id. With it, a write tool waits for a person when
+	 * the session runs under a flow in pilot. Without it (a person chatting) nothing is held.
+	 */
+	sessionId?: string
 }
 
 /** The level as the UI names it ("Read", "Read & write"), so a refusal matches what the person sees. */
@@ -73,7 +83,8 @@ async function recordDenial(cfg: ToolGateConfig, toolName: string, kind: ToolKin
 			action: 'agent_access_denied',
 			entityType: 'integration',
 			entityId: cfg.integrationId,
-			data: { provider: cfg.provider, tool: toolName, kind, access: cfg.access },
+			// A tool this server registered is a real one: the access card may name it.
+			data: { provider: cfg.provider, tool: toolName, kind, access: cfg.access, tool_listed: true },
 		})
 	} catch (err) {
 		// The refusal matters more than its log line.
@@ -115,7 +126,26 @@ export function gateMcpServer(server: McpServer, cfg: ToolGateConfig): void {
 				? description
 				: `${unavailableNote(cfg.providerLabel, kind, cfg.access)} ${description}`.trim(),
 		}
-		if (ok) return register(name, nextConfig, cb)
+		if (ok) {
+			// A write through an outside integration waits in pilot, unless it has its own hold
+			// (Slack, LinkedIn). Asked on every call, so a flow moved out of pilot applies at once.
+			if (!cfg.sessionId || !isPilotHeldIntegrationTool(cfg.provider, kind)) {
+				return register(name, nextConfig, cb)
+			}
+			const sessionId = cfg.sessionId
+			return register(name, nextConfig, async (...cbArgs: unknown[]) => {
+				const hold = await checkPilotHold(cfg.db, {
+					workspaceId: cfg.workspaceId,
+					agentId: cfg.actorId,
+					sessionId,
+					tool: `${cfg.provider}__${name}`,
+					// A tool with no input schema is called with only the request extras.
+					args: config.inputSchema ? cbArgs[0] : undefined,
+				})
+				if (!hold.held) return cb(...cbArgs)
+				return { isError: true, content: [{ type: 'text' as const, text: hold.message }] }
+			})
+		}
 		return register(name, nextConfig, async () => {
 			await recordDenial(cfg, name, kind)
 			return {
@@ -150,13 +180,18 @@ export async function toolGateFor(
 		integrationId: string | null
 		provider: string
 		providerLabel: string
+		/** The chat the call comes from (resolveCallerChat), so an Allow for this chat counts. */
+		conversationId?: string | null
+		sessionId?: string
 	},
 ): Promise<(server: McpServer) => void> {
 	if (!input.integrationId) return () => {}
 	const integrationId = input.integrationId
 	// An integration this workspace does not have resolves to null: treat as no access.
 	const access =
-		(await resolveAgentAccess(db, input.workspaceId, integrationId, input.actorId)) ?? 'none'
+		(await resolveAgentAccess(db, input.workspaceId, integrationId, input.actorId, {
+			conversationId: input.conversationId,
+		})) ?? 'none'
 	return (server) =>
 		gateMcpServer(server, {
 			db,
@@ -166,5 +201,6 @@ export async function toolGateFor(
 			provider: input.provider,
 			providerLabel: input.providerLabel,
 			access,
+			sessionId: input.sessionId,
 		})
 }

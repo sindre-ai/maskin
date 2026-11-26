@@ -473,17 +473,20 @@ interface Actor {
 	type: string
 }
 
-function ActorAutocomplete({
+export function ActorAutocomplete({
 	id,
 	actors,
 	selectedId,
 	placeholder,
+	ariaLabel,
 	onChange,
 }: {
 	id: string
 	actors: Actor[]
 	selectedId: string | null
 	placeholder: string
+	/** Accessible name for rows that have no visible label to point at. */
+	ariaLabel?: string
 	onChange: (id: string | null) => void
 }) {
 	const [open, setOpen] = useState(false)
@@ -557,6 +560,7 @@ function ActorAutocomplete({
 						type="button"
 						// biome-ignore lint/a11y/useSemanticElements: combobox trigger — a native <select> can't render a popover with search + custom rows
 						role="combobox"
+						aria-label={ariaLabel}
 						aria-expanded={open}
 						aria-haspopup="listbox"
 						aria-controls={`${id}-listbox`}

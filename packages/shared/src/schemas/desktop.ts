@@ -48,6 +48,15 @@ export const desktopInputActionSchema = z.discriminatedUnion('action', [
 	}),
 	z.object({ action: z.literal('type'), text: z.string().min(1).max(2000) }),
 	z.object({
+		action: z.literal('attach_file'),
+		path: z
+			.string()
+			.min(1)
+			.max(4096)
+			.regex(/^(\/|~\/)[^\0]*$/, 'Use an absolute path or one starting with ~/'),
+		selector: z.string().min(1).max(500).optional(),
+	}),
+	z.object({
 		action: z.literal('key'),
 		keys: z
 			.array(z.string().regex(KEY_COMBO_RE).max(64))

@@ -25,7 +25,7 @@ import {
 import { findIntegrationRow, getCredential } from '../../lookup'
 import { readContextFor } from '../../read-context'
 import { type ActionRecorder, LinkedInActionRefusal } from './action-log'
-import { type LinkedInFileAttachment, loadPostImage } from './attachment'
+import { type LinkedInFileAttachment, isVideoType, loadPostMedia } from './attachment'
 import { deleteUnipileAccountBestEffort } from './disconnect'
 import {
 	LinkedInIntegrationError,
@@ -1104,6 +1104,14 @@ type ReplyPayload = {
 const IDEMPOTENCY_KEY_MAX = 128
 
 /**
+ * A body of only spaces or line breaks passes the length check but reaches the person as a blank
+ * bubble. Every send and reply, an approved draft's included, goes through the two validators
+ * below, so this is refused once, before LinkedIn is called.
+ */
+const BLANK_BODY_MESSAGE =
+	'body is blank: it has no text besides spaces or line breaks. Nothing was sent.'
+
+/**
  * What a caller gets for passing raw `attachments` to `send_message`. A file only goes out
  * on a message a person approved, through the object it is filed on.
  */
@@ -1125,6 +1133,7 @@ function validateSendPayload(input: {
 	if (typeof input.body !== 'string' || input.body.length === 0 || input.body.length > 8000) {
 		return { ok: false, error: 'body must be a non-empty string, max 8000 chars' }
 	}
+	if (input.body.trim().length === 0) return { ok: false, error: BLANK_BODY_MESSAGE }
 	if (
 		typeof input.idempotency_key !== 'string' ||
 		input.idempotency_key.length === 0 ||
@@ -1154,6 +1163,7 @@ function validateReplyPayload(input: {
 	if (typeof input.body !== 'string' || input.body.length === 0 || input.body.length > 8000) {
 		return { ok: false, error: 'body must be a non-empty string, max 8000 chars' }
 	}
+	if (input.body.trim().length === 0) return { ok: false, error: BLANK_BODY_MESSAGE }
 	// The key is built here, from the chat and the inbound message being
 	// answered, so the webhook path and the sweep path claim the same slot no
 	// matter what a prompt tells the agent. A supplied idempotency_key is
@@ -1709,7 +1719,10 @@ export type PublishPostInput = {
 	text?: unknown
 	post_as?: unknown
 	attachments?: unknown
-	/** Workspace file ids (PNG or JPEG). The server reads the bytes; the caller never sends them. */
+	/**
+	 * Workspace file ids: up to 9 PNG or JPEG images, or one MP4 or MOV video. The server reads
+	 * the bytes; the caller never sends them.
+	 */
 	attachment_file_ids?: unknown
 	can_read?: unknown
 	can_comment?: unknown
@@ -1838,7 +1851,7 @@ export async function publishLinkedInPost(
 		throw new LinkedInIntegrationError('INVALID_INPUT', validation.error)
 	}
 	// Read the files before anything is claimed or posted, so a bad file fails with nothing sent.
-	const images = await loadPostImages(ctx, validation.payload.attachment_file_ids)
+	const media = await loadPostMediaFiles(ctx, validation.payload.attachment_file_ids)
 	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
 	if (!pre.ok) throw pre.error
 	const client = buildLinkedInClient(pre.credentials)
@@ -1856,7 +1869,9 @@ export async function publishLinkedInPost(
 	// is deliberately excluded because it identifies the caller's LinkedIn
 	// credential, not the request semantics.
 	// The file ids are in the hash (validation.payload carries them), so the same text with a
-	// different image is a different post and a retry of the same call replays.
+	// different image or video is a different post and a retry of the same call replays. A video
+	// call can run for half a minute; the claim goes stale after 5 minutes, and a post is never
+	// retried on a timeout (mutating), so a slow call cannot fire a second post.
 	const requestBody = { tool: 'linkedin_publish_post', ...validation.payload }
 	const published = await withContentHashIdempotency({
 		db: ctx.db,
@@ -1871,7 +1886,7 @@ export async function publishLinkedInPost(
 						text: validation.payload.text,
 						...(postAs ? { post_as: postAs } : {}),
 						...validation.payload.extras,
-						...(images ? { attachments: images } : {}),
+						...(media ? { attachments: media } : {}),
 					}),
 				{ mutating: true },
 			)
@@ -1886,16 +1901,16 @@ export async function publishLinkedInPost(
 		: published
 }
 
-async function loadPostImages(
+async function loadPostMediaFiles(
 	ctx: LinkedInOperationContext,
 	fileIds: string[] | undefined,
 ): Promise<LinkedInFileAttachment[] | undefined> {
 	if (!fileIds) return undefined
-	const images: LinkedInFileAttachment[] = []
+	const loaded: LinkedInFileAttachment[] = []
 	for (const fileId of fileIds) {
 		try {
-			images.push(
-				await loadPostImage(
+			loaded.push(
+				await loadPostMedia(
 					{ db: ctx.db, storage: ctx.storage },
 					{ workspaceId: ctx.workspaceId, fileId },
 				),
@@ -1910,8 +1925,15 @@ async function loadPostImages(
 			}
 			throw err
 		}
+		// Stop at the first sign of a mix, before another large file is read into memory.
+		if (loaded.length > 1 && loaded.some((m) => isVideoType(m.content_type))) {
+			throw new LinkedInIntegrationError(
+				'INVALID_INPUT',
+				'A post carries one video, or up to 9 images, never both. Nothing was posted.',
+			)
+		}
 	}
-	return images
+	return loaded
 }
 
 export type CommentInput = { post_id?: unknown; text?: unknown }

@@ -28,6 +28,23 @@ export function computeFit(doc: Size, viewport: Size): number {
 	return clampZoom(Math.min(viewport.w / doc.w, viewport.h / doc.h))
 }
 
+// A re-fit that moves k by less than this fraction is noise, not a new size.
+export const FIT_TOLERANCE = 0.01
+
+// Keep the previous stage/slide size when the new one is within a pixel of it,
+// so a sub-pixel wobble returns the same object and triggers no re-fit.
+export function settleSize(prev: Size | null, next: Size): Size {
+	if (prev && Math.abs(prev.w - next.w) < 1 && Math.abs(prev.h - next.h) < 1) return prev
+	return next
+}
+
+// The zoom an automatic fit should land on: the current k unless the fit moved
+// by more than FIT_TOLERANCE, so the fit settles instead of chasing itself.
+export function settleFit(prevK: number, fitK: number): number {
+	if (prevK > 0 && Math.abs(fitK - prevK) / prevK < FIT_TOLERANCE) return prevK
+	return fitK
+}
+
 export function zoomStep(k: number, dir: 'in' | 'out'): number {
 	return clampZoom(dir === 'in' ? k * ZOOM_STEP : k / ZOOM_STEP)
 }

@@ -33,7 +33,7 @@ async function seedLongFlow(account: Account, title: string) {
 	const loop = await account.api.createObject(account.workspaceId, {
 		type: 'loop',
 		title,
-		status: 'learning',
+		status: 'pilot',
 	})
 	await account.api.updateObject(loop.id, account.workspaceId, {
 		metadata: {

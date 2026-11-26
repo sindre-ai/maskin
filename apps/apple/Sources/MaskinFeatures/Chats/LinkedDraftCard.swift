@@ -3,6 +3,21 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
+/// The question an agent posted with a draft: the card asks it in place of a second question card.
+struct DraftQuestionNote: Equatable {
+	var question: String
+	/// Why the agent suggests the answer, from its recommended option.
+	var reason: String?
+
+	/// The first question of the message, with the reason of the option the agent recommends.
+	init?(questions: [ChatQuestionItem]) {
+		guard let first = questions.first else { return nil }
+		question = first.question
+		let reason = first.options.first(where: \.recommended)?.detail?.trimmingCharacters(in: .whitespacesAndNewlines)
+		self.reason = reason?.isEmpty == false ? reason : nil
+	}
+}
+
 /// A draft an agent wants approved, as a card in the conversation: what it is, where it goes, the
 /// exact text, and Approve. Tapping the head folds it open and shut. Approving records the person's
 /// yes to this exact text (the preview's hash), then tells the agent what was approved.
@@ -11,20 +26,35 @@ struct LinkedDraftCard: View {
 	let preview: ObjectPreview
 	/// Tells the agent after a successful approval: the draft's title and the text that was approved.
 	var onApproved: (_ title: String?, _ body: String) -> Void = { _, _ in }
+	/// Tells the agent the person skipped the draft. Nil where nobody can be told (the Linked
+	/// sheet), so the Skip button is not drawn at all.
+	var onSkipped: (() -> Void)?
 
 	@Environment(\.linkedItems) private var store
 	@State private var expanded: Bool
 	/// What the reader has typed over the draft; nil while the draft reads as the agent wrote it.
 	@State private var edit: DraftEdit?
+	/// Skip was pressed on this device; the button then reads Skipped.
+	@State private var skipped: Bool
+	/// A person skipped this draft on another device or before a reload (read from the chat).
+	private let skippedInChat: Bool
+	/// The agent's question posted with this draft. The card opens by default when it carries one.
+	private let askNote: DraftQuestionNote?
 
 	init(
 		object: WorkObject, preview: ObjectPreview, defaultExpanded: Bool = false, edited: DraftEdit? = nil,
-		onApproved: @escaping (_ title: String?, _ body: String) -> Void = { _, _ in }
+		skipped: Bool = false, skippedInChat: Bool = false, askNote: DraftQuestionNote? = nil,
+		onApproved: @escaping (_ title: String?, _ body: String) -> Void = { _, _ in },
+		onSkipped: (() -> Void)? = nil
 	) {
 		self.object = object
 		self.preview = preview
 		self.onApproved = onApproved
-		_expanded = State(initialValue: defaultExpanded)
+		self.onSkipped = onSkipped
+		self.skippedInChat = skippedInChat
+		self.askNote = askNote
+		_skipped = State(initialValue: skipped)
+		_expanded = State(initialValue: defaultExpanded || askNote != nil)
 		_edit = State(initialValue: edited)
 	}
 
@@ -35,6 +65,7 @@ struct LinkedDraftCard: View {
 
 	private var phase: DraftApprovalPhase? { store?.phase(of: object.id) }
 	private var isApproving: Bool { phase == .approving }
+	private var isSkipped: Bool { skipped || skippedInChat }
 
 	private var isEmail: Bool { preview.kind == "email" }
 	private var original: DraftEdit { DraftEdit(preview: preview) }
@@ -108,6 +139,9 @@ struct LinkedDraftCard: View {
 	private var details: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 			ObjectPreviewMetaView(preview: metaPreview)
+			if let original = preview.originalMessage {
+				OriginalMessageView(label: preview.originalMessageLabel, text: original)
+			}
 			if canEdit && isEmail { subjectField }
 			if canEdit {
 				bodyEditor
@@ -120,10 +154,29 @@ struct LinkedDraftCard: View {
 					.frame(maxWidth: .infinity, alignment: .leading)
 					.fixedSize(horizontal: false, vertical: true)
 			}
+			if let askNote { questionNote(askNote) }
 			footer
 		}
 		.padding(.horizontal, MaskinSpace.s6)
 		.padding(.vertical, MaskinSpace.s5)
+	}
+
+	/// What the agent asked beside the draft, and why it suggests yes. Read only: the buttons below
+	/// are the answer.
+	private func questionNote(_ note: DraftQuestionNote) -> some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+			Text(note.question)
+				.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold))
+				.foregroundStyle(MaskinColor.ink2)
+			if let reason = note.reason {
+				Text(reason)
+					.font(MaskinTypeface.sans(MaskinFontSize.t14))
+					.foregroundStyle(MaskinColor.ink3)
+			}
+		}
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.fixedSize(horizontal: false, vertical: true)
+		.accessibilityElement(children: .combine)
 	}
 
 	private var subjectField: some View {
@@ -196,7 +249,15 @@ struct LinkedDraftCard: View {
 			switch preview.delivery {
 			case .sent: receipt("Sent")
 			case .approved: receipt("Approved")
-			case .draft, nil: approveButton
+			case .draft, nil:
+				HStack(spacing: MaskinSpace.s4) {
+					if isSkipped {
+						receipt("Skipped", systemImage: "xmark")
+					} else if onSkipped != nil {
+						skipButton
+					}
+					approveButton
+				}
 			}
 			if let reason = blockedReason {
 				Text(reason)
@@ -224,15 +285,36 @@ struct LinkedDraftCard: View {
 		return current.blockedReason(isEmail: isEmail)
 	}
 
-	private func receipt(_ text: String) -> some View {
-		Label(text, systemImage: "checkmark")
+	private func receipt(_ text: String, systemImage: String = "checkmark") -> some View {
+		Label(text, systemImage: systemImage)
 			.maskinText(.caption).fontWeight(.semibold)
 			.foregroundStyle(MaskinColor.ink4)
 			.frame(minHeight: MaskinSpace.touchMin)
 	}
 
+	private var skipButton: some View {
+		Button {
+			MaskinHaptics.play(.light)
+			skipped = true
+			onSkipped?()
+		} label: {
+			Text("Skip")
+				.maskinText(.subhead).fontWeight(.semibold)
+				.foregroundStyle(MaskinColor.ink)
+				.padding(.horizontal, MaskinSpace.s8)
+				.frame(minHeight: MaskinSpace.touchMin - MaskinSpace.s3)
+				.background(MaskinSurface.fill, in: Capsule())
+				.opacity(isApproving ? 0.4 : 1)
+		}
+		.buttonStyle(.maskinPressed(.shrink))
+		.disabled(isApproving)
+		.accessibilityLabel("Skip \(title)")
+		.accessibilityHint("Tells the agent not to send this draft")
+	}
+
 	private var approveButton: some View {
-		let enabled = preview.canApprove && current.isApprovable(isEmail: isEmail) && !isApproving && store != nil
+		let enabled =
+			preview.canApprove && current.isApprovable(isEmail: isEmail) && !isApproving && !isSkipped && store != nil
 		return Button(action: approve) {
 			HStack(spacing: MaskinSpace.s3) {
 				if isApproving { ProgressView().controlSize(.small).tint(MaskinSurface.onInverse) }

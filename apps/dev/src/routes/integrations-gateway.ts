@@ -1,11 +1,21 @@
 import type { Database } from '@maskin/db'
 import { integrations } from '@maskin/db/schema'
-import { and, eq } from 'drizzle-orm'
+import { isPilotHeldIntegrationTool } from '@maskin/shared'
+import { and, asc, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
+import { z } from 'zod'
 import { trackIntegrationToolCalled } from '../lib/analytics/integration-events'
+import { countReceiptDraft, receiptDraftConnector } from '../lib/analytics/receipt-events'
 import { createApiError } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { type AgentAccess, resolveAgentAccess } from '../lib/integrations/agent-access'
+import { resolveCallerChat } from '../lib/integrations/chat-lift'
+import {
+	CustomerValueError,
+	fillCustomerValue,
+	hasCustomerValueToken,
+} from '../lib/integrations/customer-value'
+import { checkGoogleToken } from '../lib/integrations/google-token-check'
 import {
 	GATEWAY_BODY_LIMIT_BYTES,
 	GATEWAY_PROVIDERS,
@@ -19,12 +29,38 @@ import {
 	resendSendRefusal,
 	toSse,
 	toolsCallName,
+	withReadOnlyHeaders,
 } from '../lib/integrations/mcp-gateway'
+import { loadOAuthApp } from '../lib/integrations/oauth-app'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
+import {
+	DINERO_LOGGED_TOOLS,
+	dineroCallRefusal,
+	recordDineroAction,
+} from '../lib/integrations/providers/dinero/action-log'
+import { fixedAllowedTools } from '../lib/integrations/providers/dinero/allowed-tools'
+import {
+	DINERO_BRIDGE_TOOLS,
+	callDineroBridge,
+	isDineroBridgeTool,
+} from '../lib/integrations/providers/dinero/bridge'
+import {
+	DINERO_LOCKED_MESSAGE,
+	isDineroPeriodLocked,
+} from '../lib/integrations/providers/dinero/review'
+import {
+	DINERO_APP_TOOLS,
+	answerDineroAppTool,
+	isDineroAppTool,
+} from '../lib/integrations/providers/dinero/vat-check-tool'
+import { assertPublicHost } from '../lib/integrations/public-host'
 import { getProvider } from '../lib/integrations/registry'
 import type { ToolAnnotationsLike } from '../lib/integrations/tool-kinds'
+import { getKmsProvider } from '../lib/keychain-kms'
 import { logger } from '../lib/logger'
-import { decideSend } from '../lib/send-gate'
+import { checkPilotHold } from '../lib/pilot-hold'
+import { decideSend, pilotIsReason } from '../lib/send-gate'
+import { callingSessionId } from '../lib/session-flow'
 import type { IntegrationConfig } from '../lib/types'
 import { isWorkspaceWriter } from '../lib/workspace-auth'
 
@@ -45,7 +81,14 @@ import { isWorkspaceWriter } from '../lib/workspace-auth'
  *    stream, session end): forwarded as is.
  */
 
-type Env = { Variables: { db: Database; actorId: string } }
+type Env = {
+	Variables: {
+		db: Database
+		actorId: string
+		apiKeySessionId?: string | null
+		maskinSessionId?: string
+	}
+}
 
 const app = new Hono<Env>()
 
@@ -74,9 +117,23 @@ function rememberAnnotations(key: string, annotations: Map<string, ToolAnnotatio
 	annotationCache.set(key, annotations)
 }
 
+// The tool names each server listed last, so a refused call can say whether the name is one the
+// provider really has (an agent can send any name in tools/call). Bounded the same way.
+const toolNameCache = new Map<string, Set<string>>()
+
+function rememberToolNames(key: string, names: Set<string>): void {
+	if (names.size === 0) return
+	if (toolNameCache.size >= ANNOTATION_CACHE_MAX && !toolNameCache.has(key)) {
+		const oldest = toolNameCache.keys().next().value
+		if (oldest !== undefined) toolNameCache.delete(oldest)
+	}
+	toolNameCache.set(key, names)
+}
+
 /** Test seam. */
 export function clearGatewayAnnotationCache(): void {
 	annotationCache.clear()
+	toolNameCache.clear()
 }
 
 function jsonRpcError(status: 400 | 403 | 404 | 413 | 502, code: number, message: string) {
@@ -90,6 +147,8 @@ async function handle(c: import('hono').Context<Env>): Promise<Response> {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const provider = c.req.param('provider') ?? ''
+	// Set when the agent was given one specific connection of a provider (a second Gmail account).
+	const integrationId = c.req.param('integrationId')
 	const workspaceId = c.req.header('x-workspace-id')
 
 	if (!GATEWAY_PROVIDERS.has(provider)) {
@@ -112,8 +171,17 @@ async function handle(c: import('hono').Context<Env>): Promise<Response> {
 	}
 	const label = resolved.config.displayName
 
+	if (integrationId !== undefined && !z.string().uuid().safeParse(integrationId).success) {
+		return jsonRpcError(404, -32001, `${label} is not connected to this workspace.`)
+	}
+	// Without an id, the oldest active connection: the same rule as lookup.ts, so a workspace
+	// with two accounts never answers from whichever row the database returns first.
 	const [integration] = await db
-		.select({ id: integrations.id, config: integrations.config })
+		.select({
+			id: integrations.id,
+			config: integrations.config,
+			externalId: integrations.externalId,
+		})
 		.from(integrations)
 		.where(
 			and(
@@ -121,8 +189,10 @@ async function handle(c: import('hono').Context<Env>): Promise<Response> {
 				eq(integrations.provider, provider),
 				eq(integrations.providerMode, 'registered'),
 				eq(integrations.status, 'active'),
+				...(integrationId ? [eq(integrations.id, integrationId)] : []),
 			),
 		)
+		.orderBy(asc(integrations.createdAt), asc(integrations.id))
 		.limit(1)
 	if (!integration) {
 		return jsonRpcError(404, -32001, `${label} is not connected to this workspace.`)
@@ -131,7 +201,40 @@ async function handle(c: import('hono').Context<Env>): Promise<Response> {
 		return jsonRpcError(403, -32001, `${label} is switched off for agent sessions.`)
 	}
 
-	const access = (await resolveAgentAccess(db, workspaceId, integration.id, actorId)) ?? 'none'
+	// A tool at a per-customer address: the server URL carries a place for the workspace's saved
+	// value. It is checked again here, so a stored value that no longer passes is never called.
+	let upstreamUrl = server.url
+	if (resolved.config.auth.type === 'oauth2') {
+		try {
+			const app = resolved.config.auth.config.customerValue
+				? await loadOAuthApp(db, getKmsProvider(), workspaceId, provider)
+				: null
+			upstreamUrl = fillCustomerValue(
+				server.url,
+				resolved.config.auth.config.customerValue,
+				app?.value,
+			)
+			// Looked up on every call: a name that now points inside our network is never called.
+			if (hasCustomerValueToken(server.url)) await assertPublicHost(new URL(upstreamUrl).hostname)
+		} catch (err) {
+			if (!(err instanceof CustomerValueError)) throw err
+			return jsonRpcError(
+				400,
+				-32001,
+				`${label} cannot be called: ${err.message} Check it under Settings → Integrations.`,
+			)
+		}
+	}
+
+	// The chat the call comes from, so an Allow in this chat counts. Unchecked header: no lift.
+	const chat = await resolveCallerChat(db, c.req.header('x-maskin-session-id'), {
+		workspaceId,
+		actorId,
+	})
+	const access =
+		(await resolveAgentAccess(db, workspaceId, integration.id, actorId, {
+			conversationId: chat?.conversationId ?? null,
+		})) ?? 'none'
 
 	return proxyMcp(c, {
 		workspaceId,
@@ -140,8 +243,12 @@ async function handle(c: import('hono').Context<Env>): Promise<Response> {
 		label,
 		integrationId: integration.id,
 		access,
-		cacheKey: `${workspaceId}:${provider}`,
-		upstreamUrl: server.url,
+		// The id is part of the key: two accounts of one provider list the same tool names.
+		cacheKey: `${workspaceId}:${provider}:${integration.id}`,
+		// Named in the tool descriptions only when the agent picked one connection by id.
+		account: integrationId ? (integration.externalId ?? undefined) : undefined,
+		upstreamUrl,
+		allowedTools: fixedAllowedTools(provider, integration.config as IntegrationConfig | null),
 		upstreamHeaders: async () => {
 			let token: string
 			try {
@@ -157,7 +264,11 @@ async function handle(c: import('hono').Context<Env>): Promise<Response> {
 					`${label} needs to be reconnected. Ask a workspace admin to reconnect it under Settings → Integrations.`,
 				)
 			}
-			return buildUpstreamHeaders(server.headers, envKey, token)
+			return withReadOnlyHeaders(
+				buildUpstreamHeaders(server.headers, envKey, token),
+				resolved.config.mcp?.readOnlyHeaders,
+				access,
+			)
 		},
 	})
 }
@@ -173,7 +284,11 @@ export interface ProxyContext {
 	access: AgentAccess
 	/** Remembers each server's own tool annotations between a tools/list and a later call. */
 	cacheKey: string
+	/** The account behind this server (an email address), named in each tool description. Optional. */
+	account?: string
 	upstreamUrl: string
+	/** A fixed list of allowed tools (a custom server's, or Dinero's): any other tool is refused and left out of tools/list. */
+	allowedTools?: readonly string[]
 	/** The headers that sign in upstream. Throws GatewayUpstreamError when it cannot. */
 	upstreamHeaders: () => Promise<Record<string, string>>
 }
@@ -231,13 +346,70 @@ export async function proxyMcp(
 			args: rpc?.params?.arguments,
 			access,
 			annotations: annotationCache.get(cacheKey)?.get(toolName),
+			allowedTools: ctx.allowedTools,
 		})
 		// Read & write lets an agent use Resend's send tools, unless its send setting for emails from its own address holds
 		// or turns off its sends: then they are refused and it is pointed at resend_send_email.
 		if (decision.allowed && provider === 'resend' && RESEND_SEND_TOOLS.has(toolName)) {
-			const send = await decideSend(db, { workspaceId, agentId: actorId, kind: 'agent_email' })
+			const send = await decideSend(db, {
+				workspaceId,
+				agentId: actorId,
+				kind: 'agent_email',
+				sessionId: callingSessionId(c.get('apiKeySessionId'), c.get('maskinSessionId')),
+			})
 			if (send !== 'send_now') {
-				decision = { ...decision, allowed: false, message: resendSendRefusal(toolName, send) }
+				const pilot =
+					send === 'needs_approval' &&
+					(await pilotIsReason(db, {
+						workspaceId,
+						agentId: actorId,
+						kind: 'agent_email',
+						sessionId: callingSessionId(c.get('apiKeySessionId'), c.get('maskinSessionId')),
+					}))
+				decision = {
+					...decision,
+					allowed: false,
+					message: resendSendRefusal(toolName, send, pilot),
+				}
+			}
+		}
+		// Dinero: a booking or payment must carry the version stamp of the voucher the agent read, and a
+		// group voucher only saves a draft while booking is off.
+		if (decision.allowed && provider === 'dinero') {
+			const refusal = dineroCallRefusal(
+				toolName,
+				rpc?.params?.arguments,
+				ctx.allowedTools?.includes('BookVoucher') === true,
+			)
+			if (refusal) decision = { ...decision, allowed: false, message: refusal }
+		}
+		// Dinero: once the owner approved the books for a period that includes today, nothing the
+		// flow does can change them. Reads still work.
+		if (
+			decision.allowed &&
+			provider === 'dinero' &&
+			DINERO_LOGGED_TOOLS.has(toolName) &&
+			(await isDineroPeriodLocked(db, { workspaceId, integrationId: integration.id }))
+		) {
+			decision = { ...decision, allowed: false, message: DINERO_LOCKED_MESSAGE }
+		}
+		// A write waits for a person while the calling session runs under a flow in pilot, unless the
+		// provider has a hold of its own (Gmail, Resend). Asked on every call, so a flow moved out of
+		// pilot applies to the next one. Not an access denial, so no denied-call event.
+		const sessionId = callingSessionId(c.get('apiKeySessionId'), c.get('maskinSessionId'))
+		if (decision.allowed && sessionId && isPilotHeldIntegrationTool(provider, decision.kind)) {
+			const hold = await checkPilotHold(db, {
+				workspaceId,
+				agentId: actorId,
+				sessionId,
+				tool: `${provider}__${toolName}`,
+				args: rpc?.params?.arguments,
+			})
+			if (hold.held) {
+				return new Response(JSON.stringify(denialResult(rpc?.id, hold.message)), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				})
 			}
 		}
 		if (!decision.allowed) {
@@ -253,6 +425,8 @@ export async function proxyMcp(
 						tool: toolName,
 						kind: decision.kind,
 						access,
+						// Only a name the provider listed may be shown on an access card.
+						tool_listed: toolNameCache.get(cacheKey)?.has(toolName) === true,
 						// The inner tool only, never the json input: it can hold personal data.
 						...(decision.innerTool ? { command_tool: decision.innerTool } : {}),
 					},
@@ -288,12 +462,65 @@ export async function proxyMcp(
 		})
 	}
 
+	// get_vat_report reads our own review log, not Dinero: answered here, no sign-in token needed.
+	if (provider === 'dinero' && toolName && allowed && isDineroAppTool(toolName)) {
+		const done = await answerDineroAppTool(
+			db,
+			{ workspaceId, integrationId: integration.id },
+			toolName,
+			rpc?.params?.arguments,
+		)
+		countToolCall(done.isError ? 'API_ERROR' : null)
+		return new Response(
+			JSON.stringify({
+				jsonrpc: '2.0',
+				id: rpc?.id ?? null,
+				result: { isError: done.isError, content: [{ type: 'text', text: done.text }] },
+			}),
+			{ status: 200, headers: { 'content-type': 'application/json' } },
+		)
+	}
+
 	let upstreamHeaders: Record<string, string>
 	try {
 		upstreamHeaders = await ctx.upstreamHeaders()
 	} catch (err) {
 		if (err instanceof GatewayUpstreamError) return jsonRpcError(502, -32002, err.message)
 		throw err
+	}
+
+	// Dinero's public API has tools its hosted server lacks (email an invoice, chase a late one).
+	// They were judged above like any other tool, and are answered here, never sent upstream.
+	if (provider === 'dinero' && toolName && allowed && isDineroBridgeTool(toolName)) {
+		const done = await callDineroBridge(
+			toolName,
+			rpc?.params?.arguments,
+			upstreamHeaders.Authorization ?? upstreamHeaders.authorization ?? '',
+		)
+		countToolCall(done.isError ? 'API_ERROR' : null)
+		const answer = new Response(
+			JSON.stringify({
+				jsonrpc: '2.0',
+				id: rpc?.id ?? null,
+				result: { isError: done.isError, content: [{ type: 'text', text: done.text }] },
+			}),
+			{ status: 200, headers: { 'content-type': 'application/json' } },
+		)
+		if (DINERO_LOGGED_TOOLS.has(toolName)) {
+			void recordDineroAction({
+				db,
+				upstream: answer,
+				requestId: rpc?.id,
+				tool: toolName,
+				args: rpc?.params?.arguments,
+				booking: ctx.allowedTools?.includes('BookVoucher') === true,
+				integrationId: integration.id,
+				workspaceId,
+				actorId,
+				sessionId: callingSessionId(c.get('apiKeySessionId'), c.get('maskinSessionId')),
+			})
+		}
+		return answer
 	}
 
 	const headers = new Headers()
@@ -326,6 +553,62 @@ export async function proxyMcp(
 		return jsonRpcError(502, -32002, `${label} could not be reached. Try again shortly.`)
 	}
 	countToolCall(upstream.ok ? null : `HTTP_${upstream.status}`)
+	// A provider that refuses the token we sent. Google's hosted MCP answers 401 with its whole tool
+	// list in the body, so passing it on made the agent's client drop every tool while the server
+	// still showed as connected. Say what happened instead, and log the vendor's reason (never the token).
+	if (upstream.status === 401) {
+		// For a Google server, also what Google's own token check says about this token.
+		const googleTokenCheck = await checkGoogleToken({
+			connectionKey: integration.id,
+			upstreamUrl: server.url,
+			authorization: upstreamHeaders.Authorization ?? upstreamHeaders.authorization,
+		})
+		logger.warn('Gateway upstream refused the provider token', {
+			workspaceId,
+			integrationId: integration.id,
+			provider,
+			method: rpc?.method ?? method,
+			wwwAuthenticate: upstream.headers.get('www-authenticate')?.slice(0, 300) ?? null,
+			...(googleTokenCheck.checked || googleTokenCheck.reason === 'rate_limited'
+				? { googleTokenCheck }
+				: {}),
+		})
+		await upstream.body?.cancel().catch(() => {})
+		return jsonRpcError(
+			502,
+			-32002,
+			`${label} refused the sign-in Maskin sent it (HTTP 401), so its tools are not available. Ask a workspace admin to reconnect it under Settings → Integrations.`,
+		)
+	}
+	// A draft saved in the customer's accounting system is counted once, when the vendor says it worked.
+	const draftConnector = toolName && allowed ? receiptDraftConnector(server.url, toolName) : null
+	if (draftConnector) {
+		void countReceiptDraft({
+			db,
+			upstream,
+			requestId: rpc?.id,
+			connector: draftConnector,
+			workspaceId,
+			actorId,
+			sessionId: callingSessionId(c.get('apiKeySessionId'), c.get('maskinSessionId')),
+		})
+	}
+
+	// A Dinero call that changes something goes in the owner's action log once Dinero has answered.
+	if (provider === 'dinero' && toolName && allowed && DINERO_LOGGED_TOOLS.has(toolName)) {
+		void recordDineroAction({
+			db,
+			upstream,
+			requestId: rpc?.id,
+			tool: toolName,
+			args: rpc?.params?.arguments,
+			booking: ctx.allowedTools?.includes('BookVoucher') === true,
+			integrationId: integration.id,
+			workspaceId,
+			actorId,
+			sessionId: callingSessionId(c.get('apiKeySessionId'), c.get('maskinSessionId')),
+		})
+	}
 
 	const responseHeaders = new Headers()
 	for (const name of FORWARDED_RESPONSE_HEADERS) {
@@ -350,12 +633,32 @@ export async function proxyMcp(
 	const rewritten = payloads.map((p) => {
 		const m = p as { result?: { tools?: unknown[] } }
 		if (!m?.result || !Array.isArray(m.result.tools)) return p
-		const out = annotateToolsList(m.result as Parameters<typeof annotateToolsList>[0], {
+		// The bridge tools are added before the list is judged, so the fixed list leaves them out
+		// while booking is off, and each is marked a write.
+		const upstreamResult = m.result as Parameters<typeof annotateToolsList>[0]
+		const withBridge =
+			provider === 'dinero'
+				? {
+						...upstreamResult,
+						tools: [...(upstreamResult.tools ?? []), ...DINERO_BRIDGE_TOOLS, ...DINERO_APP_TOOLS],
+					}
+				: upstreamResult
+		const out = annotateToolsList(withBridge as Parameters<typeof annotateToolsList>[0], {
 			provider,
 			providerLabel: label,
 			access,
+			allowedTools: ctx.allowedTools,
+			account: ctx.account,
 		})
 		rememberAnnotations(cacheKey, out.upstreamAnnotations)
+		rememberToolNames(
+			cacheKey,
+			new Set(
+				(m.result.tools as Array<{ name?: unknown }>)
+					.map((t) => t?.name)
+					.filter((n): n is string => typeof n === 'string'),
+			),
+		)
 		return { ...m, result: out.result }
 	})
 	responseHeaders.delete('content-length')
@@ -368,5 +671,9 @@ export async function proxyMcp(
 app.post('/:provider/gateway', handle)
 app.get('/:provider/gateway', handle)
 app.delete('/:provider/gateway', handle)
+// One specific connection of the provider, by integration id.
+app.post('/:provider/gateway/:integrationId', handle)
+app.get('/:provider/gateway/:integrationId', handle)
+app.delete('/:provider/gateway/:integrationId', handle)
 
 export default app

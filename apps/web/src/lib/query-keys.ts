@@ -57,6 +57,9 @@ export const queryKeys = {
 	actors: {
 		all: (workspaceId?: string) => ['actors', workspaceId] as const,
 		detail: (id: string) => ['actors', 'detail', id] as const,
+		// Not under all(): refreshing the list must not rerun a recheck that already answered.
+		recheck: (workspaceId: string, actorId: string) =>
+			['actor-recheck', workspaceId, actorId] as const,
 	},
 	desktops: {
 		all: (workspaceId: string) => ['desktops', workspaceId] as const,
@@ -84,6 +87,21 @@ export const queryKeys = {
 		activity: (workspaceId: string, loopId: string) =>
 			['loops', workspaceId, 'activity', loopId] as const,
 	},
+	dineroReview: {
+		log: (workspaceId: string, from: string, to: string) =>
+			['dinero-review', workspaceId, from, to] as const,
+		vatReport: (workspaceId: string, from: string, to: string) =>
+			['dinero-review', workspaceId, 'vat-report', from, to] as const,
+		vatCheckNote: (workspaceId: string, from: string, to: string) =>
+			['dinero-review', workspaceId, 'vat-check-note', from, to] as const,
+		all: (workspaceId: string) => ['dinero-review', workspaceId] as const,
+	},
+	dineroBooking: {
+		all: (workspaceId: string) => ['dinero-booking', workspaceId] as const,
+	},
+	sendPermissions: {
+		all: (workspaceId: string) => ['send-permissions', workspaceId] as const,
+	},
 	integrations: {
 		all: (workspaceId: string) => ['integrations', workspaceId] as const,
 		providers: () => ['integrations', 'providers'] as const,
@@ -93,6 +111,8 @@ export const queryKeys = {
 			['integrations', workspaceId, 'agent-access', actorId] as const,
 		auditLog: (workspaceId: string, integrationId: string) =>
 			['integrations', workspaceId, integrationId, 'audit-log'] as const,
+		oauthApp: (workspaceId: string, provider: string) =>
+			['integrations', workspaceId, 'oauth-app', provider] as const,
 		githubLinkable: (workspaceId: string) =>
 			['integrations', workspaceId, 'github', 'linkable'] as const,
 		githubPendingSelection: (workspaceId: string, integrationId: string) =>
@@ -222,6 +242,10 @@ export const queryKeys = {
 		list: (filters?: { type?: string; use_case?: string; q?: string }) =>
 			['marketplace-loops', 'list', filters ?? {}] as const,
 		detail: (id: string) => ['marketplace-loops', 'detail', id] as const,
+	},
+	receiptIntake: {
+		detail: (workspaceId: string, loopId: string) =>
+			['receipt-intake', workspaceId, loopId] as const,
 	},
 	installedLoops: {
 		all: (workspaceId: string) => ['installed-loops', workspaceId] as const,

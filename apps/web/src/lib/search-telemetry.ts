@@ -7,6 +7,8 @@ import {
 	trackSearchPerformed,
 	trackSearchResultOpened,
 } from '@/lib/analytics'
+import { api } from '@/lib/api'
+import { DIRECT_MESSAGE_ROW_TYPE } from '@maskin/shared'
 import { useEffect, useRef } from 'react'
 
 /** Number of whitespace-separated words in the query. An integer only: the
@@ -144,7 +146,17 @@ const ENTITY_TYPE_BY_GROUP: Record<Exclude<SearchGroup, 'objects'>, TaxonomyEnti
 /** The taxonomy entity type of a v2 result row: the object's own type for objects, else by group. */
 export function searchEntityType(group: SearchGroup, objectType: string): TaxonomyEntityType {
 	if (group === 'objects') return objectType as TaxonomyEntityType
+	if (group === 'chats' && objectType === DIRECT_MESSAGE_ROW_TYPE) return 'direct_message'
 	return ENTITY_TYPE_BY_GROUP[group]
+}
+
+/**
+ * Tells the server the caller opened a result from a search, so it ranks higher for them next
+ * time. Call it for rows of a typed search only, never for recents or page views. Fire and forget:
+ * a failed write must not slow or block opening the result.
+ */
+export function recordSearchOpen(workspaceId: string, entityId: string): void {
+	api.search.recordOpen(workspaceId, entityId).catch(() => {})
 }
 
 /**

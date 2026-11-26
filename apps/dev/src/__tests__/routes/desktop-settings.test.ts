@@ -80,10 +80,37 @@ const call = (
 const applyOutput = (keyfile: string, marker: string) =>
 	`keyfile_changed=${keyfile}\nmarker_changed=${marker}\nsettings_version=${DESKTOP_SETTINGS_VERSION}\n`
 
+const helperOutput = (o: { changed?: string; restarting?: string; port?: string } = {}) =>
+	`helper_changed=${o.changed ?? '0'}\nhelper_restarting=${o.restarting ?? '0'}\nflags_changed=0\ndebug_port_open=${o.port ?? '1'}\n`
+
+// An apply-settings run sends the helper's pieces, the helper install, then the settings command.
+// Answers each by what it is, and the probe that asks a restarted helper which code it runs.
+const applyControl = (
+	settings: string,
+	opts: { helper?: string; probe?: (n: number) => Exec | Promise<Exec> } = {},
+) => {
+	let probes = 0
+	return vi.fn(async (_w: string, _a: string, action: string, body: { command?: string }) => {
+		if (action === 'input') return (opts.probe ?? (() => PROBE_CURRENT))(++probes)
+		const command = body.command ?? ''
+		if (command.startsWith('printf %s')) return execOk('')
+		if (command.includes('helper_changed')) return execOk(opts.helper ?? helperOutput())
+		return execOk(settings)
+	})
+}
+const PROBE_CURRENT: Exec = {
+	status: 400,
+	body: { error: 'invalid_request', message: 'text must be a string of 1-2000 characters' },
+}
+const PROBE_OLD: Exec = {
+	status: 400,
+	body: { error: 'invalid_request', message: 'unknown action' },
+}
+
 describe('POST /api/desktop/apply-settings', () => {
 	it('sends the server-built command and reports a change', async () => {
 		const { app, control, inserts } = build({
-			control: vi.fn(async () => execOk(applyOutput('1', '1'))),
+			control: applyControl(applyOutput('1', '1')),
 		})
 
 		const res = await call(app, 'POST', 'apply-settings')
@@ -93,6 +120,8 @@ describe('POST /api/desktop/apply-settings', () => {
 			settings_version: DESKTOP_SETTINGS_VERSION,
 			changed: true,
 			chromium_restart_needed: false,
+			helper_updated: false,
+			browser_debug_port_open: true,
 		})
 		expect(control).toHaveBeenCalledWith(WS, AGENT, 'exec', {
 			command: buildApplySettingsCommand(),
@@ -113,7 +142,7 @@ describe('POST /api/desktop/apply-settings', () => {
 
 	it('says nothing changed on a second run, and still records the run', async () => {
 		const { app, inserts } = build({
-			control: vi.fn(async () => execOk(applyOutput('0', '0'))),
+			control: applyControl(applyOutput('0', '0')),
 		})
 
 		const res = await call(app, 'POST', 'apply-settings')
@@ -122,11 +151,84 @@ describe('POST /api/desktop/apply-settings', () => {
 		expect(inserts[0]).toMatchObject({ data: { changed: false } })
 	})
 
+	it('updates an old helper, waits for the new one to answer, and says it changed', async () => {
+		const { app, control, inserts } = build({
+			control: applyControl(applyOutput('0', '0'), {
+				helper: helperOutput({ changed: '1', restarting: '1' }),
+				// The old helper still answers for a moment, then the new one does.
+				probe: (n) => (n < 3 ? PROBE_OLD : PROBE_CURRENT),
+			}),
+		})
+
+		const res = await call(app, 'POST', 'apply-settings')
+
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({
+			changed: true,
+			helper_updated: true,
+			browser_debug_port_open: true,
+			chromium_restart_needed: false,
+		})
+		const inputCalls = control.mock.calls.filter((call) => call[2] === 'input')
+		expect(inputCalls).toHaveLength(3)
+		// The probe has no text, so it can never type anything.
+		expect(inputCalls[0]?.[3]).toEqual({ action: 'type_secret', require: 'password_field' })
+		expect(inserts[0]).toMatchObject({
+			data: { helper_updated: true, browser_debug_port_open: true },
+		})
+	})
+
+	it('says a browser restart is needed, and does not do it, when the debugging port is closed', async () => {
+		const { app, control } = build({
+			control: applyControl(applyOutput('0', '0'), { helper: helperOutput({ port: '0' }) }),
+		})
+
+		const res = await call(app, 'POST', 'apply-settings')
+
+		expect(await res.json()).toMatchObject({
+			browser_debug_port_open: false,
+			chromium_restart_needed: true,
+		})
+		const commands = control.mock.calls.map((call) => String(call[3]?.command ?? ''))
+		expect(
+			commands.some((command) => /chromium|pkill|killall/.test(command.split('python3')[0])),
+		).toBe(false)
+	})
+
+	it('502s when the new helper never answers', async () => {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'Date'] })
+		try {
+			const { app } = build({
+				control: applyControl(applyOutput('0', '0'), {
+					helper: helperOutput({ changed: '1', restarting: '1' }),
+					probe: () => PROBE_OLD,
+				}),
+			})
+
+			const pending = call(app, 'POST', 'apply-settings')
+			await vi.advanceTimersByTimeAsync(30_000)
+			const res = await pending
+
+			expect(res.status).toBe(502)
+			expect(JSON.stringify(await res.json())).toContain('did not answer in time')
+		} finally {
+			vi.useRealTimers()
+		}
+	})
+
+	it('does not wait or probe when the helper was already current', async () => {
+		const { app, control } = build({ control: applyControl(applyOutput('0', '0')) })
+
+		await call(app, 'POST', 'apply-settings')
+
+		expect(control.mock.calls.some((call) => call[2] === 'input')).toBe(false)
+	})
+
 	it('lets an agent run it on its own computer', async () => {
 		const { app, control } = build({
 			actorType: 'agent',
 			actorId: AGENT,
-			control: vi.fn(async () => execOk(applyOutput('0', '0'))),
+			control: applyControl(applyOutput('0', '0')),
 		})
 
 		expect((await call(app, 'POST', 'apply-settings', null)).status).toBe(200)
@@ -185,7 +287,7 @@ describe('POST /api/desktop/apply-settings', () => {
 	})
 
 	it('502s an answer that does not carry the expected version', async () => {
-		const { app } = build({ control: vi.fn(async () => execOk('settings_version=99\n')) })
+		const { app } = build({ control: applyControl('settings_version=99\n') })
 
 		expect((await call(app, 'POST', 'apply-settings')).status).toBe(502)
 	})

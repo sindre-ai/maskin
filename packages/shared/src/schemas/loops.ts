@@ -8,11 +8,11 @@ import { LOOP_STATUSES, loopTargetViewSchema } from './objects'
  * bet/loops-first-class names each derivation and its source.
  *
  * `pill` composes the object's stored lifecycle status with a per-viewer
- * `waiting_on_viewer` flag so the frontend can render e.g. "Learning" vs
+ * `waiting_on_viewer` flag so the frontend can render e.g. "Pilot" vs
  * "Waiting on you" from a single field without re-implementing the composite
  * signal client-side. `waiting_on_you` only ever overrides the three "live"
- * statuses (`learning` | `supervised` | `fully_autonomous`) — `draft` and
- * `paused` are not "live" and always render as themselves regardless of
+ * statuses (`pilot` | `supervised` | `live`) — `draft`, `paused` and
+ * `archived` are not running and always render as themselves regardless of
  * unread activity. Fields intentionally match the design spec attached to
  * the parent bet — status pill, per-loop stats, agent-avatar chips.
  */

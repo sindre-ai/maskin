@@ -1,4 +1,5 @@
 import { type ObjectResponse, api } from '@/lib/api'
+import type { DataQuerySpec } from '@maskin/shared'
 
 // Named lists a view may ask the host for (see the bridge section in mini-app.ts).
 // A view names a list in its maskin-sources block:
@@ -36,7 +37,9 @@ const STATUS_RE = /^[a-z][a-z_]{0,39}$/
 
 /**
  * The only metadata keys a view may name, to filter on, sort by or get back. Body text and
- * free-text notes (angle, editor_verdict, published_by) are not on it on purpose.
+ * free-text notes (angle, editor_verdict, published_by) are not on it on purpose. The CRM
+ * category fields (role to buying_signal) are on it; contact details are not, see
+ * COUNT_DENIED_METADATA_KEYS.
  */
 export const LIST_METADATA_KEYS = [
 	'priority',
@@ -54,7 +57,51 @@ export const LIST_METADATA_KEYS = [
 	'scheduled_for',
 	'post_time',
 	'published_at',
+	'role',
+	'category',
+	'activity',
+	'watch_status',
+	'owner',
+	'buyer_or_user',
+	'segment_query',
+	'geo_tier',
+	'icp_priority',
+	'buying_signal',
 ] as const
+
+/**
+ * CRM contact details and free text a view must never read. They are not on the list
+ * allow-list above. Count sources take any metadata key (group_by, filters, aggregate),
+ * so without this a view could group by metadata.email and get every address back as a
+ * group key. A count source naming one of these is refused when the view is read.
+ */
+export const COUNT_DENIED_METADATA_KEYS = [
+	'email',
+	'phone',
+	'linkedin_url',
+	'x_handle',
+	'youtube_channel_url',
+	'website_url',
+	'medium_url',
+	'github_url',
+	'sales_strategy',
+	'reach',
+	'offer_sent_at',
+] as const
+
+/** The denied metadata key a count source names in its group_by, filters or aggregate, or null. */
+export function deniedCountKey(spec: DataQuerySpec): string | null {
+	const named = [
+		spec.group_by?.startsWith('metadata.') ? spec.group_by.slice('metadata.'.length) : null,
+		spec.aggregate?.field ?? null,
+		...Object.keys(spec.filters?.metadata ?? {}),
+	]
+	return (
+		named.find(
+			(key) => key !== null && (COUNT_DENIED_METADATA_KEYS as readonly string[]).includes(key),
+		) ?? null
+	)
+}
 
 /**
  * The only fields a view may propose a change to, each with the shape its value must have.

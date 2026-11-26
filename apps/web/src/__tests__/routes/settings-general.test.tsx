@@ -5,6 +5,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildWorkspaceWithRole } from '../factories'
 
 const mockMutate = vi.fn()
+const mockSavePreferences = vi.fn()
+let mockSavedTimezone: string | null = null
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
@@ -29,6 +31,14 @@ vi.mock('@/hooks/use-workspaces', () => ({
 
 vi.mock('@/hooks/use-actors', () => ({
 	useUpdateActor: () => ({ mutate: vi.fn(), isPending: false }),
+}))
+
+vi.mock('@/hooks/use-notification-preferences', () => ({
+	useNotificationPreferences: () => ({
+		data: { timezone: mockSavedTimezone },
+		isSuccess: true,
+	}),
+	useUpdateNotificationPreferences: () => ({ mutate: mockSavePreferences, isPending: false }),
 }))
 
 vi.mock('@/lib/theme', () => ({
@@ -64,6 +74,7 @@ const GeneralPage = (Route as unknown as { component: React.FC }).component
 describe('GeneralPage', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		mockSavedTimezone = 'Europe/Copenhagen'
 		localStorage.setItem('maskin-actor', JSON.stringify({ id: 'a-1', name: 'A', type: 'human' }))
 	})
 
@@ -131,12 +142,31 @@ describe('GeneralPage', () => {
 		expect(headings).toEqual([
 			'Workspace',
 			'Default workspace',
+			'Timezone',
 			'Appearance',
 			'Privacy and data',
 			'Workspace tools',
 			'Devices',
 			'Danger zone',
 		])
+	})
+
+	it('shows the timezone picker and saves nothing when a zone is already saved', () => {
+		render(<GeneralPage />)
+		expect(screen.getByRole('combobox', { name: 'Your timezone' })).toBeInTheDocument()
+		expect(mockSavePreferences).not.toHaveBeenCalled()
+	})
+
+	// Saving a zone arms the daily briefing push, so the one-time prefill leaves the switch off.
+	it('saves the browser zone once, with the briefing off, when none is saved', () => {
+		mockSavedTimezone = null
+		const { rerender } = render(<GeneralPage />)
+		rerender(<GeneralPage />)
+		expect(mockSavePreferences).toHaveBeenCalledTimes(1)
+		expect(mockSavePreferences).toHaveBeenCalledWith({
+			timezone: expect.any(String),
+			briefing_enabled: false,
+		})
 	})
 
 	it('links Workspace tools to the triggers page and Devices to device sign-in', () => {

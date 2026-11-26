@@ -13,8 +13,13 @@ import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
 import { canRead, canWrite, resolveAgentAccess } from '../lib/integrations/agent-access'
+import { resolveCallerChat } from '../lib/integrations/chat-lift'
 import { IntegrationAuthRevokedError, ScopeDeniedError } from '../lib/integrations/errors'
-import { getIntegrationCredential } from '../lib/integrations/lookup'
+import {
+	getCredential,
+	getIntegrationCredential,
+	listActiveIntegrationRows,
+} from '../lib/integrations/lookup'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { contentHash, shownDraftText } from '../lib/integrations/providers/gmail/approval-hash'
 import {
@@ -44,7 +49,14 @@ import { DELIVERED_ACTION, findCurrentApproval, hasDelivered } from '../lib/obje
 import { buildObjectPreview } from '../lib/object-preview'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { recordSendOutcome } from '../lib/send-closure'
-import { decideSend, deniedMessage } from '../lib/send-gate'
+import {
+	decideSend,
+	deniedMessage,
+	pilotIsReason,
+	recordAutoSent,
+	withPilotReason,
+} from '../lib/send-gate'
+import { callingSessionId } from '../lib/session-flow'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 
 /**
@@ -74,6 +86,7 @@ type Env = {
 		actorId: string
 		workspaceRole?: string
 		storageProvider?: StorageProvider
+		apiKeySessionId?: string | null
 		maskinSessionId?: string
 	}
 }
@@ -83,8 +96,12 @@ const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 const TOOL_NAME = 'gmail_send_email'
 const DUPLICATE_WINDOW_MS = 24 * 60 * 60 * 1000
 
+/** The Gmail address of one connected account. Left out, the first connected account is used. */
+const accountSchema = z.string().trim().min(3).max(320).optional()
+
 const sendBodySchema = z
 	.object({
+		account: accountSchema,
 		to: z.string().min(1).max(2000).optional(),
 		cc: z.string().max(2000).optional(),
 		subject: z.string().min(1).max(998).optional(),
@@ -157,17 +174,66 @@ const fail = (
 	suggestion?: string,
 ): Fail => ({ status, body: createApiError(code, message, undefined, suggestion) })
 
-/** The workspace's Gmail login, read through Keychain so the read is gated and audited. */
-const readGmailCredential = (
+/** The agent named a Gmail account it cannot use here. The message lists the ones it can. */
+class GmailAccountError extends Error {}
+
+/**
+ * The workspace's Gmail login, read through Keychain so the read is gated and audited. With
+ * an account (the address it was connected under) that account is read; without one, the
+ * first connected account, as before.
+ */
+async function readGmailCredential(
 	db: Database,
 	workspaceId: string,
 	actorId: string,
 	target: 'gmail:send' | 'gmail:read-attachment' = 'gmail:send',
-) =>
-	getIntegrationCredential(db, workspaceId, 'gmail', actorId, {
-		fallbackToAnyActor: true,
-		ctx: readContextFor(actorId, target),
-	})
+	account?: string,
+) {
+	const ctx = readContextFor(actorId, target)
+	if (!account) {
+		return getIntegrationCredential(db, workspaceId, 'gmail', actorId, {
+			fallbackToAnyActor: true,
+			ctx,
+		})
+	}
+	const rows = await listActiveIntegrationRows(db, workspaceId, 'gmail')
+	const wanted = account.trim().toLowerCase()
+	const chosen = rows.find((r) => r.externalId?.toLowerCase() === wanted)
+	// Said the same way for an address that is not connected and one this agent may not use,
+	// so the answer does not confirm whose inbox is connected.
+	const allowed: string[] = []
+	let usable = false
+	for (const row of rows) {
+		const access = (await resolveAgentAccess(db, workspaceId, row.id, actorId)) ?? 'none'
+		const ok = target === 'gmail:send' ? canWrite(access) : canRead(access)
+		if (!ok || !row.externalId) continue
+		allowed.push(row.externalId)
+		if (row.id === chosen?.id) usable = true
+	}
+	if (!chosen || !usable) {
+		throw new GmailAccountError(
+			`No Gmail account ${account} is available to you here. ${
+				allowed.length > 0
+					? `Accounts you can use: ${allowed.join(', ')}.`
+					: 'You have no Gmail account you can use for this.'
+			}`,
+		)
+	}
+	return getCredential(db, workspaceId, chosen.id, ctx)
+}
+
+/** The failure to answer with when reading the credential threw one of the expected errors. */
+function credentialFailureFor(err: unknown): Fail | null {
+	if (err instanceof ScopeDeniedError) {
+		return fail(
+			403,
+			'FORBIDDEN',
+			'You do not have access to Gmail in this workspace. A workspace admin can grant it under Settings → Integrations.',
+		)
+	}
+	if (err instanceof GmailAccountError) return fail(404, 'NOT_FOUND', err.message)
+	return null
+}
 
 function sendFailureFor(err: GmailSendError): Fail {
 	switch (err.code) {
@@ -566,16 +632,10 @@ app.openapi(sendRoute, async (c) => {
 	// the audited path (Keychain), then access is checked against that same row.
 	let credential: Awaited<ReturnType<typeof readGmailCredential>>
 	try {
-		credential = await readGmailCredential(db, workspaceId, actorId)
+		credential = await readGmailCredential(db, workspaceId, actorId, 'gmail:send', input.account)
 	} catch (err) {
-		if (err instanceof ScopeDeniedError) {
-			const f = fail(
-				403,
-				'FORBIDDEN',
-				'You do not have access to Gmail in this workspace. A workspace admin can grant it under Settings → Integrations.',
-			)
-			return c.json(f.body, f.status)
-		}
+		const f = credentialFailureFor(err)
+		if (f) return c.json(f.body, f.status)
 		throw err
 	}
 	if (!credential) {
@@ -588,7 +648,16 @@ app.openapi(sendRoute, async (c) => {
 		return c.json(f.body, f.status)
 	}
 	const integrationId = credential.id
-	const access = (await resolveAgentAccess(db, workspaceId, integrationId, actorId)) ?? 'none'
+	// An Allow for just this chat counts for the access level only: the approval that follows is
+	// the same for everyone. Gmail is not on the chat-lift list yet, so no such grant exists today.
+	const chat = await resolveCallerChat(db, c.req.header('x-maskin-session-id'), {
+		workspaceId,
+		actorId,
+	})
+	const access =
+		(await resolveAgentAccess(db, workspaceId, integrationId, actorId, {
+			conversationId: chat?.conversationId ?? null,
+		})) ?? 'none'
 	if (!canWrite(access)) {
 		const f = fail(
 			403,
@@ -603,7 +672,12 @@ app.openapi(sendRoute, async (c) => {
 		return c.json(f.body, f.status)
 	}
 	// 1b. The agent's send setting for emails: send as given, wait for a person, or never.
-	const decision = await decideSend(db, { workspaceId, agentId: actorId, kind: 'email' })
+	const decision = await decideSend(db, {
+		workspaceId,
+		agentId: actorId,
+		kind: 'email',
+		sessionId: callingSessionId(c.get('apiKeySessionId'), c.get('maskinSessionId')),
+	})
 	if (decision === 'denied') {
 		const f = fail(403, 'FORBIDDEN', deniedMessage('emails'))
 		return c.json(f.body, f.status)
@@ -678,11 +752,21 @@ app.openapi(sendRoute, async (c) => {
 	} else {
 		// A new email passed straight to the tool by an agent that is set to ask first: nothing a
 		// person has approved yet.
+		const pilot = await pilotIsReason(db, {
+			workspaceId,
+			agentId: actorId,
+			kind: 'email',
+			sessionId: callingSessionId(c.get('apiKeySessionId'), c.get('maskinSessionId')),
+		})
 		const f = fail(
 			403,
 			'FORBIDDEN',
-			'Not sent. This agent is set to ask first, so a person has to approve this email before it is sent.',
-			SEND_APPROVAL_HOWTO,
+			pilot
+				? withPilotReason('Not sent. A person has to approve this email before it is sent.', true)
+				: 'Not sent. This agent is set to ask first, so a person has to approve this email before it is sent.',
+			pilot
+				? SEND_APPROVAL_HOWTO.replace('This agent is set to ask first for emails. ', '')
+				: SEND_APPROVAL_HOWTO,
 		)
 		return c.json(f.body, f.status)
 	}
@@ -719,6 +803,16 @@ app.openapi(sendRoute, async (c) => {
 				'This exact email was already sent in the last 24 hours. Do not send it again.',
 			)
 			return c.json(f.body, f.status)
+		}
+		// Released on Always allow with no approval: log it on the draft.
+		if (objectDraft) {
+			await recordAutoSent(db, {
+				workspaceId,
+				agentId: actorId,
+				object: { id: objectDraft.id, type: objectDraft.type },
+				kind: 'email',
+				contentHash: objectDraft.hash,
+			})
 		}
 	}
 
@@ -847,6 +941,7 @@ app.openapi(sendRoute, async (c) => {
 const SAVE_TOOL_NAME = 'gmail_save_attachment'
 
 const saveAttachmentBodySchema = z.object({
+	account: accountSchema,
 	message_id: z.string().min(1).max(64),
 	attachment_id: z.string().min(1).max(4096),
 	part_id: z.string().min(1).max(64).optional(),
@@ -918,16 +1013,16 @@ app.openapi(saveAttachmentRoute, async (c) => {
 
 	let credential: Awaited<ReturnType<typeof readGmailCredential>>
 	try {
-		credential = await readGmailCredential(db, workspaceId, actorId, 'gmail:read-attachment')
+		credential = await readGmailCredential(
+			db,
+			workspaceId,
+			actorId,
+			'gmail:read-attachment',
+			input.account,
+		)
 	} catch (err) {
-		if (err instanceof ScopeDeniedError) {
-			const f = fail(
-				403,
-				'FORBIDDEN',
-				'You do not have access to Gmail in this workspace. A workspace admin can grant it under Settings → Integrations.',
-			)
-			return c.json(f.body, f.status)
-		}
+		const f = credentialFailureFor(err)
+		if (f) return c.json(f.body, f.status)
 		throw err
 	}
 	if (!credential) {

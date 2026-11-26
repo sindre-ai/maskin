@@ -29,7 +29,11 @@ vi.mock('@tanstack/react-router', async () => {
 	}
 })
 
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/components/objects/items-more-menu', () => ({ ItemsMoreMenu: () => null }))
+
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({
 		workspaceId: 'ws-1',
 		workspace: buildWorkspaceWithRole({ settings: {} }),

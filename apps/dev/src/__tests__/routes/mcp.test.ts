@@ -149,10 +149,13 @@ describe('MCP Routes', () => {
 
 			const queryOnly = mockCreateMcpServer.mock.calls[0][0]
 			expect(queryOnly.apiKey).toBe('')
-			// The per-request anonymous telemetry id differs by design; everything else must match.
-			expect({ ...queryOnly, telemetrySessionId: null }).toEqual({
+			// The per-request anonymous telemetry id and the per-request timezone lookup (a new
+			// function each time) differ by design; everything else must match.
+			expect(typeof queryOnly.personTimezone).toBe('function')
+			expect({ ...queryOnly, telemetrySessionId: null, personTimezone: null }).toEqual({
 				...noCredentials,
 				telemetrySessionId: null,
+				personTimezone: null,
 			})
 		})
 

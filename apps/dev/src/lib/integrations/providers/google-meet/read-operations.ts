@@ -230,7 +230,7 @@ export async function getTranscriptEntries(
 			'ARTEFACT_PENDING',
 			'No transcript is available on this conference record yet.',
 			{
-				hint: 'Meet transcripts are generated asynchronously — try again in a few minutes, or run the sweep_pending_transcripts reconciler.',
+				hint: 'Meet transcripts are generated asynchronously — try again in a few minutes. If the host did not start transcription in the call, none will arrive.',
 			},
 		)
 	}

@@ -6,7 +6,7 @@ import Foundation
 /// per actor and workspace by `SnapshotCache`, wiped by `DiskCache.clearAll()` on sign-out.
 enum ChatCaching {
 	/// Bump when any cached type below changes shape: a mismatch discards the entry.
-	static let version = 3
+	static let version = 4
 	static let threadMessageLimit = 50
 	static let listLimit = 50
 

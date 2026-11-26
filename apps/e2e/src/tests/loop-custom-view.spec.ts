@@ -55,7 +55,7 @@ async function seedLoopWithView(account: {
 	const loop = await account.api.createObject(account.workspaceId, {
 		type: 'loop',
 		title: 'Feedback loop',
-		status: 'learning',
+		status: 'pilot',
 	})
 	// Two done tasks in the loop, one not done, and one done task outside it: the
 	// view must say 2, so scope and the status filter are both exercised.
@@ -192,7 +192,7 @@ test.describe('Loop page — custom view tabs', () => {
 			const loop = await account.api.createObject(account.workspaceId, {
 				type: 'loop',
 				title: 'Wide view loop',
-				status: 'learning',
+				status: 'pilot',
 			})
 			const trigger = await account.api.createTrigger(account.workspaceId, {
 				name: 'Triage feedback',
@@ -300,7 +300,7 @@ test.describe('Loop page — custom view tabs', () => {
 		const loop = await account.api.createObject(account.workspaceId, {
 			type: 'loop',
 			title: 'Plain loop',
-			status: 'learning',
+			status: 'pilot',
 		})
 
 		await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
@@ -324,7 +324,7 @@ test.describe('Loop page — custom view tabs', () => {
 		const loop = await account.api.createObject(account.workspaceId, {
 			type: 'loop',
 			title: 'Broken view loop',
-			status: 'learning',
+			status: 'pilot',
 		})
 		const file = await account.api.createFile(account.workspaceId, {
 			name: 'notes.txt',

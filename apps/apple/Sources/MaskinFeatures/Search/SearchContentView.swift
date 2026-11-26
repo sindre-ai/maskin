@@ -52,13 +52,16 @@ struct SearchContentView: View {
 	/// The Create rows under the results; nil hides that row.
 	var onCreate: (SearchCreate, String) -> Void = { _, _ in }
 	var createKinds: [SearchCreate] = [.flow, .chat]
+	/// The long-press menu of a result; empty for a kind with no menu.
+	var rowMenu: (SearchResult) -> AnyView = { _ in AnyView(EmptyView()) }
 	let onSelect: (SearchResult) -> Void
 
 	var body: some View {
 		ScrollView {
 			SearchContentBody(
 				store: store, onSelect: onSelect, showsChips: true, needsYou: needsYou,
-				onOpenNeedsYou: onOpenNeedsYou, onAskChiefOfStaff: onAskChiefOfStaff, onCreate: onCreate, createKinds: createKinds)
+				onOpenNeedsYou: onOpenNeedsYou, onAskChiefOfStaff: onAskChiefOfStaff, onCreate: onCreate, createKinds: createKinds,
+				rowMenu: rowMenu)
 				.padding(.horizontal, MaskinSpace.s9)
 				.padding(.vertical, MaskinSpace.s5)
 				.frame(maxWidth: 760)
@@ -69,7 +72,7 @@ struct SearchContentView: View {
 	}
 }
 
-/// Recents, skeleton, error, empty and grouped results as plain stacks (no scroll view), so it
+/// Recents, skeleton, error, empty and ordered results as plain stacks (no scroll view), so it
 /// also renders in `ImageRenderer` snapshots.
 struct SearchContentBody: View {
 	let store: SearchStore
@@ -81,6 +84,7 @@ struct SearchContentBody: View {
 	var onCreate: ((SearchCreate, String) -> Void)?
 	/// The Create rows to offer; New item only when the shell can start one.
 	var createKinds: [SearchCreate] = [.flow, .chat]
+	var rowMenu: (SearchResult) -> AnyView = { _ in AnyView(EmptyView()) }
 
 	private var typed: String { store.query.trimmingCharacters(in: .whitespacesAndNewlines) }
 
@@ -279,29 +283,23 @@ struct SearchContentBody: View {
 		}
 	}
 
+	/// One list in the server's order, best match first across chats, flows, agents and items (files
+	/// last), the same order as the web. Each row names its own kind.
 	@ViewBuilder private var results: some View {
-		let sections = store.sections
-		if sections.isEmpty {
+		let rows = store.rows
+		if rows.isEmpty {
 			noMatch
 		} else {
-			ForEach(sections) { section in
-				VStack(alignment: .leading, spacing: MaskinSpace.s4) {
-					HStack(spacing: MaskinSpace.s4) {
-						SearchHeader(section.group.title)
-						Text("\(section.results.count)").maskinText(.mono).foregroundStyle(MaskinColor.ink5)
+			card {
+				ForEach(Array(rows.enumerated()), id: \.element.id) { index, result in
+					if index > 0 { Divider() }
+					Button { onSelect(result) } label: {
+						SearchResultRow(result: result, query: store.query)
+							.padding(.vertical, MaskinSpace.s3)
 					}
-					.accessibilityAddTraits(.isHeader)
-					card {
-						ForEach(Array(section.results.enumerated()), id: \.element.id) { index, result in
-							if index > 0 { Divider() }
-							Button { onSelect(result) } label: {
-								SearchResultRow(result: result, query: store.query)
-									.padding(.vertical, MaskinSpace.s3)
-							}
-							.buttonStyle(.maskinPressed)
-							.maskinHover()
-						}
-					}
+					.buttonStyle(.maskinPressed)
+					.maskinHover()
+					.contextMenu { rowMenu(result) }
 				}
 			}
 			if store.isPartial {

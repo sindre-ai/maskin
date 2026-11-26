@@ -111,7 +111,7 @@ const setLineRoute = createRoute({
 	tags: ['Objects'],
 	summary: 'Tick a line of the done-when list',
 	description:
-		'Sets the state of one line (true, false, cannot_tell, not_checked) on an approved list. Only a person, from their own client, may do this: an agent, or a call through MCP, is refused (403). Until the outcome check lands this is how a line becomes true.',
+		'Sets the state of one line (true, false, cannot_tell, not_checked) on an approved list. Only a person, from their own client, may do this: an agent, or a call through MCP, is refused (403). A line a person ticks stays theirs: the outcome check never overwrites it.',
 	request: {
 		params: lineParamSchema,
 		body: { content: { 'application/json': { schema: setDoneWhenLineSchema } } },

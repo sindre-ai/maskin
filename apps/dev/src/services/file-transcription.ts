@@ -7,6 +7,7 @@ import { pipeline } from 'node:stream/promises'
 import type { Database } from '@maskin/db'
 import { workspaceAiUsage } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
+import { trackTranscriptionCompleted } from '../lib/analytics/transcription-events'
 import { evictBillingUsage } from '../lib/billing-usage-cache'
 import { logger } from '../lib/logger'
 import {
@@ -499,4 +500,15 @@ async function recordTranscriptionUsage(
 			err: err instanceof Error ? err.message : String(err),
 		})
 	}
+	// Sent even when the usage row could not be written: the spend is real, and
+	// the figures are in the log line above.
+	await trackTranscriptionCompleted({
+		workspaceId: input.workspaceId,
+		actorId: input.actorId,
+		source: 'mcp_file',
+		model: usage.model,
+		costUsd: usage.costUsd,
+		audioSeconds: usage.audioSeconds,
+		fileId: input.file.id,
+	})
 }

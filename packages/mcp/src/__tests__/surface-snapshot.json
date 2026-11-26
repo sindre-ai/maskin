@@ -188,6 +188,7 @@
 		"delete_trigger": ["id", "workspace_id"],
 		"delete_workspace_field": ["name", "type", "workspace_id"],
 		"delete_workspace_skill": ["name", "workspace_id"],
+		"desktop_attach_file": ["agent_id", "path", "selector", "workspace_id"],
 		"desktop_click": ["agent_id", "button", "double", "workspace_id", "x", "y"],
 		"desktop_close_port": ["agent_id", "relay_port", "workspace_id"],
 		"desktop_drag": ["agent_id", "from_x", "from_y", "to_x", "to_y", "workspace_id"],
@@ -201,6 +202,7 @@
 		"desktop_scroll": ["agent_id", "amount", "direction", "workspace_id", "x", "y"],
 		"desktop_type": ["agent_id", "text", "workspace_id"],
 		"disconnect_integration": ["id", "workspace_id"],
+		"fork_loop": ["id", "workspace_id"],
 		"get_actor": ["id", "workspace_id"],
 		"get_comments": ["cursor", "entity_id", "limit", "workspace_id"],
 		"get_conversation": ["conversation_id", "workspace_id"],
@@ -219,7 +221,6 @@
 			"stream",
 			"workspace_id"
 		],
-		"get_started": ["confirm", "loop_id", "workspace_id", "workspace_name"],
 		"get_trigger": ["id", "workspace_id"],
 		"get_workspace_schema": ["type", "workspace_id"],
 		"get_workspace_skill": ["name", "workspace_id"],
@@ -233,6 +234,7 @@
 			"to",
 			"workspace_id"
 		],
+		"install_loop": ["loop_id", "workspace_id", "workspace_name"],
 		"list_actors": ["cursor", "limit", "offset", "workspace_id"],
 		"list_conversation_messages": [
 			"after_id",
@@ -248,6 +250,7 @@
 		"list_integrations": ["cursor", "limit", "workspace_id"],
 		"list_keychain_credentials": ["workspace_id"],
 		"list_loops": ["cursor", "limit", "workspace_id"],
+		"list_marketplace": ["workspace_id"],
 		"list_notifications": ["kind", "limit", "offset", "status", "type", "workspace_id"],
 		"list_objects": [
 			"cursor",

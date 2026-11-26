@@ -45,6 +45,7 @@ actor FakeChatAPI: ChatAPI {
 	var detailCalls = 0
 	var failMutations = false
 	var failMessages = false
+	var messagesError: (any Error)?
 	/// Persist the next N sends, then fail as if the response was lost on the way back.
 	var loseResponses = 0
 	var readCalls: [Int] = []
@@ -76,6 +77,7 @@ actor FakeChatAPI: ChatAPI {
 	func failNextSends(_ errors: [any Error]) { sendErrors = errors }
 	func setLoseResponses(_ n: Int) { loseResponses = n }
 	func setFailMessages(_ v: Bool) { failMessages = v }
+	func setMessagesError(_ e: (any Error)?) { messagesError = e }
 	func setFailMutations(_ v: Bool) { failMutations = v }
 	func setSessions(_ s: [ChatAgentSession]) { sessionList = s }
 	func setActors(_ a: [ChatActor]) { actorList = a }
@@ -93,6 +95,7 @@ actor FakeChatAPI: ChatAPI {
 	{
 		messageCalls.append((beforeID, afterID))
 		if let messagesGate { await messagesGate() }
+		if let messagesError { throw messagesError }
 		if failMessages { throw URLError(.notConnectedToInternet) }
 		var rows = server.sorted { ($0.serverID ?? 0) > ($1.serverID ?? 0) }
 		if let beforeID { rows = rows.filter { ($0.serverID ?? 0) < beforeID } }
@@ -292,7 +295,18 @@ actor FakeListAPI: ConversationsAPI {
 		)
 	}
 
-	func actors() async throws -> [ChatActor] { [ChatActor(participant: chatRelay)] }
+	var actorsCalls = 0
+	var threadsCalls = 0
+
+	func actors() async throws -> [ChatActor] {
+		actorsCalls += 1
+		return [ChatActor(participant: chatRelay)]
+	}
+
+	func threads(limit: Int) async throws -> [ThreadListItem] {
+		threadsCalls += 1
+		return []
+	}
 
 	var latestIDs: [String: Int] = [:]
 	func latestMessageID(conversationID: String) async throws -> Int? { latestIDs[conversationID] ?? 100 }

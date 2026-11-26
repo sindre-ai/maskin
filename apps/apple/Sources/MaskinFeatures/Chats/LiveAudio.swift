@@ -13,6 +13,10 @@ import Speech
 /// to survive: an interruption (phone call, Siri), a route change (AirPods out), the media server
 /// being reset. It also puts the call on the lock screen's Now Playing card with mute / unmute from
 /// the card and from headphone buttons.
+///
+/// The system offers that card only to an app it hears playing audio. The call's own sound comes
+/// from WebRTC's audio unit or the speech synthesizer, which don't count, so the session loops a
+/// silent clip for the length of the call (`SilentAudio`) and says it is playing.
 @MainActor
 final class LiveAudioSession {
 	struct Handlers {
@@ -29,6 +33,10 @@ final class LiveAudioSession {
 	private var commandTargets: [(MPRemoteCommand, Any)] = []
 	private var handlers: Handlers?
 	private var title = ""
+	/// The silent clip that makes the call count as playing audio. Nil outside a call.
+	private var keepAlive: AVAudioPlayer?
+	/// The card as last published, so a route change can put it back.
+	private var card: (muted: Bool, elapsed: TimeInterval) = (false, 0)
 
 	/// Configure and activate the session and start listening for what can happen to it.
 	func activate(title: String, handlers: Handlers) throws {
@@ -39,6 +47,7 @@ final class LiveAudioSession {
 		routeName = Self.currentRouteName()
 		observe()
 		registerCommands()
+		startKeepAlive()
 		updateNowPlaying(muted: false, elapsed: 0)
 	}
 
@@ -61,6 +70,7 @@ final class LiveAudioSession {
 	func reactivate() {
 		try? configure()
 		keepSpeaker()
+		startKeepAlive()
 		let name = Self.currentRouteName()
 		if name != routeName {
 			routeName = name
@@ -76,18 +86,41 @@ final class LiveAudioSession {
 		for (command, target) in commandTargets { command.removeTarget(target) }
 		commandTargets = []
 		handlers = nil
+		keepAlive?.stop()
+		keepAlive = nil
 		MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+		MPNowPlayingInfoCenter.default().playbackState = .stopped
 		try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
 	}
 
 	func updateNowPlaying(muted: Bool, elapsed: TimeInterval) {
-		MPNowPlayingInfoCenter.default().nowPlayingInfo = [
+		card = (muted, elapsed)
+		let center = MPNowPlayingInfoCenter.default()
+		center.nowPlayingInfo = [
 			MPMediaItemPropertyTitle: title,
 			MPMediaItemPropertyArtist: muted ? "Microphone off" : "Maskin Live",
+			MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue,
 			MPNowPlayingInfoPropertyIsLiveStream: true,
 			MPNowPlayingInfoPropertyElapsedPlaybackTime: elapsed,
 			MPNowPlayingInfoPropertyPlaybackRate: muted ? 0.0 : 1.0,
 		]
+		// The system reads this, not the rate, for an app that has no media player of its own.
+		center.playbackState = muted ? .paused : .playing
+	}
+
+	/// Loops the silent clip. A no-op while it is already playing; started again after an
+	/// interruption, a media-services reset or a category change by the call's audio unit, any of
+	/// which can stop it. A call goes on without it: only the Lock Screen card is lost.
+	private func startKeepAlive() {
+		if let keepAlive, keepAlive.isPlaying { return }
+		if keepAlive == nil {
+			guard let player = try? AVAudioPlayer(data: SilentAudio.wav(), fileTypeHint: AVFileType.wav.rawValue)
+			else { return }
+			player.numberOfLoops = -1
+			player.prepareToPlay()
+			keepAlive = player
+		}
+		keepAlive?.play()
 	}
 
 	/// The loudspeaker, or the earpiece. Headphones and Bluetooth routes win over both.
@@ -151,6 +184,10 @@ final class LiveAudioSession {
 				using: Self.simpleBlock { [weak self] in
 					guard let self else { return }
 					self.keepSpeaker()
+					// The call's audio unit sets its own category as it starts, which can stop the clip
+					// and drop the card: put both back.
+					self.startKeepAlive()
+					self.updateNowPlaying(muted: self.card.muted, elapsed: self.card.elapsed)
 					let name = Self.currentRouteName()
 					guard name != self.routeName else { return }
 					self.routeName = name
@@ -159,6 +196,8 @@ final class LiveAudioSession {
 			center.addObserver(
 				forName: AVAudioSession.mediaServicesWereResetNotification, object: session, queue: .main,
 				using: Self.simpleBlock { [weak self] in
+					// The media server took its players with it: the clip has to be built again.
+					self?.keepAlive = nil
 					self?.reactivate()
 					self?.handlers?.mediaServicesReset()
 				}),

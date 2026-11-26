@@ -13,8 +13,7 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 // The Claude tab of Settings > MCP: the Add to Claude link, the Connected apps list and Disconnect.
 // A connection is made through the real approve route (what Allow on the consent page calls), so the
-// rows come from the real list. The flag is on for the fixed-id actor and off for a fresh one
-// (playwright.config.ts).
+// rows come from the real list.
 
 async function signIn(page: import('@playwright/test').Page, actor: OauthActor) {
 	await page.addInitScript(
@@ -126,26 +125,26 @@ test.describe('Claude connector: Settings > MCP > Claude tab', () => {
 		expect(grants).toEqual([])
 	})
 
-	test('without the flag and without a connection there is no Claude tab', async ({ page }) => {
+	test('a brand new person gets the Claude tab first, with nothing connected', async ({ page }) => {
 		const unique = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`
-		const outsider = await createTestActor({
-			name: `E2E Outsider ${unique}`,
-			email: `e2e-outsider-${unique}@test.invalid`,
+		const newcomer = await createTestActor({
+			name: `E2E Newcomer ${unique}`,
+			email: `e2e-newcomer-${unique}@test.invalid`,
 		})
-		const [workspace] = await new TestAPI(outsider.api_key).listWorkspaces()
+		const [workspace] = await new TestAPI(newcomer.api_key).listWorkspaces()
 		await signIn(page, {
-			id: outsider.id,
-			name: outsider.name,
-			email: outsider.email ?? '',
-			apiKey: outsider.api_key,
+			id: newcomer.id,
+			name: newcomer.name,
+			email: newcomer.email ?? '',
+			apiKey: newcomer.api_key,
 		})
 		await page.goto(`/${workspace.id}/settings/mcp`)
 
-		await expect(page.getByRole('tab', { name: 'Claude Code' })).toHaveAttribute(
+		await expect(page.getByRole('tab', { name: /^Claude\s*Sign in$/i })).toHaveAttribute(
 			'aria-selected',
 			'true',
 		)
-		await expect(page.getByRole('tab', { name: 'Claude', exact: true })).toHaveCount(0)
+		await expect(page.getByRole('link', { name: 'Add to Claude' })).toBeVisible()
 	})
 
 	for (const viewport of SHIP_GATE_VIEWPORTS) {

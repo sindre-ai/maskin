@@ -37,10 +37,8 @@ const TABLE: Array<[type: string, status: string, group: StatusGroupKey]> = [
 
 	['loop', 'draft', 'new'],
 	['loop', 'pilot', 'in_progress'],
-	['loop', 'learning', 'in_progress'],
 	['loop', 'supervised', 'in_progress'],
 	['loop', 'live', 'in_progress'],
-	['loop', 'fully_autonomous', 'in_progress'],
 	['loop', 'paused', 'archived'],
 	['loop', 'archived', 'archived'],
 
@@ -69,8 +67,7 @@ const TABLE: Array<[type: string, status: string, group: StatusGroupKey]> = [
 
 	['contact', 'new_lead', 'new'],
 	['contact', 'qualified', 'in_progress'],
-	['contact', 'connection_requested', 'in_progress'],
-	['contact', 'messaged', 'in_progress'],
+	['contact', 'initial_contact', 'in_progress'],
 	['contact', 'in_conversation', 'in_progress'],
 	['contact', 'meeting_booked', 'in_progress'],
 	['contact', 'follow_up_later', 'in_progress'],

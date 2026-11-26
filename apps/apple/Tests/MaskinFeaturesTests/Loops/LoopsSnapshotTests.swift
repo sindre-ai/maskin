@@ -136,7 +136,7 @@ struct LoopsSnapshotTests {
 	func rows(dark: Bool) throws {
 		let rows: [(LoopSummary, [String], Bool)] = [
 			(fixtureLoop, ["Relay", "Forge", "Scout"], true),
-			(LoopSummary(id: "2", name: "Weekly investor update", status: .fullyAutonomous, inProgressCount: 1, closedCount: 38, updatedAt: base.addingTimeInterval(-86400)), ["Relay"], false),
+			(LoopSummary(id: "2", name: "Weekly investor update", status: .live, inProgressCount: 1, closedCount: 38, updatedAt: base.addingTimeInterval(-86400)), ["Relay"], false),
 			(LoopSummary(id: "3", name: nil, status: .paused, updatedAt: base.addingTimeInterval(-86400 * 9)), [], false),
 			(LoopSummary(id: "4", name: "Support triage with an unusually long name that has to wrap", status: .draft), ["Forge", "Scout", "Relay", "A", "B", "C"], false),
 		]

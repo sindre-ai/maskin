@@ -1,4 +1,5 @@
 import { EmptyState } from '@/components/shared/empty-state'
+import { describeCronExpression } from '@/lib/cron'
 import { useToolResult } from '../shared/mcp-app-provider'
 import { isArray, isObject, safeParseJson, unwrapEnvelope } from '../shared/parse'
 import { renderMcpApp } from '../shared/render'
@@ -88,6 +89,12 @@ function TriggerListRow({ trigger }: { trigger: TriggerResponse }) {
 	)
 }
 
+/** A cron schedule in plain words, never the raw expression. */
+function describeSchedule(expression: string): string {
+	const described = describeCronExpression(expression)
+	return described === expression ? 'on a schedule' : described
+}
+
 function TriggerDetailView({ trigger }: { trigger: TriggerResponse }) {
 	return (
 		<div className="p-4 max-w-2xl">
@@ -119,20 +126,25 @@ function TriggerDetailView({ trigger }: { trigger: TriggerResponse }) {
 						Config
 					</h3>
 					<div className="space-y-1.5">
-						{Object.entries(trigger.config).map(([key, value]) => (
-							<div key={key} className="flex gap-2 text-xs">
-								<span className="text-muted-foreground font-medium min-w-[100px]">
-									{key.replace(/_/g, ' ')}
-								</span>
-								<span className="text-foreground">
-									{typeof value === 'object' && value !== null
-										? Array.isArray(value)
-											? value.join(', ')
-											: JSON.stringify(value)
-										: String(value)}
-								</span>
-							</div>
-						))}
+						{Object.entries(trigger.config).map(([key, value]) => {
+							const schedule = trigger.type === 'cron' && key === 'expression'
+							return (
+								<div key={key} className="flex gap-2 text-xs">
+									<span className="text-muted-foreground font-medium min-w-[100px]">
+										{schedule ? 'schedule' : key.replace(/_/g, ' ')}
+									</span>
+									<span className="text-foreground">
+										{schedule
+											? describeSchedule(String(value))
+											: typeof value === 'object' && value !== null
+												? Array.isArray(value)
+													? value.join(', ')
+													: JSON.stringify(value)
+												: String(value)}
+									</span>
+								</div>
+							)
+						})}
 					</div>
 				</div>
 			)}

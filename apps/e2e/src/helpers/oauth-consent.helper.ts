@@ -4,10 +4,8 @@ import { createTestActor } from './api.helper'
 /**
  * Fixtures for the Claude connector consent page (mcp-oauth-consent.spec.ts).
  *
- * The preview, approve and deny routes answer 403 unless the person is a flag tester, and the
- * tester list is read from the server's environment at boot. So the actors the spec signs in as
- * have fixed ids, listed in playwright.config.ts (FF_TESTER_ACTOR_IDS) next to the switch and the
- * flag. A spec signs in as one of them with ensureOauthActor.
+ * The actors the spec signs in as have fixed ids, so they are the same on every run. A spec
+ * signs in as one of them with ensureOauthActor.
  */
 export const E2E_OAUTH_ACTORS = {
 	/** Has exactly one workspace. */

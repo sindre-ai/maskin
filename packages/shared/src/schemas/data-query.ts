@@ -65,7 +65,7 @@ const dateBound = () =>
 				.refine((v) => parseRelativeBound(v) !== null, 'Use an ISO datetime or now-7d / today-30d'),
 		])
 		.describe(
-			'A fixed ISO datetime, or a moving bound re-evaluated on every run: "now", "now-24h", "now-7d", "now-4w", "now-3mo" (rolling) or "today", "today-7d", "today-1mo" (from midnight today in `timezone`).',
+			'A fixed ISO datetime or a moving bound: "now-24h", "now-7d", "now-3mo" (rolling) or "today", "today-7d" (from midnight in `timezone`).',
 		)
 
 const isValidTimeZone = (tz: string) => {
@@ -119,7 +119,7 @@ export const dataQuerySpecSchema = z
 			)
 			.optional()
 			.describe(
-				'"status", "type", "metadata.<field>", or a time bucket "created_at.day" (also updated_at; hour, day, week, month). Time buckets come back oldest first with keys like "2026-10-30", only for buckets that have rows (fill the empty ones in the page). Omit for one overall total.',
+				'"status", "type", "metadata.<field>" or a time bucket "created_at.day" (also updated_at; hour, day, week, month), oldest first. Omit for one overall total.',
 			),
 		timezone: z
 			.string()

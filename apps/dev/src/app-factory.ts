@@ -30,6 +30,7 @@ import {
 import { dbLoadShed, isExempt as isLoadSheddingExempt } from './middleware/db-load-shed'
 import { createIdempotencyMiddleware } from './middleware/idempotency'
 import { inFlightCap } from './middleware/in-flight-cap'
+import { listReadCache } from './middleware/list-read-cache'
 import accountRoutes from './routes/account'
 import actorAvatarRoutes from './routes/actor-avatar'
 import actorsRoutes from './routes/actors'
@@ -50,6 +51,8 @@ import dataQueryRoutes from './routes/data-query'
 import desktopRoutes from './routes/desktop'
 import deviceAuthRoutes from './routes/device-auth'
 import devicesRoutes from './routes/devices'
+import dineroBookingRoutes from './routes/dinero-booking'
+import dineroReviewRoutes from './routes/dinero-review'
 import emailPickRoutes from './routes/email-pick'
 import emailStopRoutes from './routes/email-stop'
 import eventsRoutes from './routes/events'
@@ -78,9 +81,13 @@ import integrationsKeychainRoutes from './routes/integrations-keychain'
 import integrationsLinkedinRoutes from './routes/integrations-linkedin-unipile'
 import integrationsLinkedinMcpRoutes from './routes/integrations-linkedin-unipile-mcp'
 import integrationsMicrosoftMcpRoutes from './routes/integrations-microsoft-mcp'
+import integrationsOAuthAppRoutes from './routes/integrations-oauth-app'
 import integrationsResendRoutes from './routes/integrations-resend'
 import integrationsSkjaldConnectRoutes from './routes/integrations-skjald-connect'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
+import integrationsWordpressSelfHostedRoutes from './routes/integrations-wordpress-self-hosted'
+import integrationsWordpressSelfHostedMcpRoutes from './routes/integrations-wordpress-self-hosted-mcp'
+import integrationsYoutubeMcpRoutes from './routes/integrations-youtube-mcp'
 import keychainAdminRoutes from './routes/keychain-admin'
 import liveActivitiesRoutes from './routes/live-activities'
 import loopsRoutes from './routes/loops'
@@ -99,9 +106,13 @@ import objectApprovalsRoutes from './routes/object-approvals'
 import objectDoneWhenRoutes from './routes/object-done-when'
 import objectGoAheadRoutes from './routes/object-go-ahead'
 import objectNextStepRoutes from './routes/object-next-step'
+import objectOutcomeRoutes from './routes/object-outcome'
 import objectsRoutes from './routes/objects'
+import openaiAppsChallengeRoutes from './routes/openai-apps-challenge'
+import pilotGateRoutes from './routes/pilot-gate'
 import publicBetStrategistRoutes from './routes/public-bet-strategist'
 import publicLandingEventsRoutes from './routes/public-landing-events'
+import receiptIntakeRoutes, { receiptUploadApp, receiptWebhookApp } from './routes/receipt-intake'
 import relationshipsRoutes from './routes/relationships'
 import savedViewsRoutes from './routes/saved-views'
 import searchRoutes from './routes/search'
@@ -120,6 +131,7 @@ import webPushRoutes from './routes/web-push'
 import workspaceInvitationsRoutes from './routes/workspace-invitations'
 import workspaceSkillsRoutes from './routes/workspace-skills'
 import workspacesRoutes from './routes/workspaces'
+import youtubeActionsRoutes from './routes/youtube-actions'
 import type { AgentStorageManager } from './services/agent-storage'
 import type { SessionManager } from './services/session-manager'
 
@@ -191,6 +203,16 @@ export interface CreateAppOptions {
 
 const STATIC_FILE_PATH_RE =
 	/^\/(assets|fonts)\/|\.(js|mjs|css|map|json|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|txt|xml|webmanifest)$/i
+
+/** Sets Cache-Control on a 200 that has none. A 404 for a missing file stays no-store. */
+function cacheWhenFound(value: string): MiddlewareHandler {
+	return async (c, next) => {
+		await next()
+		if (c.res.status === 200 && !c.res.headers.has('Cache-Control')) {
+			c.header('Cache-Control', value)
+		}
+	}
+}
 
 const OPENAPI_INFO = {
 	title: 'Maskin Dev Workspace API',
@@ -328,7 +350,25 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// policy — browsers reject wildcard + credentials together. /api/* uses
 	// the configured-origin policy with credentials for the web app.
 	app.use('/mcp', cors({ origin: '*', exposeHeaders: ['WWW-Authenticate'] }))
-	app.use('/api/*', cors({ origin: allowedOrigins, credentials: true }))
+	// The web app can call the API from a second host that skips the Cloudflare Worker
+	// (VITE_API_ORIGIN, e.g. https://api.maskin.io). That makes every call cross-origin, so:
+	// - maxAge lets the browser reuse one preflight (Authorization makes every call preflighted;
+	//   the default of 5s would double the request count).
+	// - exposeHeaders lists the only response headers the web client reads besides the
+	//   CORS-safelisted ones (Retry-After on 429s, Content-Disposition on skill downloads).
+	app.use(
+		'/api/*',
+		cors({
+			origin: allowedOrigins,
+			credentials: true,
+			maxAge: 7200,
+			exposeHeaders: ['Retry-After', 'Content-Disposition'],
+		}),
+	)
+	// Module scripts, stylesheets and fonts loaded from that host are fetched in CORS mode.
+	// No credentials: these files are public.
+	app.use('/assets/*', cors({ origin: allowedOrigins }))
+	app.use('/fonts/*', cors({ origin: allowedOrigins }))
 	app.use(
 		'*',
 		honoLogger((line, ...rest) => console.log(redactLogLine(line.replace(/\?\S*/, '')), ...rest)),
@@ -462,6 +502,9 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		// The "Not useful" link under a Marketplace pick, same: signed token (routes/email-pick.ts).
 		if (path === '/api/email/pick-dismiss' && (method === 'GET' || method === 'POST')) return next()
 		if (path.startsWith('/api/webhooks/')) return next()
+		// The receipt command route: a receipt key is the only credential, checked in the handler
+		// against receipt_intake_keys (routes/receipt-intake.ts). It is not an actor key.
+		if (path === '/api/receipt-intake/upload' && method === 'POST') return next()
 		if (path.startsWith('/api/internal/agent-servers/')) return next()
 		if (path === '/api/internal/mcp-guard/report' && method === 'POST') return next()
 		if (path === '/api/public/landing-events' && method === 'POST') return next()
@@ -542,8 +585,12 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 
 	app.use('/api/*', createIdempotencyMiddleware(db))
 
+	// After auth, so the cache is only read for a proven member. Per-person, a few seconds long.
+	app.use('/api/*', listReadCache())
+
 	app.route('/api/objects', objectApprovalsRoutes)
 	app.route('/api/objects', objectDoneWhenRoutes)
+	app.route('/api/objects', objectOutcomeRoutes)
 	app.route('/api/objects', objectGoAheadRoutes)
 	app.route('/api/objects', objectNextStepRoutes)
 	app.route('/api/objects', objectsRoutes)
@@ -581,6 +628,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/integrations/skjald', integrationsSkjaldConnectRoutes)
 	// Deepdots connects from an email and password form, not an OAuth redirect.
 	app.route('/api/integrations/deepdots', integrationsDeepdotsRoutes)
+	// A self-hosted WordPress site connects from a site address and application password form.
+	app.route('/api/integrations/wordpress-self-hosted', integrationsWordpressSelfHostedRoutes)
 	app.route('/api/integrations/linkedin-unipile/mcp', integrationsLinkedinMcpRoutes)
 	app.route('/api/integrations/linkedin-unipile', integrationsLinkedinRoutes)
 	// google-meet MCP surface — same trie-ordering constraint as linkedin's:
@@ -593,10 +642,16 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// generic /api/integrations/{provider}/... routes never see these paths.
 	app.route('/api/integrations/google-drive', integrationsGoogleDriveRoutes)
 	app.route('/api/integrations/deepdots/mcp', integrationsDeepdotsMcpRoutes)
+	app.route('/api/integrations/wordpress-self-hosted/mcp', integrationsWordpressSelfHostedMcpRoutes)
 	app.route('/api/integrations/microsoft/mcp', integrationsMicrosoftMcpRoutes)
 	app.route('/api/integrations/google-search-console/mcp', integrationsGoogleSearchConsoleMcpRoutes)
+	// youtube MCP surface — same ordering constraint as google-meet's above.
+	app.route('/api/integrations/youtube/mcp', integrationsYoutubeMcpRoutes)
 	app.route('/api/custom-mcp-servers', customMcpServersRoutes)
+	app.route('/api/dinero-booking', dineroBookingRoutes)
+	app.route('/api/dinero-review', dineroReviewRoutes)
 	app.route('/api/integrations', integrationsKeychainRoutes)
+	app.route('/api/integrations', integrationsOAuthAppRoutes)
 	app.route('/api/keychain', keychainAdminRoutes)
 	app.route('/api/integrations', integrationsGrantsRoutes)
 	app.route('/api/integrations', integrationsGatewayRoutes)
@@ -608,6 +663,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/integrations/slack/mcp', integrationsSlackMcpRoutes)
 	// Who may send what without a person approving it; human admins and owners write.
 	app.route('/api/send-permissions', sendPermissionsRoutes)
+	// Pilot flows hold outbound steps: the MCP server and the GitHub relay ask here before one runs.
+	app.route('/api/pilot-gate', pilotGateRoutes)
 	app.route('/api/guardrails', guardrailsRoutes)
 	// Stripe webhook mounted at /api/webhooks/stripe BEFORE the integrations
 	// catchall (`/api/webhooks/:provider`) so the more-specific match wins.
@@ -615,7 +672,11 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/webhooks/stripe', stripeWebhookRoutes)
 	app.route('/api/marketplace', marketplaceLoopsRoutes)
 	app.route('/api/mini-apps', miniAppRegenRoutes)
+	// Receipt email delivery, signed by Resend. More specific than the catchall below, mounted first.
+	app.route('/api/webhooks', receiptWebhookApp)
 	app.route('/api/webhooks', webhookApp)
+	app.route('/api/receipt-intake', receiptUploadApp)
+	app.route('/api/receipt-intake', receiptIntakeRoutes)
 	app.route('/api/billing', billingRoutes)
 	// Only exists on stacks that set MASKIN_TEST_GRANT_TOKEN (CI's E2E run).
 	// Unmounted — not merely guarded — everywhere else, so production 404s.
@@ -630,6 +691,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/sessions', sessionsRoutes)
 	app.route('/api/notifications', notificationsRoutes)
 	app.route('/api/for-you', forYouRoutes)
+	app.route('/api/youtube/actions', youtubeActionsRoutes)
 	app.route('/api/devices', devicesRoutes)
 	app.route('/api/notification-preferences', notificationPreferencesRoutes)
 	app.route('/api/email/stop', emailStopRoutes)
@@ -684,6 +746,9 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// otherwise answer these paths with index.html.
 	app.route('/', oauthDiscoveryRoutes)
 
+	// Domain proof for the ChatGPT app listing. 404 until OPENAI_APPS_CHALLENGE is set.
+	app.route('/', openaiAppsChallengeRoutes)
+
 	// Client ID Metadata Document for Vercel's MCP sign-in. Public, and before the SPA fallthrough for
 	// the same reason as the discovery documents above.
 	app.route('/', oauthClientMetadataRoutes)
@@ -726,6 +791,11 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		path.resolve(import.meta.dirname ?? __dirname, '../../web/dist')
 	if (fs.existsSync(staticDir)) {
 		logger.info(`Serving static files from ${staticDir}`)
+		// No CDN in front of the second host, so the origin has to say how long a file lives.
+		// Vite names everything under /assets by content hash, so those never change; /fonts
+		// files keep their names and get a day.
+		app.use('/assets/*', cacheWhenFound('public, max-age=31536000, immutable'))
+		app.use('/fonts/*', cacheWhenFound('public, max-age=86400'))
 		app.use(
 			'*',
 			serveStatic({

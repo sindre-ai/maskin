@@ -1,4 +1,4 @@
-import { UPGRADE_PILL, shouldShowNoCreditsPill } from '@/components/loops/loop-pill'
+import { UPGRADE_PILL, loopPillStyle, shouldShowNoCreditsPill } from '@/components/loops/loop-pill'
 import { describe, expect, it } from 'vitest'
 
 describe('UPGRADE_PILL tokens', () => {
@@ -15,6 +15,20 @@ describe('UPGRADE_PILL tokens', () => {
 	})
 })
 
+describe('loopPillStyle', () => {
+	it('returns the table entry for a known pill', () => {
+		expect(loopPillStyle('live').label).toBe('Live')
+	})
+
+	it('falls back to the raw text for a pill the table does not know', () => {
+		expect(loopPillStyle('retired')).toEqual({
+			label: 'retired',
+			dot: 'bg-muted-foreground',
+			text: 'text-muted-foreground',
+		})
+	})
+})
+
 describe('shouldShowNoCreditsPill', () => {
 	it('is true only when the loop is paused AND the workspace credit balance is empty', () => {
 		expect(shouldShowNoCreditsPill('paused', 0)).toBe(true)
@@ -27,9 +41,10 @@ describe('shouldShowNoCreditsPill', () => {
 	})
 
 	it('is false on non-paused rows even at zero credits — parity with SPEC states table', () => {
-		expect(shouldShowNoCreditsPill('learning', 0)).toBe(false)
+		expect(shouldShowNoCreditsPill('pilot', 0)).toBe(false)
 		expect(shouldShowNoCreditsPill('supervised', 0)).toBe(false)
-		expect(shouldShowNoCreditsPill('fully_autonomous', 0)).toBe(false)
+		expect(shouldShowNoCreditsPill('live', 0)).toBe(false)
+		expect(shouldShowNoCreditsPill('archived', 0)).toBe(false)
 		expect(shouldShowNoCreditsPill('waiting_on_you', 0)).toBe(false)
 		expect(shouldShowNoCreditsPill('draft', 0)).toBe(false)
 	})

@@ -4,7 +4,7 @@ import MaskinUI
 import SwiftUI
 
 /// The agent's outbound draft inside a decision card, laid out as in v6: a label, a "To" row,
-/// then the whole body, never cut. When the server sent a `preview` the
+/// then the whole body, never cut. A reply shows the message it answers above the To row. When the server sent a `preview` the
 /// To / Cc / Subject / detail lines and any missing or warning notes come from it, with a receipt
 /// chip once the draft is approved or sent. A card about a file shows the file instead of text.
 /// Read only on the phone: Approve replies with the send option and the server approves the exact
@@ -45,6 +45,10 @@ struct DraftPreview: View {
 				if let receipt { ReceiptChip(text: receipt) }
 			}
 			if let preview = draft.preview {
+				// What the draft answers, read first and above To and Subject, as on the web. Not sent.
+				if let original = preview.originalMessage {
+					OriginalMessageView(label: preview.originalMessageLabel, text: original)
+				}
 				ObjectPreviewMetaView(preview: preview)
 			} else if let recipient {
 				VStack(alignment: .leading, spacing: MaskinSpace.s4) {

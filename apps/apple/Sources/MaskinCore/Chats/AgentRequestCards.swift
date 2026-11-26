@@ -59,6 +59,19 @@ public struct IntegrationAccessRequest: Equatable, Sendable {
 	public var reason: String?
 	/// A helper another agent started: answered through its own session, not the chat.
 	public var replyToSession: Bool
+	/// Set by the server, never the agent, when the card can also allow write in this chat for a few
+	/// hours. The text is fixed per provider; the tool is the one the refused call used.
+	public var chatLift: ChatLift?
+
+	/// What "Allow in this chat" offers: a limited time, in this chat only.
+	public struct ChatLift: Equatable, Sendable {
+		public var hours: Int
+		public var text: String
+		public var tool: String?
+	}
+
+	/// The chat offer, only for a write ask: only the full level can be lifted.
+	public var lift: ChatLift? { level == .readWrite ? chatLift : nil }
 
 	public init?(message: ChatMessage) {
 		guard let raw = message.metadata?["integration_access_request"],
@@ -73,6 +86,11 @@ public struct IntegrationAccessRequest: Equatable, Sendable {
 		self.level = level
 		self.reason = raw["reason"]?.stringValue
 		self.replyToSession = raw["reply_to_session"]?.boolValue == true
+		if let lift = raw["chat_lift"], let hours = lift["hours"]?.intValue, hours > 0,
+			let text = lift["text"]?.stringValue, !text.isEmpty
+		{
+			self.chatLift = ChatLift(hours: hours, text: text, tool: lift["tool"]?.stringValue)
+		}
 	}
 
 	/// A normal chat message that asks the agent to put the request again after a decline.
@@ -95,6 +113,11 @@ public struct IntegrationAccessRequest: Equatable, Sendable {
 		"Allowed \(displayName) for \(Self.who(agentName))."
 	}
 
+	/// The line once allowed in this chat only: "Allowed Calendar for Chief of Staff in this chat for 8 hours."
+	public func chatAllowedLine(agentName: String?) -> String {
+		"Allowed \(displayName) for \(Self.who(agentName)) in this chat for \(chatLift?.hours ?? 0) hours."
+	}
+
 	public func declinedLine(agentName: String?) -> String {
 		"Declined \(displayName) for \(Self.who(agentName))."
 	}
@@ -112,6 +135,13 @@ public struct IntegrationAccessRequest: Equatable, Sendable {
 			changed
 			? "I've allowed you \(level.words) to \(displayName). Carry on with the work."
 			: "You already have \(level.words) to \(displayName). Carry on with the work."
+		return replyToSession ? head : head + " Reply with one short line to say you have it."
+	}
+
+	/// What the person says back after "Allow in this chat", worded as the web does.
+	public func chatAllowedReply() -> String {
+		let head =
+			"I've allowed you read and write access to \(displayName) for the next \(chatLift?.hours ?? 0) hours, in this chat only. Carry on with the work."
 		return replyToSession ? head : head + " Reply with one short line to say you have it."
 	}
 
@@ -137,9 +167,22 @@ public struct IntegrationAccessResult: Equatable, Sendable {
 	public var relaunched: Bool
 }
 
+/// How long Not now waits for the count to be recorded before it carries on.
+public let integrationDeclineTimeout: Duration = .seconds(3)
+
+public enum IntegrationAccessScope: Sendable {
+	/// A standing level, as in Settings.
+	case always
+	/// Read and write in the chat that asked, for a few hours.
+	case chat
+}
+
 public protocol IntegrationAccessing: Sendable {
 	func state(for request: IntegrationAccessRequest, agentID: String) async -> IntegrationAccessState
-	func allow(_ request: IntegrationAccessRequest) async throws -> IntegrationAccessResult
+	func allow(_ request: IntegrationAccessRequest, scope: IntegrationAccessScope) async throws -> IntegrationAccessResult
+	/// Counts a Not now press for the Allow rate. Never throws and never waits past the timeout: the
+	/// message to the agent is what a reload reads, so the decline does not depend on this.
+	func recordDecline(_ request: IntegrationAccessRequest) async
 }
 
 public struct APIIntegrationAccessSource: IntegrationAccessing {
@@ -167,12 +210,15 @@ public struct APIIntegrationAccessSource: IntegrationAccessing {
 		return rank >= request.level.rank ? .allowed : .ask
 	}
 
-	public func allow(_ request: IntegrationAccessRequest) async throws -> IntegrationAccessResult {
+	public func allow(_ request: IntegrationAccessRequest, scope: IntegrationAccessScope) async throws -> IntegrationAccessResult {
 		let output = try await client.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_access(
 			.init(
 				path: .init(id: request.integrationID),
 				headers: .init(x_hyphen_workspace_hyphen_id: workspaceID),
-				body: .json(.init(sessionId: request.sessionID, level: request.level == .read ? .read : .read_write))))
+				body: .json(
+					.init(
+						sessionId: request.sessionID, level: request.level == .read ? .read : .read_write,
+						scope: scope == .chat ? .chat : .always))))
 		switch output {
 		case .ok(let ok):
 			let body = try ok.body.json
@@ -189,6 +235,24 @@ public struct APIIntegrationAccessSource: IntegrationAccessing {
 			throw KeychainAccessError(Self.refusal((try? conflict.body.json)?.error.message))
 		default:
 			throw KeychainAccessError("Couldn't allow it. Try again.")
+		}
+	}
+
+	public func recordDecline(_ request: IntegrationAccessRequest) async {
+		let client = client
+		let workspaceID = workspaceID
+		await withTaskGroup(of: Void.self) { group in
+			group.addTask {
+				_ = try? await client.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_decline_hyphen_from_hyphen_chat(
+					.init(
+						path: .init(id: request.integrationID),
+						headers: .init(x_hyphen_workspace_hyphen_id: workspaceID),
+						body: .json(.init(sessionId: request.sessionID))))
+			}
+			group.addTask { try? await Task.sleep(for: integrationDeclineTimeout) }
+			// Whichever finishes first: the call, or the timer.
+			await group.next()
+			group.cancelAll()
 		}
 	}
 

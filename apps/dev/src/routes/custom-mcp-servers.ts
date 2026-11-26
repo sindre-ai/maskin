@@ -494,6 +494,7 @@ async function gateway(c: import('hono').Context<{ Variables: Env['Variables'] }
 		access,
 		cacheKey: `${workspaceId}:${id}`,
 		upstreamUrl: url,
+		allowedTools: server.allowed_tools,
 		upstreamHeaders: async () => {
 			// The name may point somewhere private by now; check what it resolves to.
 			if (!(await resolvesPublicly(new URL(url).hostname))) {

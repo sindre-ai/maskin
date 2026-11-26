@@ -1,4 +1,5 @@
-import { CommentInput } from '@/components/activity/comment-input'
+import { Composer } from '@/components/chat/chat'
+import { typeIconOf } from '@/components/chat/linked-card-face'
 import { outsideChatLinkedCards } from '@/components/chat/linked-object-preview'
 import { DoneWhenCardLines } from '@/components/objects/done-when-lines'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
@@ -10,8 +11,7 @@ import { StatusBadge } from '@/components/shared/status-badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useActors } from '@/hooks/use-actors'
-import { useEntityEvents } from '@/hooks/use-events'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
+import { useCreateComment, useEntityEvents } from '@/hooks/use-events'
 import {
 	secondsSince,
 	trackForyouCardAction,
@@ -24,6 +24,7 @@ import type {
 	LatestMentionDecisionDraft,
 	UnreadItem,
 } from '@/lib/api'
+import { EMPTY_CHAT_SELECTION, chatSelectionReducer } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
 import { defaultOnSilenceLine } from '@/lib/comment-decision'
 import {
@@ -34,12 +35,13 @@ import {
 	cardHeadline,
 	classifyCardKind,
 	decisionOf,
+	sendsWithoutMessage,
 } from '@/lib/foryou-card-kind'
 import { bylineName, heldNote, isObjectlessCard } from '@/lib/foryou-feed'
 import { markImpressed } from '@/lib/foryou-impressions'
 import { Link } from '@tanstack/react-router'
-import { ArrowUpRight, Check, ChevronDown, ChevronUp, X } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Check, ChevronDown, ChevronUp, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { DraftPreview } from './draft-preview'
 import { type DraftAction, DraftStack } from './draft-stack'
 
@@ -99,7 +101,6 @@ export function FeedCard({
 	const object = item.object
 	const cardKind: CardKind = classifyCardKind(item)
 	const decision = decisionOf(item)
-	const doneWhenOn = useFeatureFlag('done-when-list')
 	// The ask leads, not the object. `cardHeadline` falls back through the
 	// comment's first line to the object title, so a card still reads sensibly
 	// for a mention with no decision and for an item with no mention payload.
@@ -108,11 +109,6 @@ export function FeedCard({
 	// what follows it — otherwise a one-line mention prints twice.
 	const mentionBody = cardBody(item)
 	const status = object?.status
-	// The object's own name is context now, not the headline — it sits in the
-	// meta line beside the type badge. Suppressed when the headline already fell
-	// back to it, so the card doesn't print the same title twice.
-	const rawObjectTitle = object?.title?.trim() ?? ''
-	const objectTitle = rawObjectTitle === title ? '' : rawObjectTitle
 
 	const { data: actors } = useActors(workspaceId)
 	// Attribution follows the author of the comment that raised the card, NOT
@@ -161,21 +157,21 @@ export function FeedCard({
 	// decide and shows only the composer.
 	const options: readonly CardAction[] = useMemo(() => cardActions(item), [item])
 
+	// A card with nothing to tap still gives the reader a way to act on it.
+	const openTheTask = !objectless && options.length === 0
+	// A card that asks to send something must show the message. When the agent attached none, say
+	// so and point at the task, so the card is never only a question and buttons.
+	const messageMissing = !objectless && sendsWithoutMessage(item)
+	const noun = object?.type === 'task' ? 'task' : 'item'
+	// The message box names who a reply goes to, so it needs an author. Without one it would say
+	// "the agent", which is not an answer.
+	const showComposer = !objectless && Boolean(senderId)
+
 	// The card is waiting on an agent once the reader has answered it.
 	const waiting = !decided && replied
 	const held = decided || waiting ? '' : heldNote(item.latest_activity_at)
 
-	// The object the card is about, named once: under the message, not in the header.
-	const objectLine = objectless ? null : (
-		<Link
-			to="/$workspaceId/objects/$objectId"
-			params={{ workspaceId, objectId }}
-			className="text-[13px] text-muted-foreground hover:text-foreground hover:underline"
-		>
-			{objectTitle || 'Open'}
-			<ArrowUpRight size={10} className="ml-0.5 inline" aria-hidden />
-		</Link>
-	)
+	const ObjectIcon = typeIconOf(object?.type ?? '')
 
 	const [pendingId, setPendingId] = useState<string | null>(null)
 	// The acknowledgement beat below posts a real reply when it fires, so the
@@ -231,6 +227,21 @@ export function FeedCard({
 					label={repliedText || 'Reply sent'}
 					who={sender?.name}
 					multiline
+					chat={
+						senderId && !objectless
+							? {
+									workspaceId,
+									agentId: senderId,
+									agentName: sender?.name,
+									object: {
+										id: objectId,
+										title: object?.title ?? null,
+										type: object?.type ?? null,
+									},
+									text: repliedText ?? '',
+								}
+							: undefined
+					}
 				/>
 			</CardShell>
 		)
@@ -270,6 +281,16 @@ export function FeedCard({
 	return (
 		<CardShell expanded shellRef={shellRef}>
 			<div className="group/card flex flex-col gap-3 px-[22px] pb-[18px] pt-5">
+				{!objectless && (
+					<Link
+						to="/$workspaceId/objects/$objectId"
+						params={{ workspaceId, objectId }}
+						className="flex min-w-0 items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground hover:underline"
+					>
+						<ObjectIcon size={13} aria-hidden className="shrink-0" />
+						<span className="min-w-0 truncate">{object?.title?.trim() || 'Open'}</span>
+					</Link>
+				)}
 				<div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
 					<ActorAvatar
 						id={senderId ?? undefined}
@@ -333,15 +354,12 @@ export function FeedCard({
 				    the comment as written. */}
 				{decision ? (
 					<div className="flex flex-col gap-3">
-						<div className="flex flex-col gap-1.5 rounded-xl bg-muted/60 px-4 py-3">
-							<p className="text-[15px] leading-[1.5] text-pretty text-foreground">
+						<div className="flex flex-col gap-1.5">
+							<p className="max-w-[62ch] text-[15px] leading-[1.5] text-pretty text-foreground">
 								{decision.summary}
 							</p>
-							{objectLine}
 						</div>
-						{decision.done_when && doneWhenOn ? (
-							<DoneWhenCardLines block={decision.done_when} />
-						) : null}
+						{decision.done_when ? <DoneWhenCardLines block={decision.done_when} /> : null}
 						{decision.draft ? (
 							<DraftPreview workspaceId={workspaceId} draft={decision.draft} />
 						) : null}
@@ -354,8 +372,6 @@ export function FeedCard({
 							/>
 						) : null}
 					</div>
-				) : !mentionBody ? (
-					objectLine
 				) : (
 					mentionBody && (
 						// The whole comment, not a preview: the reader answers here, so
@@ -367,14 +383,32 @@ export function FeedCard({
 								mentionActors={actors}
 								linkedCards={outsideChatLinkedCards(workspaceId, 'chips')}
 							/>
-							{objectLine}
 						</div>
 					)
+				)}
+
+				{messageMissing && (
+					<div
+						data-testid="message-not-attached"
+						className="flex flex-col items-start gap-3 text-[14px] leading-[1.5] text-foreground"
+					>
+						<p>{`The message is not attached. Open the ${noun} to read it.`}</p>
+						<Button
+							asChild
+							variant="outline"
+							className="h-11 w-full rounded-xl text-[14px] sm:w-auto"
+						>
+							<Link to="/$workspaceId/objects/$objectId" params={{ workspaceId, objectId }}>
+								{`Open the ${noun}`}
+							</Link>
+						</Button>
+					</div>
 				)}
 
 				{options.length > 0 && (
 					<DecisionOptions
 						variant="row"
+						hideTagWhenAlone
 						defaultLine={defaultOnSilenceLine(decision)}
 						options={options}
 						pendingId={pendingId}
@@ -382,20 +416,93 @@ export function FeedCard({
 					/>
 				)}
 
-				{!objectless && (
-					<CommentInput
+				{openTheTask && (
+					<Button
+						asChild
+						className="h-auto min-h-12 w-full rounded-xl px-4 py-3 text-[14px] font-bold"
+					>
+						<Link to="/$workspaceId/objects/$objectId" params={{ workspaceId, objectId }}>
+							{object?.type === 'task' ? 'Open the task to decide' : 'Open the item to decide'}
+						</Link>
+					</Button>
+				)}
+
+				{showComposer && (
+					<CardReply
 						workspaceId={workspaceId}
 						objectId={objectId}
-						// The composer answers the comment that put this card in the feed,
-						// so a typed reply threads under it exactly as a taken option does.
 						parentEventId={item.latest_mention?.event_id}
-						variant="bar"
-						placeholder={`Ask ${sender?.name ?? 'the agent'} or give instructions`}
+						agentName={sender?.name}
 						onSubmitted={onReplied}
 					/>
 				)}
 			</div>
 		</CardShell>
+	)
+}
+
+// The card's message box: the chat composer, answering the comment that raised the card. It does
+// what the comment box did here (post under the card's thread, then tell the card it was sent, so
+// the card settles into its receipt) and nothing more.
+function CardReply({
+	workspaceId,
+	objectId,
+	parentEventId,
+	agentName,
+	onSubmitted,
+}: {
+	workspaceId: string
+	objectId: string
+	parentEventId?: number
+	agentName?: string
+	onSubmitted: (text: string) => void
+}) {
+	const createComment = useCreateComment(workspaceId, objectId)
+	const [selection, dispatchSelection] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
+	const [error, setError] = useState<string | null>(null)
+
+	const send = useCallback(
+		async (content: string) => {
+			setError(null)
+			try {
+				await createComment.mutateAsync({
+					entity_id: objectId,
+					content,
+					parent_event_id: parentEventId,
+					...(selection.agents.length > 0 ? { mentions: selection.agents } : {}),
+					...(selection.files.length > 0
+						? { attachment_file_ids: selection.files.map((file) => file.fileId) }
+						: {}),
+				})
+			} catch (err) {
+				// The composer keeps the text when this rejects; say why under the box.
+				setError(err instanceof Error ? err.message : 'Could not send your reply')
+				throw err
+			}
+			dispatchSelection({ type: 'clear_all' })
+			onSubmitted(content)
+		},
+		[createComment, objectId, parentEventId, selection, onSubmitted],
+	)
+
+	return (
+		<Composer
+			workspaceId={workspaceId}
+			onSend={send}
+			disabled={false}
+			pending={createComment.isPending}
+			surface="pulse-bar"
+			placeholder={`Message ${agentName ?? 'the agent'}`}
+			textareaLabel={`Message ${agentName ?? 'the agent'}`}
+			selection={selection}
+			onDispatchSelection={dispatchSelection}
+			onRemoveAgent={(id) => dispatchSelection({ type: 'remove_agent', id })}
+			onRemoveObject={(id) => dispatchSelection({ type: 'remove_object', id })}
+			onRemoveNotification={(id) => dispatchSelection({ type: 'remove_notification', id })}
+			onRemoveFile={(fileId) => dispatchSelection({ type: 'remove_file', fileId })}
+			externalError={error}
+			onDismissExternalError={() => setError(null)}
+		/>
 	)
 }
 
@@ -433,11 +540,20 @@ function Receipt({
 	label,
 	who,
 	multiline = false,
+	chat,
 }: {
 	testId: string
 	label: string
 	who?: string
 	multiline?: boolean
+	/** A reply receipt offers to carry on in a chat, with the typed message already in the box. */
+	chat?: {
+		workspaceId: string
+		agentId: string
+		agentName?: string
+		object: { id: string; title: string | null; type: string | null }
+		text: string
+	}
 }) {
 	return (
 		<div data-testid={testId} className="flex items-center gap-2.5 bg-status-done-bg px-4 py-3">
@@ -457,6 +573,24 @@ function Receipt({
 					{who ? `Sent to ${who}` : 'Reply sent'}
 				</div>
 			</div>
+			{chat && (
+				<Button asChild variant="secondary" size="sm" className="shrink-0 rounded-full">
+					<Link
+						to="/$workspaceId/chats/new"
+						params={{ workspaceId: chat.workspaceId }}
+						search={{
+							agentId: chat.agentId,
+							agentName: chat.agentName,
+							objectId: chat.object.id,
+							objectTitle: chat.object.title ?? undefined,
+							objectType: chat.object.type ?? undefined,
+							text: chat.text || undefined,
+						}}
+					>
+						{chat.agentName ? `Open chat with ${chat.agentName}` : 'Open chat'}
+					</Link>
+				</Button>
+			)}
 		</div>
 	)
 }

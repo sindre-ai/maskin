@@ -9,15 +9,19 @@ public struct APIChatSearch: ChatSearching {
 	private let clientSource: String
 	private let credentials: MaskinCredentialsProvider
 	private let session: URLSession
+	/// Read at each search: the new chat list (flag chat-list-v2) lets the server read from:, is: and
+	/// the other operators out of the typed words.
+	private let operators: @Sendable () -> Bool
 
 	public init(
 		baseURL: URL, clientSource: String, credentials: @escaping MaskinCredentialsProvider,
-		session: URLSession = .shared
+		session: URLSession = .shared, operators: @escaping @Sendable () -> Bool = { false }
 	) {
 		self.baseURL = baseURL
 		self.clientSource = clientSource
 		self.credentials = credentials
 		self.session = session
+		self.operators = operators
 	}
 
 	public func search(query: String) async throws -> [ChatSearchHit] {
@@ -46,6 +50,7 @@ public struct APIChatSearch: ChatSearching {
 			URLQueryItem(name: "q", value: query), URLQueryItem(name: "types", value: "chat"),
 			URLQueryItem(name: "statuses", value: "needs_you,in_progress,new,done,archived"),
 		]
+		if operators() { parts?.queryItems?.append(URLQueryItem(name: "operators", value: "true")) }
 		var request = URLRequest(url: parts?.url ?? url)
 		request.httpMethod = "GET"
 		request.setValue("application/json", forHTTPHeaderField: "Accept")

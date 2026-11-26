@@ -8,6 +8,10 @@ import SwiftUI
 struct MemberDetailPage: View {
 	let store: MembersStore
 	let memberID: String
+	/// Starts a chat with this person (entry point `person_message_page`). Nil hides the button.
+	var onMessage: ((ChatParticipant, _ entryPoint: String) -> Void)?
+	/// False for viewers, who cannot start chats: the button shows, disabled.
+	var canMessage = true
 	@Environment(\.dismiss) private var dismiss
 	@State private var confirmRemove = false
 
@@ -28,6 +32,18 @@ struct MemberDetailPage: View {
 				if store.canRemove(member) {
 					Button("Remove from workspace", role: .destructive) { confirmRemove = true }
 						.buttonStyle(.secondaryAction)
+				}
+			}
+			.toolbar {
+				if let onMessage, WorkspacePageState.canMessage(member, currentActorId: store.currentActorId) {
+					ToolbarItem(placement: .primaryAction) {
+						Button("Message", systemImage: "message") {
+							onMessage(
+								ChatParticipant(id: member.actorId, name: member.name, kind: .human), "person_message_page")
+						}
+						.disabled(!canMessage)
+						.accessibilityLabel("Message \(member.name)")
+					}
 				}
 			}
 			.confirmationDialog(
@@ -51,29 +67,21 @@ struct MemberDetailPage: View {
 	}
 
 	private func roleRows(_ member: WorkspaceMember) -> [PageRowModel] {
-		guard store.canChangeRole(of: member) else {
-			return [PageRowModel(id: "role", title: member.role.label, accessory: .check)]
-		}
-		return [MemberRole.admin, .member].map { role in
+		SettingsRowRules.roleChoices(current: member.role, canChange: store.canChangeRole(of: member)).map { choice in
 			PageRowModel(
-				id: role.rawValue, title: role.label,
-				subtitle: role == .admin ? "Manages people and integrations" : "Works with items and agents",
-				accessory: role == member.role ? .check : .none,
-				action: role == member.role ? nil : { Task { await store.setRole(role, for: member) } })
+				id: choice.id, title: choice.title, subtitle: choice.subtitle,
+				accessory: choice.isSelected ? .check : .none,
+				action: choice.isTappable
+					? { Task { await store.setRole(choice.role, for: member) } }
+					: nil)
 		}
 	}
 
 	/// What the role allows. Every member can edit items and use agents; managers also run people
 	/// and integrations. Read-only here: the API has no per-person access switches.
 	private func accessRows(_ member: WorkspaceMember) -> [PageRowModel] {
-		var rows = [
-			PageRowModel(id: "edit", title: "Can edit items", accessory: .state(PageState("Yes", .active))),
-			PageRowModel(id: "agents", title: "Can use agents", accessory: .state(PageState("Yes", .active))),
-		]
-		rows.append(
-			PageRowModel(
-				id: "manage", title: "Can manage people",
-				accessory: .state(member.role.canManage ? PageState("Yes", .active) : PageState("No", .muted))))
-		return rows
+		SettingsRowRules.accessLines(for: member.role).map {
+			PageRowModel(id: $0.id, title: $0.title, accessory: .state($0.state))
+		}
 	}
 }

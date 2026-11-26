@@ -215,3 +215,108 @@ describe('POST /api/integrations/gmail/save-attachment', () => {
 		expect(fetchMock).not.toHaveBeenCalled()
 	})
 })
+
+describe('POST /api/integrations/gmail/save-attachment with several accounts', () => {
+	async function twoAccounts(access: { first: 'read' | null; second: 'read' | null }) {
+		const human = getTestActorId()
+		const workspace = await insertWorkspace(db, human)
+		const agent = await insertActor(db, { type: 'agent' })
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: workspace.id, actorId: agent.id, role: 'member' })
+		const rows = {} as Record<'first' | 'second', typeof integrations.$inferSelect>
+		// The newer account goes in first: "no account given" must follow age, not insertion order.
+		for (const [name, externalId, createdAt] of [
+			['second', 'Krumhausen@gmail.com', new Date('2026-02-01')],
+			['first', 'sender@example.com', new Date('2026-01-01')],
+		] as const) {
+			const [row] = await db
+				.insert(integrations)
+				.values({
+					workspaceId: workspace.id,
+					provider: 'gmail',
+					status: 'active',
+					externalId,
+					credentials: encrypt(
+						JSON.stringify({
+							accessToken: `token-${name}`,
+							expiresAt: Date.now() + 60 * 60 * 1000,
+						}),
+					),
+					createdBy: human,
+					createdAt,
+					defaultAgentAccess: 'none',
+				})
+				.returning()
+			if (!row) throw new Error('gmail integration was not inserted')
+			rows[name] = row
+			if (access[name]) {
+				await insertAgentGrant(db, {
+					workspaceId: workspace.id,
+					integrationId: row.id,
+					actorId: agent.id,
+					access: access[name] ?? 'read',
+				})
+			}
+		}
+		const blobs = new Map<string, Buffer>()
+		const save = (body: Record<string, unknown>) =>
+			appFor(agent.id, blobs).request('/api/integrations/gmail/save-attachment', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json', 'X-Workspace-Id': workspace.id },
+				body: JSON.stringify(body),
+			})
+		return { workspace, save }
+	}
+
+	const stubGmail = () =>
+		fetchMock
+			.mockResolvedValueOnce(json(200, messageWithReceipt()))
+			.mockResolvedValueOnce(json(200, { size: PDF.length, data: PDF.toString('base64url') }))
+
+	const tokenUsed = () =>
+		(fetchMock.mock.calls[0] as [string, RequestInit])[1].headers as Record<string, string>
+
+	it('reads the account named in the request, matched without regard to case', async () => {
+		const { save } = await twoAccounts({ first: 'read', second: 'read' })
+		stubGmail()
+
+		const res = await save({ ...REQUEST, account: 'krumhausen@GMAIL.com' })
+
+		expect(res.status).toBe(201)
+		expect(tokenUsed().Authorization).toBe('Bearer token-second')
+	})
+
+	it('uses the first connected account when none is named, whatever order they were added in', async () => {
+		const { save } = await twoAccounts({ first: 'read', second: 'read' })
+		stubGmail()
+
+		const res = await save(REQUEST)
+
+		expect(res.status).toBe(201)
+		expect(tokenUsed().Authorization).toBe('Bearer token-first')
+	})
+
+	it('answers 404 for an unknown address and lists the accounts the agent may use', async () => {
+		const { workspace, save } = await twoAccounts({ first: 'read', second: null })
+
+		const res = await save({ ...REQUEST, account: 'nobody@example.com' })
+
+		expect(res.status).toBe(404)
+		const message = ((await res.json()) as { error: { message: string } }).error.message
+		expect(message).toContain('sender@example.com')
+		expect(message).not.toContain('Krumhausen@gmail.com')
+		expect(fetchMock).not.toHaveBeenCalled()
+		expect(await filesOf(workspace.id)).toHaveLength(0)
+	})
+
+	it('answers an account the agent has no access to the same way, and reads nothing', async () => {
+		const { workspace, save } = await twoAccounts({ first: 'read', second: null })
+
+		const res = await save({ ...REQUEST, account: 'krumhausen@gmail.com' })
+
+		expect(res.status).toBe(404)
+		expect(fetchMock).not.toHaveBeenCalled()
+		expect(await filesOf(workspace.id)).toHaveLength(0)
+	})
+})

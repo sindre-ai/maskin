@@ -139,16 +139,16 @@ function KeychainPage() {
 				</div>
 			) : (
 				<section>
-					<h2 className="px-2 pb-1.5 text-[15px] font-semibold text-foreground">Secrets</h2>
+					<div className="mb-2 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+						<h2 className="min-w-0 px-2 text-[15px] font-semibold text-foreground">Secrets</h2>
+						<AddCredentialButton workspaceId={workspaceId} label="Add secret" />
+					</div>
 					<div className="border-t border-border-subtle">
 						{credentials.map((credential) => (
 							<div key={credential.id} data-credential-id={credential.id}>
 								<CredentialCard credential={credential} onRemoved={handleRemoved} />
 							</div>
 						))}
-					</div>
-					<div className="mt-5 flex px-2">
-						<AddCredentialButton workspaceId={workspaceId} label="Add secret" />
 					</div>
 				</section>
 			)}

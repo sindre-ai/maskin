@@ -23,6 +23,7 @@ import { ACTIVE_STATUSES } from '@/lib/agent-status'
 import { trackNavItemClicked } from '@/lib/analytics'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
+import { copyChatLink } from '@/lib/copy-chat-link'
 import { useVoiceCallView } from '@/lib/voice-call-view'
 import { Link, useNavigate, useSearch } from '@tanstack/react-router'
 import {
@@ -31,6 +32,7 @@ import {
 	ArrowLeft,
 	Copy,
 	EyeOff,
+	Link2,
 	Maximize2,
 	Minimize2,
 	MoreHorizontal,
@@ -336,13 +338,17 @@ export function ThreadHeader({
 						<Copy size={14} />
 						<span>Copy whole conversation</span>
 					</DropdownMenuItem>
+					<DropdownMenuItem onSelect={() => void copyChatLink()}>
+						<Link2 size={14} />
+						<span>Copy link</span>
+					</DropdownMenuItem>
 					<DropdownMenuItem
 						onSelect={() =>
 							updateMe.mutate({ id: conversationId, data: { pinned: !conversation.pinned } })
 						}
 					>
 						<Pin size={14} fill={conversation.pinned ? 'currentColor' : 'none'} />
-						<span>{conversation.pinned ? 'Unpin conversation' : 'Pin conversation'}</span>
+						<span>{conversation.pinned ? 'Unpin' : 'Pin'}</span>
 					</DropdownMenuItem>
 					<DropdownMenuItem onSelect={handleMarkUnread}>
 						<EyeOff size={14} />

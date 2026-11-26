@@ -78,7 +78,7 @@ public enum ProfileMenu {
 /// the account menu only; Files lives here only.
 public enum SettingsPageRow: String, CaseIterable, Hashable, Sendable {
 	case account, billing
-	case notifications, appLock, deviceSignIn
+	case notifications, permissions, appLock, deviceSignIn
 	case members, integrations, triggers, files
 	case skills, objectTypes, keys
 	case advanced
@@ -103,7 +103,7 @@ public enum SettingsPageRow: String, CaseIterable, Hashable, Sendable {
 	public var section: Section {
 		switch self {
 		case .account, .billing: .account
-		case .notifications, .appLock, .deviceSignIn: .preferences
+		case .notifications, .permissions, .appLock, .deviceSignIn: .preferences
 		case .members, .integrations, .triggers, .files: .workspace
 		case .skills, .objectTypes, .keys: .access
 		case .advanced: .advanced
@@ -115,6 +115,7 @@ public enum SettingsPageRow: String, CaseIterable, Hashable, Sendable {
 		case .account: "Account"
 		case .billing: "Billing"
 		case .notifications: "Notifications"
+		case .permissions: "Permissions"
 		case .appLock: "App lock"
 		case .deviceSignIn: "Sign in a device"
 		case .members: "Members"
@@ -130,7 +131,7 @@ public enum SettingsPageRow: String, CaseIterable, Hashable, Sendable {
 
 	var needsWorkspace: Bool {
 		switch self {
-		case .account, .notifications, .appLock, .advanced: false
+		case .account, .notifications, .permissions, .appLock, .advanced: false
 		default: true
 		}
 	}

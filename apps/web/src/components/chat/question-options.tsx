@@ -1,3 +1,4 @@
+import { RelativeTime } from '@/components/shared/relative-time'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -6,8 +7,10 @@ import { useSendMessage } from '@/hooks/use-conversation'
 import { useSendSessionInput } from '@/hooks/use-sessions'
 import type { MessageQuestion, MessageQuestionAnswer, MessageQuestionItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { Check, X } from 'lucide-react'
-import { useEffect, useId, useRef, useState } from 'react'
+import type { QuestionAnswer } from '@/lib/question-answers'
+import { QUESTION_DETAIL_LINES, splitQuestionText } from '@/lib/question-text-split'
+import { Check, ChevronDown, X } from 'lucide-react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 
 interface QuestionOptionsProps {
 	conversationId: string
@@ -17,6 +20,8 @@ interface QuestionOptionsProps {
 	question: MessageQuestion
 	/** A later message in the thread already answered this one. */
 	answered: boolean
+	/** What was answered, who answered and when. Keeps the card as a one-line summary once `answered`. */
+	answer?: QuestionAnswer
 	/** The thread the question sits in. The answer goes there too, and shows in the main chat as the question does. */
 	threadRootId?: number | null
 	/** Sits at the right end of the action row, beside "Send answer". */
@@ -42,6 +47,7 @@ export function QuestionOptions({
 	questionMessageId,
 	question,
 	answered,
+	answer,
 	threadRootId,
 	trailingAction,
 }: QuestionOptionsProps) {
@@ -79,7 +85,7 @@ export function QuestionOptions({
 		}
 	}, [typing])
 
-	if (answered) return null
+	if (answered) return answer ? <AnsweredSummary question={question} answer={answer} /> : null
 
 	const toggle = (q: MessageQuestionItem, index: number, label: string) => {
 		setPicked((prev) => {
@@ -169,6 +175,7 @@ export function QuestionOptions({
 		<div className="mt-2 flex flex-col gap-3">
 			{question.questions.map((q, index) => {
 				const chosen = picked[index] ?? []
+				const text = splitQuestionText(q.question)
 				return (
 					// Index as key for the same reason the state is index-keyed: headers
 					// are not unique, and the list is a fixed snapshot from one immutable
@@ -176,7 +183,8 @@ export function QuestionOptions({
 					// biome-ignore lint/suspicious/noArrayIndexKey: headers are not unique
 					<fieldset key={index} className="flex flex-col gap-1.5 border-0 p-0">
 						<legend className="eyebrow">{q.header}</legend>
-						<p className="text-[13.5px] leading-[1.5] text-foreground">{q.question}</p>
+						<p className="text-[13.5px] leading-[1.5] text-foreground">{text.lead}</p>
+						{text.detail ? <CutText text={text.detail} lines={QUESTION_DETAIL_LINES} /> : null}
 						<ViewerTooltip className="block">
 							{/* Options that come with a reason are full-width rows (label, then the reason),
 							    so the card says everything the agent wrote; plain options stay chips. */}
@@ -315,6 +323,111 @@ export function QuestionOptions({
 			) : null}
 			{isError ? (
 				<p className="text-[10.5px] text-destructive">Couldn't send that. Try again.</p>
+			) : null}
+		</div>
+	)
+}
+
+/**
+ * One quiet row per answered question: what was asked and what was picked (or typed), then who
+ * answered and when. A question the pick does not cover is left out, so a one-line reply to the
+ * first question of several does not read as an answer to the rest.
+ */
+function AnsweredSummary({
+	question,
+	answer,
+}: {
+	question: MessageQuestion
+	answer: QuestionAnswer
+}) {
+	const rows = question.questions
+		.map((q, index) => {
+			const picked = answer.picks.find((p) => p.header === q.header)?.selected ?? []
+			const reply = picked.length > 0 ? picked.join(', ') : index === 0 ? answer.text : null
+			return { q, reply }
+		})
+		.filter((r): r is { q: MessageQuestionItem; reply: string } => Boolean(r.reply))
+	if (rows.length === 0) return null
+	return (
+		<div className="mt-1 flex flex-col gap-0.5 text-[12.5px] text-muted-foreground">
+			{rows.map(({ q, reply }, index) => (
+				// biome-ignore lint/suspicious/noArrayIndexKey: headers are not unique
+				<p key={index} className="flex items-baseline gap-1.5">
+					<Check size={12} aria-hidden className="shrink-0 translate-y-[1px]" />
+					<span className="min-w-0 break-words">
+						{splitQuestionText(q.question).lead}{' '}
+						<span className="font-semibold text-foreground">{reply}</span>
+					</span>
+				</p>
+			))}
+			<p className="flex items-center gap-1 pl-[18px] text-[10.5px]">
+				{answer.actorName ? <span>{answer.actorName}</span> : null}
+				{answer.actorName && answer.createdAt ? <span aria-hidden>·</span> : null}
+				<RelativeTime date={answer.createdAt} format="clock" />
+			</p>
+		</div>
+	)
+}
+
+/**
+ * Running text cut after `lines` lines, with Show all / Show less when there is more. Text that
+ * fits shows in full with no button. The cut is the browser's own clamp, and whether it cut
+ * anything is read from the laid-out text, so no character count stands in for the layout.
+ */
+function CutText({ text, lines }: { text: string; lines: number }) {
+	const [expanded, setExpanded] = useState(false)
+	const [isCut, setIsCut] = useState(false)
+	const ref = useRef<HTMLParagraphElement>(null)
+
+	// Only measured while clamped, so once opened the button stays for Show less.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: a new text needs measuring again
+	useLayoutEffect(() => {
+		const el = ref.current
+		if (expanded || !el) return
+		const measure = () => setIsCut(el.scrollHeight > el.clientHeight + 1)
+		measure()
+		if (typeof ResizeObserver === 'undefined') return
+		const observer = new ResizeObserver(measure)
+		observer.observe(el)
+		return () => observer.disconnect()
+	}, [expanded, text])
+
+	return (
+		<div className="flex flex-col items-start">
+			<p
+				ref={ref}
+				data-question-detail=""
+				data-cut={!expanded}
+				className="w-full whitespace-pre-wrap break-words text-[13px] leading-[1.5] text-foreground"
+				style={
+					expanded
+						? undefined
+						: {
+								display: '-webkit-box',
+								WebkitBoxOrient: 'vertical',
+								WebkitLineClamp: lines,
+								overflow: 'hidden',
+							}
+				}
+			>
+				{text}
+			</p>
+			{isCut ? (
+				<Button
+					type="button"
+					variant="link"
+					size="sm"
+					className="h-auto gap-1 px-0 py-1 text-xs"
+					aria-expanded={expanded}
+					onClick={() => setExpanded((open) => !open)}
+				>
+					{expanded ? 'Show less' : 'Show all'}
+					<ChevronDown
+						size={12}
+						aria-hidden
+						className={cn('transition-transform', expanded && 'rotate-180')}
+					/>
+				</Button>
 			) : null}
 		</div>
 	)

@@ -5,17 +5,33 @@ import {
 	seedMarketplaceIfEmpty,
 	seedMarketplaceLoops,
 } from '../../lib/dev-bootstrap'
+import { ACCOUNTING_LOOP } from '../../lib/marketplace-loops/accounting-loop'
+import { CUSTOMER_VOICE_LOOP } from '../../lib/marketplace-loops/customer-voice-loop'
 import {
 	DISCOVERY_ACTOR_IDS,
 	DISCOVERY_LOOP,
 	DISCOVERY_TRIGGER_IDS,
 	DISCOVERY_VIEW_IDS,
 } from '../../lib/marketplace-loops/discovery-loop'
+import { KNOWLEDGE_WIKI_LOOP } from '../../lib/marketplace-loops/knowledge-wiki-loop'
 import { MARKET_WATCH_LOOP } from '../../lib/marketplace-loops/market-watch-loop'
 import { MEETING_LOOP } from '../../lib/marketplace-loops/meeting-loop'
+import { PRODUCT_RELEASE_LOOP } from '../../lib/marketplace-loops/product-release-loop'
+import { PRODUCT_USAGE_LOOP } from '../../lib/marketplace-loops/product-usage-loop'
+import { SIGNAL_INTAKE_LOOP } from '../../lib/marketplace-loops/signal-intake-loop'
 import { createTestContext } from '../setup'
 
-const ALL_PACKAGES = [MARKET_WATCH_LOOP, DISCOVERY_LOOP, MEETING_LOOP]
+const ALL_PACKAGES = [
+	MARKET_WATCH_LOOP,
+	DISCOVERY_LOOP,
+	MEETING_LOOP,
+	PRODUCT_RELEASE_LOOP,
+	CUSTOMER_VOICE_LOOP,
+	KNOWLEDGE_WIKI_LOOP,
+	PRODUCT_USAGE_LOOP,
+	ACCOUNTING_LOOP,
+	SIGNAL_INTAKE_LOOP,
+]
 
 function matchingMarketplaceRows() {
 	return ALL_PACKAGES.map((loop, i) => ({
@@ -87,7 +103,7 @@ describe('maybeBootstrapDev', () => {
 		mockResults.selectQueue = [[]] // findExistingCredentials returns no rows
 		// Unqueued selects fall through to [] — that's how seedDefaultAgentActors'
 		// per-agent "already a member?" check reads as "not present" here, so each
-		// of the six default agents takes the insert branch below.
+		// of the five default agents takes the insert branch below.
 		mockResults.insertQueue = [
 			[{ id: 'actor-1', name: 'You', email: 'dev@local' }],
 			[], // api_keys insert for the human's primary key
@@ -105,8 +121,6 @@ describe('maybeBootstrapDev', () => {
 			[{ workspaceId: 'ws-1', actorId: 'signal-1', role: 'member' }],
 			[{ id: 'researcher-1', name: 'Researcher' }],
 			[{ workspaceId: 'ws-1', actorId: 'researcher-1', role: 'member' }],
-			[{ id: 'curator-1', name: 'Knowledge Curator' }],
-			[{ workspaceId: 'ws-1', actorId: 'curator-1', role: 'member' }],
 		]
 
 		const result = await maybeBootstrapDev(db)
@@ -144,7 +158,6 @@ describe('maybeBootstrapDev', () => {
 			'Driver',
 			'Signal Analyst',
 			'Researcher',
-			'Knowledge Curator',
 		]) {
 			expect(insertedNames).toContain(name)
 		}
@@ -260,9 +273,9 @@ describe('seedMarketplaceIfEmpty', () => {
 		expect(new Set(slugs).size).toBe(ALL_PACKAGES.length)
 		expect(slugs).toEqual(expect.arrayContaining(ALL_PACKAGES.map((p) => p.slug)))
 
-		// Market Watch is seeded first, Product Discovery second, Meeting Loop third — assert the
+		// Accounting is seeded first, Market Watch second, Product Discovery third — assert the
 		// discovery actor/trigger counts match its bundle.
-		const discoveryItems = itemInserts[1] as Array<{ itemType: string; sourceItemId: string }>
+		const discoveryItems = itemInserts[2] as Array<{ itemType: string; sourceItemId: string }>
 		expect(discoveryItems.filter((i) => i.itemType === 'actor').length).toBe(
 			DISCOVERY_ACTOR_IDS.length,
 		)

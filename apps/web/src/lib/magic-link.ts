@@ -2,7 +2,7 @@ import { setApiKey, setStoredActor } from './auth'
 
 /**
  * Consumes credentials from the URL fragment and stores them in localStorage,
- * then strips the fragment. Used so MCP `get_started` can return a one-click
+ * then strips the fragment. Used so MCP `list_marketplace` can return a one-click
  * link that auto-authenticates the user and populates their profile.
  *
  * Supported fragment params: `key` (required, must start with `ank_`),

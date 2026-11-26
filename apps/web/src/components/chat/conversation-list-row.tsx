@@ -9,6 +9,7 @@ import {
 import { useUpdateConversationMe } from '@/hooks/use-conversations'
 import type { ConversationListItemResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
+import { keepListFilter } from '@/lib/chat-list-search'
 import { cn } from '@/lib/cn'
 import { shortActorName, snippetAuthorLabel } from '@/lib/conversation-snippet'
 import { plainPreview } from '@/lib/linked-objects'
@@ -73,6 +74,7 @@ export function ConversationListRow({
 			<Link
 				to="/$workspaceId/chats/$conversationId"
 				params={{ workspaceId, conversationId: conversation.id }}
+				search={keepListFilter}
 				onClick={onOpen}
 				activeProps={{ className: 'bg-accent' }}
 				className="flex items-start gap-3 rounded-lg px-2 py-[11px] text-left hover:bg-accent"

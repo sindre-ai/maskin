@@ -56,25 +56,20 @@ export const TERMINAL_STATUSES_BY_TYPE: Record<string, string[]> = {
 }
 
 /**
- * Loop statuses used by the pipeline concept: an iterative
- * multi-agent process wrapping triggers + agents + a pipeline of object
- * states. This is a graduated-trust ladder, not an on/off toggle — a loop
- * starts as a `draft`, earns more autonomy as it proves itself
- * (`learning` → `supervised` → `fully_autonomous`), and can be `paused` from
- * any point on that ladder. Pausing a loop disables every trigger referenced
- * in its `metadata.trigger_ids` (see the loop-status hook in
- * `apps/dev/src/routes/objects.ts`'s `PATCH /:id`); leaving `paused`
- * re-enables them. Kept here alongside the extension registration so backend
- * code paths that need the enum (read API, migrations, guards) stay pinned to
- * one source of truth.
+ * Loop statuses: one ladder of trust that every surface (API, MCP tools, web,
+ * iPhone, chat routing, next steps) shares. A loop starts as a `draft` (set
+ * up, nothing fires), earns autonomy as it proves itself (`pilot` →
+ * `supervised` → `live`), can be `paused` from any point, and is `archived`
+ * once retired.
+ *
+ * Status decides whether the loop runs: `draft`, `paused` and `archived` turn every
+ * trigger referenced in the loop's `metadata.trigger_ids` off, and moving to
+ * any other status turns them back on (see the loop-status hook in
+ * `apps/dev/src/lib/object-update.ts`). Kept here alongside the extension
+ * registration so backend code paths that need the enum (read API,
+ * migrations, guards) stay pinned to one source of truth.
  */
-export const LOOP_STATUSES = [
-	'draft',
-	'paused',
-	'learning',
-	'supervised',
-	'fully_autonomous',
-] as const
+export const LOOP_STATUSES = ['draft', 'pilot', 'supervised', 'live', 'paused', 'archived'] as const
 export type LoopStatus = (typeof LOOP_STATUSES)[number]
 
 /**
@@ -90,6 +85,17 @@ export const LIVE_FLOW_STATUSES = [
 	'live',
 	'fully_autonomous',
 ] as const
+
+/** The rungs where a loop is running work through its triggers. */
+export const LOOP_RUNNING_STATUSES = ['pilot', 'supervised', 'live'] as const
+
+/** Statuses that keep every trigger of the loop switched off. */
+export const LOOP_TRIGGERS_OFF_STATUSES = ['draft', 'paused', 'archived'] as const
+
+/** True when a loop in this status must have its triggers switched off. */
+export function loopStatusTurnsTriggersOff(status: string | null | undefined): boolean {
+	return (LOOP_TRIGGERS_OFF_STATUSES as readonly string[]).includes(status ?? '')
+}
 
 export {
 	loopTargetReadingSchema,
@@ -115,6 +121,16 @@ export const createObjectSchema = z.object({
 export const updateObjectSchema = z.object({
 	title: z.string().optional(),
 	content: z.string().optional(),
+	/** Text added to the end of the stored body. Not sent together with content or replace. */
+	append: z.string().min(1).optional(),
+	/** Swap one exact piece of the stored body. Not sent together with content or append. */
+	replace: z
+		.object({
+			find: z.string().min(1),
+			with: z.string(),
+			all: z.boolean().optional(),
+		})
+		.optional(),
 	status: z.string().optional(),
 	metadata: safeMetadataSchema.optional(),
 	driver: z.string().uuid().nullable().optional(),

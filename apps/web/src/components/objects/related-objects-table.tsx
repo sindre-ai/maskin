@@ -17,6 +17,7 @@ import { useCanWrite } from '@/hooks/use-can-write'
 import { useIsMobile } from '@/hooks/use-mobile'
 import type { GraphFileSummary, ObjectResponse, RelationshipResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { relationshipTypeLabel } from '@/lib/constants'
 import { Link, useNavigate } from '@tanstack/react-router'
 import {
 	type Column,
@@ -163,7 +164,7 @@ export function RelatedObjectsTable({
 				header: ({ column }) => <ColumnSortHeader label="Relationship" column={column} />,
 				cell: ({ row }) => (
 					<Badge variant="outline" className="text-[10px] font-normal">
-						{row.original.rel.type.replace(/_/g, ' ')}
+						{relationshipTypeLabel(row.original.rel.type)}
 					</Badge>
 				),
 			},
@@ -353,7 +354,7 @@ function RelatedRowCard({
 					</a>
 					<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
 						<Badge variant="outline" className="text-[10px] font-normal">
-							{resolved.rel.type.replace(/_/g, ' ')}
+							{relationshipTypeLabel(resolved.rel.type)}
 						</Badge>
 						<TypeBadge type="file" />
 						<span className="font-mono text-[10.5px] text-muted-foreground">
@@ -404,7 +405,7 @@ function RelatedRowCard({
 				</div>
 				<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
 					<Badge variant="outline" className="text-[10px] font-normal">
-						{rel.type.replace(/_/g, ' ')}
+						{relationshipTypeLabel(rel.type)}
 					</Badge>
 					<TypeBadge type={object.type} />
 					<StatusBadge status={object.status} />

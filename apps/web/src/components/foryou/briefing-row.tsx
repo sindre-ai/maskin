@@ -13,6 +13,13 @@ import { type BriefingCard, useBriefings } from '@/hooks/use-briefings'
 import { useCreateConversation } from '@/hooks/use-conversations'
 import { trackBriefingViewed } from '@/lib/analytics'
 import {
+	isSlideDeck,
+	jumpToBriefing,
+	stepStory,
+	storyFill,
+	storyPageCount,
+} from '@/lib/briefing-sequence'
+import {
 	askAboutSlideDraft,
 	briefingChatAttachments,
 	isBriefingSeen,
@@ -29,7 +36,13 @@ import {
 	chatSelectionReducer,
 } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
-import { prepareMiniAppHtml } from '@/lib/mini-app'
+import {
+	VIEWER_GOTO_PAGE_MESSAGE,
+	VIEWER_PAGE_MESSAGE,
+	VIEWER_STEP_MESSAGE,
+	prepareMiniAppHtml,
+	prepareStoryHtml,
+} from '@/lib/mini-app'
 import { Link, useNavigate } from '@tanstack/react-router'
 import {
 	ArrowUpRight,
@@ -39,7 +52,7 @@ import {
 	MessageCircleQuestion,
 	MessageSquare,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useReducer, useState } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 function BriefingTile({
@@ -105,8 +118,13 @@ function BriefingTile({
  * The page behind a card, in a wide two-pane viewer: the page on the left (a segment per
  * briefing along its top, Previous / Next under it) and a conversation panel on the right
  * ("Talk to <agent>": the chat composer plus a Tell me more chip). Below `md` it is a full
- * page with the conversation under the page. Arrow keys and J / K move between briefings
- * unless a field has the focus.
+ * page with the conversation under the page.
+ *
+ * One pager walks the whole sequence, like stories: Next goes through the slides of the open
+ * briefing and on to the first slide of the next one, Previous the other way. The segments along
+ * the top are one per briefing and fill as its slides advance; a click jumps to that briefing.
+ * Arrow keys, J / K and a swipe move one slide, from inside the frame as well. A page that is not
+ * a slide deck counts as one page.
  *
  * The HTML is agent-written, so it renders the same way every other HTML file
  * does: in a sandboxed `srcdoc` frame with the platform CSP injected and no
@@ -126,10 +144,47 @@ function BriefingViewer({
 	onClose: () => void
 }) {
 	const card = cards[index]
-	const srcDoc = useMemo(() => (card?.html ? prepareMiniAppHtml(card.html) : ''), [card?.html])
-	const hasPrevious = index > 0
-	const hasNext = index < cards.length - 1
+	// The open briefing's slide, and the slide its frame opened on (it changes only when the
+	// briefing does, so a move inside a briefing never reloads the frame).
+	const [slide, setSlide] = useState(0)
+	const [entrySlide, setEntrySlide] = useState(0)
+	const frameRef = useRef<HTMLIFrameElement>(null)
+	// Counted from the pages themselves, so Previous from a first slide knows the last slide of
+	// the briefing before without loading it first.
+	const counts = useMemo(() => cards.map((entry) => storyPageCount(entry.html)), [cards])
+	const isDeck = useMemo(() => isSlideDeck(card?.html), [card?.html])
+	const srcDoc = useMemo(() => {
+		if (!card?.html) return ''
+		return isDeck ? prepareStoryHtml(card.html, entrySlide) : prepareMiniAppHtml(card.html)
+	}, [card?.html, isDeck, entrySlide])
+	const position = { index, slide }
+	const pageCount = counts[index] ?? 1
+	const fill = storyFill(counts, position)
+	const hasPrevious = stepStory(counts, position, -1) !== null
+	const hasNext = stepStory(counts, position, 1) !== null
 	const navigate = useNavigate()
+
+	const moveTo = (next: { index: number; slide: number }) => {
+		setSlide(next.slide)
+		if (next.index !== index) {
+			setEntrySlide(next.slide)
+			onIndexChange(next.index)
+			return
+		}
+		frameRef.current?.contentWindow?.postMessage(
+			{ type: VIEWER_GOTO_PAGE_MESSAGE, page: next.slide },
+			'*',
+		)
+	}
+	const step = (delta: 1 | -1) => {
+		const next = stepStory(counts, position, delta)
+		if (next) moveTo(next)
+	}
+	// The frame's messages and the key handler outlive a render, so they call the latest of these.
+	const stepRef = useRef(step)
+	stepRef.current = step
+	const slideRef = useRef(slide)
+	slideRef.current = slide
 
 	const createConversation = useCreateConversation(workspaceId)
 	const defaultAgent = useDefaultChatAgent()
@@ -219,17 +274,47 @@ function BriefingViewer({
 			) {
 				return
 			}
-			if (['ArrowDown', 'ArrowRight', 'j'].includes(event.key) && hasNext) {
+			if (['ArrowDown', 'ArrowRight', 'j'].includes(event.key)) {
 				event.preventDefault()
-				onIndexChange(index + 1)
-			} else if (['ArrowUp', 'ArrowLeft', 'k'].includes(event.key) && hasPrevious) {
+				stepRef.current(1)
+			} else if (['ArrowUp', 'ArrowLeft', 'k'].includes(event.key)) {
 				event.preventDefault()
-				onIndexChange(index - 1)
+				stepRef.current(-1)
 			}
 		}
 		window.addEventListener('keydown', onKeydown)
 		return () => window.removeEventListener('keydown', onKeydown)
-	}, [index, hasNext, hasPrevious, onIndexChange])
+	}, [])
+
+	// A deck's frame reports its slide and asks for steps (keys and swipes inside it). Only the
+	// frame this viewer rendered is listened to. A report that disagrees with the position (a move
+	// sent before the frame had loaded was lost) is answered with the position, once.
+	useEffect(() => {
+		function onMessage(event: MessageEvent) {
+			const frame = frameRef.current?.contentWindow
+			if (!frame || event.source !== frame) return
+			const data = event.data as {
+				type?: string
+				delta?: unknown
+				index?: unknown
+				total?: unknown
+			}
+			if (data?.type === VIEWER_STEP_MESSAGE) {
+				if (data.delta === 1 || data.delta === -1) stepRef.current(data.delta)
+			} else if (data?.type === VIEWER_PAGE_MESSAGE) {
+				const total = typeof data.total === 'number' ? data.total : 0
+				if (
+					typeof data.index === 'number' &&
+					data.index !== slideRef.current &&
+					slideRef.current < total
+				) {
+					frame.postMessage({ type: VIEWER_GOTO_PAGE_MESSAGE, page: slideRef.current }, '*')
+				}
+			}
+		}
+		window.addEventListener('message', onMessage)
+		return () => window.removeEventListener('message', onMessage)
+	}, [])
 
 	if (!card) return null
 
@@ -244,24 +329,23 @@ function BriefingViewer({
 			>
 				<div className="flex min-h-0 min-w-0 flex-1 flex-col">
 					<div className="flex flex-col gap-3 px-4 pb-3 pt-4">
-						<nav className="flex gap-1" aria-label="Briefings">
+						<nav className="flex gap-1 pr-12 md:pr-0" aria-label="Briefings">
 							{cards.map((entry, position) => (
 								<button
 									key={entry.id}
 									type="button"
 									aria-label={`Briefing ${position + 1}: ${entry.headline}`}
 									aria-current={position === index}
-									onClick={() => onIndexChange(position)}
+									onClick={() => moveTo(jumpToBriefing(counts, position))}
 									className="group flex-1 py-1"
 								>
-									<span
-										className={cn(
-											'block h-[3px] rounded-full transition-colors duration-150',
-											position <= index
-												? 'bg-foreground'
-												: 'bg-border group-hover:bg-border-strong',
-										)}
-									/>
+									<span className="block h-[3px] overflow-hidden rounded-full bg-border transition-colors duration-150 group-hover:bg-border-strong">
+										<span
+											data-testid="briefing-segment-fill"
+											className="block h-full rounded-full bg-foreground"
+											style={{ width: `${Math.round((fill[position] ?? 0) * 100)}%` }}
+										/>
+									</span>
 								</button>
 							))}
 						</nav>
@@ -280,6 +364,7 @@ function BriefingViewer({
 					{/* The page fills the whole pane, so a list under a headline gets the full column. */}
 					<iframe
 						key={card.id}
+						ref={frameRef}
 						title={card.headline}
 						srcDoc={srcDoc}
 						sandbox="allow-scripts"
@@ -291,23 +376,23 @@ function BriefingViewer({
 							variant="secondary"
 							size="icon"
 							className="shrink-0 rounded-full"
-							aria-label="Previous briefing"
+							aria-label="Previous"
 							disabled={!hasPrevious}
-							onClick={() => onIndexChange(index - 1)}
+							onClick={() => step(-1)}
 						>
 							<ChevronLeft aria-hidden />
 						</Button>
 						<span className="min-w-0 flex-1 text-center text-xs text-muted-foreground">
-							{cards.length > 1 ? `${index + 1} of ${cards.length}` : null}
+							{pageCount > 1 ? `${slide + 1} / ${pageCount}` : null}
 						</span>
 						<Button
 							type="button"
 							variant="secondary"
 							size="icon"
 							className="shrink-0 rounded-full"
-							aria-label="Next briefing"
+							aria-label="Next"
 							disabled={!hasNext}
-							onClick={() => onIndexChange(index + 1)}
+							onClick={() => step(1)}
 						>
 							<ChevronRight aria-hidden />
 						</Button>

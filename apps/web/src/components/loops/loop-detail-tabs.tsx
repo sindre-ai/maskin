@@ -51,6 +51,7 @@ export function LoopDetailTabs({
 	onChange,
 	onAdd,
 	addLabel = 'Add',
+	ariaLabel = 'Flow sections',
 }: {
 	tabs: LoopTabItem[]
 	value: string
@@ -58,6 +59,8 @@ export function LoopDetailTabs({
 	/** Shows a "+" at the row's right edge. Omitted, no button is offered. */
 	onAdd?: () => void
 	addLabel?: string
+	/** What the tab row is called to a screen reader. */
+	ariaLabel?: string
 }) {
 	const rowRef = useRef<HTMLDivElement>(null)
 	const measureRef = useRef<HTMLDivElement>(null)
@@ -99,7 +102,7 @@ export function LoopDetailTabs({
 
 	return (
 		<div ref={rowRef} className="relative border-b border-border">
-			<div role="tablist" aria-label="Flow sections" className="flex gap-6 px-1">
+			<div role="tablist" aria-label={ariaLabel} className="flex gap-6 px-1">
 				{shown.map((tab) => (
 					<button
 						key={tab.value}

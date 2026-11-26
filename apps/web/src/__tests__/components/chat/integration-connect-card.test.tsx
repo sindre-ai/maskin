@@ -144,6 +144,33 @@ describe('IntegrationConnectCard', () => {
 		})
 	})
 
+	it('sends the PostHog project id when one is typed, and refuses one that is not a number', async () => {
+		providers = [
+			provider({ name: 'posthog', displayName: 'PostHog', authType: 'api_key', events: [] }),
+		]
+		const user = userEvent.setup()
+		renderCard('posthog')
+
+		await user.click(screen.getByRole('button', { name: 'Connect' }))
+		const dialog = await screen.findByRole('dialog')
+		await user.type(within(dialog).getByLabelText('API key'), 'phx_secret')
+		const project = within(dialog).getByLabelText('Project id (optional)')
+		const submit = within(dialog).getByRole('button', { name: 'Connect' })
+
+		await user.type(project, '12a')
+		expect(submit).toBeDisabled()
+		await user.clear(project)
+		await user.type(project, ' 12345 ')
+		await user.click(submit)
+
+		expect(connectMutate.mock.calls[0]?.[0]).toEqual({
+			provider: 'posthog',
+			apiKey: 'phx_secret',
+			projectId: '12345',
+			returnTo: RETURN_TO,
+		})
+	})
+
 	it('offers "+ Add another" next to Connected for a provider that allows several installs', async () => {
 		providers = [provider({ name: 'github', displayName: 'GitHub', authType: 'oauth2_custom' })]
 		integrations = [active('github', 'g-1'), active('github', 'g-2')]

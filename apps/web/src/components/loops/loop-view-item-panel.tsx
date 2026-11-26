@@ -10,7 +10,7 @@ import { useEffect, useRef } from 'react'
 
 interface LoopViewItemPanelProps {
 	workspaceId: string
-	loopId: string
+	loopId?: string
 	objectId: string
 	onClose: () => void
 }

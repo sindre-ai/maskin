@@ -185,7 +185,7 @@ export const workspaceResponseSchema = z.object({
 		.optional(),
 	onboardingEnabled: z.boolean(),
 	// Effective enterprise status = `isEnterprise()` (the `enterprise_granted`
-	// column OR an enterprise billing owner), not the raw column. Derived, so it
+	// column), not the raw column. Derived, so it
 	// deliberately does not carry the column's name.
 	enterprise: z.boolean(),
 	// Single accountable human payer for this workspace's plan — read-only,
@@ -338,7 +338,15 @@ export const integrationResponseSchema = z.object({
 	agentGrants: z.array(agentGrantSchema).optional(),
 	// Saved credentials shared with an agent for one chat only ("Allow in this chat").
 	chatGrants: z
-		.array(z.object({ actorId: z.string().uuid(), conversationId: z.string().uuid() }))
+		.array(
+			z.object({
+				id: z.string().uuid(),
+				actorId: z.string().uuid(),
+				conversationId: z.string().uuid(),
+				// Null for a saved credential's grant, which lasts until a person removes it.
+				expiresAt: z.string().nullable(),
+			}),
+		)
 		.optional(),
 })
 
@@ -358,6 +366,8 @@ export const providerInfoSchema = z.object({
 	authType: z.enum(['oauth2', 'oauth2_custom', 'api_key', 'manual']),
 	events: z.array(providerEventSchema),
 	externalIdDisplay: z.enum(['email', 'installation']).optional(),
+	/** The vendor wants the workspace's own sign-in app: ask for its id and secret before Connect. */
+	customerApp: z.boolean().optional(),
 	// THIS is the schema the /api/integrations/providers route registers as its
 	// response — `providerInfoSchema` in @maskin/shared is a separate, narrower
 	// declaration with no route wired to it. A field added only there is absent
@@ -439,6 +449,23 @@ export const conversationListItemResponseSchema = z.object({
 	// Agents with an open turn in this chat right now (not merely a live session — a chat
 	// session stays running between turns). The list row shows them as working.
 	working_actor_ids: z.array(z.string().uuid()),
+	// The same agents with the session each one is answering in, for the link to that session.
+	working: z.array(z.object({ agent_id: z.string().uuid(), session_id: z.string().uuid() })),
+	// True when the chat waits on the caller: an agent question or request card nobody answered,
+	// or a last turn that failed. Read from this chat's own messages. Never true for a chat the
+	// caller marked Done (archived) or Later.
+	needs_you: z.boolean(),
+	// True while the caller has the chat on Later: set by the caller, ended by the next message.
+	// Only the caller's own mark is ever read.
+	later: z.boolean(),
+	// Set when the chat's last turn failed: why, and the caller's last message in the chat, so
+	// Retry can run the retry route on it (null when the caller never wrote one).
+	error: z
+		.object({
+			reason: z.enum(['usage_limit', 'connection', 'other']),
+			last_person_message_id: z.number().int().nullable(),
+		})
+		.nullable(),
 })
 
 export const conversationDetailResponseSchema = conversationListItemResponseSchema
@@ -448,6 +475,10 @@ export const conversationDetailResponseSchema = conversationListItemResponseSche
 		snippet_actor_name: true,
 		snippet_is_caller: true,
 		working_actor_ids: true,
+		working: true,
+		needs_you: true,
+		later: true,
+		error: true,
 		directPairKey: true,
 	})
 	.extend({
@@ -457,6 +488,7 @@ export const conversationDetailResponseSchema = conversationListItemResponseSche
 export const conversationParticipantStateResponseSchema = z.object({
 	pinned: z.boolean(),
 	archived: z.boolean(),
+	later: z.boolean(),
 	last_read_message_id: z.number().nullable(),
 })
 

@@ -92,7 +92,12 @@ test.describe("An agent's computer on a phone", () => {
 		// Watching only: no keyboard to raise yet.
 		await expect(dialog.getByLabel('Type on the computer')).toHaveCount(0)
 		await takeControl.tap()
-		await expect(dialog.getByText("You're in control")).toBeVisible()
+		// On a phone the pill gives its words up for the Paste and Copy buttons, so they are the sign.
+		await expect(dialog.getByRole('button', { name: 'Paste from your clipboard' })).toBeVisible()
+		await expect(dialog.getByRole('button', { name: 'Copy to your clipboard' })).toBeVisible()
+
+		// The controls do not push the popup wider than the screen now the buttons show too.
+		expect((await dialog.boundingBox())?.width).toBeLessThanOrEqual(PHONE.width)
 
 		// A tap on the picture raises the keyboard (focuses the field that holds it up).
 		const keyboardField = dialog.getByLabel('Type on the computer')

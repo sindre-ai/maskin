@@ -133,11 +133,15 @@ beforeEach(async () => {
 	if (!row) throw new Error('integration insert returned no row')
 	integrationId = row.id
 
-	const replied = await insertContact(`https://www.linkedin.com/in/${SENDER_SLUG}/`, 'messaged')
+	const replied = await insertContact(
+		`https://www.linkedin.com/in/${SENDER_SLUG}/`,
+		'initial_contact',
+	)
 	repliedContactId = replied.id
 	const invitee = await insertContact(
 		`https://www.linkedin.com/in/${INVITEE_SLUG}`,
-		'connection_requested',
+		'initial_contact',
+		'linkedin',
 	)
 	inviteeContactId = invitee.id
 
@@ -189,11 +193,11 @@ afterEach(() => {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-async function insertContact(linkedinUrl: string, status: string) {
+async function insertContact(linkedinUrl: string, status: string, channel?: string) {
 	const row = await insertObject(db, workspaceId, actorId, {
 		type: 'contact',
 		status,
-		metadata: { linkedin_url: linkedinUrl },
+		metadata: { linkedin_url: linkedinUrl, ...(channel ? { first_contact_channel: channel } : {}) },
 	})
 	if (!row) throw new Error('contact insert returned no row')
 	return row
@@ -349,7 +353,7 @@ describe('smoke 2: our own send is dropped and a reply is not', () => {
 
 // ── Smoke assertion 3: relation.new ────────────────────────────────────────
 
-describe('smoke 3: relation.new for a connection_requested contact is accepted', () => {
+describe('smoke 3: relation.new for a contact first reached by LinkedIn invite is accepted', () => {
 	it('writes (linkedin.connection, accepted) for that contact, slug read from the payload', async () => {
 		const res = await replay(relationNewFixture)
 
@@ -361,7 +365,7 @@ describe('smoke 3: relation.new for a connection_requested contact is accepted',
 		// The slug came from the payload, so nothing was looked up, and the contact is untouched.
 		expect(webhookGetProfile).not.toHaveBeenCalled()
 		const [contact] = await db.select().from(objects).where(eq(objects.id, inviteeContactId))
-		expect(contact?.status).toBe('connection_requested')
+		expect(contact?.status).toBe('initial_contact')
 	})
 })
 

@@ -122,7 +122,9 @@ describe('toUploadInput', () => {
 	})
 
 	it('refuses a file over the limit', () => {
-		expect(() => assertUploadable(fileOfSize('huge.bin', 1024 * MiB + 1))).toThrow(/too large/)
+		expect(() => assertUploadable(fileOfSize('huge.bin', 5 * 1024 * MiB + 1))).toThrow(
+			/limit is 5 GB/,
+		)
 	})
 })
 

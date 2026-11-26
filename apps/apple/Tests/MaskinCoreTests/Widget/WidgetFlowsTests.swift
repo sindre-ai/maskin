@@ -6,7 +6,7 @@ import Testing
 @Suite("Widget flows")
 struct WidgetFlowsTests {
 	private func loop(
-		_ id: String, _ name: String, status: LoopPill = .learning, inProgress: Int = 0,
+		_ id: String, _ name: String, status: LoopPill = .pilot, inProgress: Int = 0,
 		closed: Int = 0, waiting: Int = 0
 	) -> LoopSummary {
 		LoopSummary(

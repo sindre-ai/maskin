@@ -9,6 +9,7 @@ import { useCanWrite } from '@/hooks/use-can-write'
 import { useTriggers, useUpdateTrigger } from '@/hooks/use-triggers'
 import type { ActorResponse, TriggerResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
+import { usesItemDriverTarget } from '@maskin/shared'
 import { Link } from '@tanstack/react-router'
 import { Plus } from 'lucide-react'
 import { useMemo, useState } from 'react'
@@ -35,7 +36,10 @@ export function AgentTriggersSection({ agent }: { agent: ActorResponse }) {
 	const canWrite = useCanWrite()
 
 	const agentTriggers = useMemo(
-		() => (triggers ?? []).filter((t) => t.targetActorId === agent.id).sort(sortTriggers),
+		() =>
+			(triggers ?? [])
+				.filter((t) => t.targetActorId === agent.id && !usesItemDriverTarget(t.config))
+				.sort(sortTriggers),
 		[triggers, agent.id],
 	)
 

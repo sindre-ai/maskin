@@ -52,6 +52,11 @@ public enum WorkspacePageState {
 		return isYou ? "\(role.label) · you" : nil
 	}
 
+	/// Whether a Members row carries a Message icon: every person but you; agents open their own page.
+	public static func canMessage(_ member: WorkspaceMember, currentActorId: String?) -> Bool {
+		!member.isAgent && member.actorId != currentActorId
+	}
+
 	public static let activeKey = PageState("Active", .active)
 
 	/// An agent's trailing state on the Members page: Working is the only signal; Idle, Paused and

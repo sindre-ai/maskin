@@ -19,6 +19,10 @@ describe('planFileUploadParts', () => {
 		expect(planFileUploadParts(GiB)).toEqual({ partSize: 16 * MiB, partCount: 64 })
 	})
 
+	it('cuts a 5 GiB file into 320 parts of 16 MiB', () => {
+		expect(planFileUploadParts(5 * GiB)).toEqual({ partSize: 16 * MiB, partCount: 320 })
+	})
+
 	it('rounds the last part up rather than dropping bytes', () => {
 		const { partSize, partCount } = planFileUploadParts(16 * MiB + 1)
 		expect(partCount).toBe(2)

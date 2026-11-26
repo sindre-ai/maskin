@@ -1,0 +1,13 @@
+// Canonical source-item IDs and metadata for the Accounting marketplace flow (install slug
+// accounting-loop). The bundle is a single agent, the Bookkeeper. Trigger and skill IDs are not
+// listed as constants: they are derived per actor via `triggerIdsForActor` / `skillIdsForActor`
+// in apps/dev/src/lib/marketplace-loops/loop-data.
+
+export const ACCOUNTING_LOOP_ACTOR_BOOKKEEPER = '2efeee74-29d6-4ef6-854a-e8c05cecfe9b'
+
+export const ACCOUNTING_LOOP_SLUG = 'accounting-loop'
+export const ACCOUNTING_LOOP_NAME = 'Accounting'
+export const ACCOUNTING_LOOP_VERSION = '1.4.2'
+export const ACCOUNTING_LOOP_USE_CASE = 'Finance'
+export const ACCOUNTING_LOOP_DESCRIPTION =
+	"Turns receipts into draft vouchers in your accounting system, and lists what looks wrong for you. You upload a photo or PDF of a receipt in the flow's chat. The Bookkeeper reads it, saves it as a draft voucher in Dinero and tests every draft against a written list of Danish bookkeeping and VAT rules, so each entry comes back clear or flagged with the rule it broke, before you look. It flags any doubt, such as a missing receipt, VAT that does not add up, a double payment or a private cost. It never books, changes or deletes anything: a person approves every draft in Dinero. Every Monday it also posts a short money briefing built only from what Dinero shows, reading its balance and result reports and posted entries first: cash, runway, margin, books status and deadlines, with anything it cannot read named as missing and never estimated. After install you connect Dinero under Settings, Integrations and sign in once with your own Dinero user (a Dinero Pro or Total plan). The sign-in is kept alive and Dinero is limited to reading and saving drafts, so there is no token to paste and no list to set. The flow checks the connection and tells you what to fix. If Dinero cannot be connected there, an older route adds Dinero's own server as a custom tool with a sign-in token and limits it to a list of allowed tools through the API, which takes someone technical. On that route the list is exactly these 18 names: CreatePurchaseVoucher, list_organizations, list_accounting_years, get_chart_of_accounts, list_purchase_accounts, list_vat_types, list_contacts, get_contact, GetContactByName, list_vouchers, get_purchase_voucher, list_files, list_voucher_file_cards, get_purchase_drafts_for_file, SearchBankTransactions, upload_file, get_report, list_posted_entries. The token runs out after about an hour and the flow cannot renew it, so a person supplies a fresh one when it does, and a weekly check tells you when it has."

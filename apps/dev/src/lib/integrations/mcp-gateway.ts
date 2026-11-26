@@ -1,4 +1,7 @@
+import { PILOT_REFUSAL } from '@maskin/shared'
+import { MASKIN_SESSION_HEADER, MASKIN_SESSION_HEADER_VALUE } from '../mcp-session-header'
 import { type AgentAccess, canRead, canWrite } from './agent-access'
+import { withoutBookVoucherPointer } from './providers/dinero/descriptions'
 import { accessDeniedMessage, allows, unavailableNote } from './tool-gate'
 import {
 	type ToolAnnotationsLike,
@@ -28,47 +31,124 @@ import {
  * by itself: with the token in the container, "read" could not stop Resend sending email.
  *
  * Not here, on purpose:
- *  - slack, linkedin-unipile, google-meet, google-search-console: Maskin hosts the MCP,
+ *  - slack, linkedin-unipile, google-meet, google-search-console, youtube: Maskin hosts the MCP,
  *    gated in-process.
  *  - github: a stdio server in the container that also needs the token for git itself.
  */
 export const GATEWAY_PROVIDERS: ReadonlySet<string> = new Set([
 	'airtable',
 	'amplitude',
+	'apollo',
+	'asana',
 	'atlassian',
 	'attio',
+	'azure-devops',
+	'box',
+	'brevo',
+	'brex',
+	'business-central',
+	'calendly',
 	'canva',
+	'clay',
 	'clickup',
+	'cloudflare',
+	'coda',
+	'datadog',
+	'deel',
+	'dinero',
+	'docusign',
+	'drata',
+	'dropbox',
+	'fathom',
+	'figma',
+	'fireflies',
+	'framer',
+	'freshbooks',
 	'gmail',
+	'gong',
 	'google-calendar',
+	'granola',
+	'greenhouse',
+	'gusto',
+	'hex',
+	'hubspot',
+	'intercom',
+	'klaviyo',
+	'lattice',
 	'linear',
+	'looker',
+	'mailchimp',
+	'make',
+	'mercury',
 	'miro',
 	'mixpanel',
+	'monday',
+	'mural',
+	'neon',
+	'netlify',
+	'new-relic',
 	'notion',
+	'numina',
+	'otter',
+	'outreach',
+	'pagerduty',
+	'pipedrive',
+	'planetscale',
 	'posthog',
+	'power-bi',
+	'ramp',
 	'resend',
+	'retool',
+	'salesforce',
 	'sentry',
+	'squarespace',
 	'stripe',
+	'supabase',
+	'trello',
 	'ubersuggest',
+	'uniconta',
+	'vanta',
 	'vercel',
 	'webflow',
+	'wix',
+	'xero',
 	'zapier',
+	'zendesk',
+	'zoom',
+	'zoominfo',
 ])
 
 export const GATEWAY_BODY_LIMIT_BYTES = 1_000_000
 
-export function gatewayPath(provider: string): string {
-	return `/api/integrations/${provider}/gateway`
+/**
+ * The gateway address. Without an integration id it is the provider's default connection (the
+ * oldest active one); with an id it is exactly that connection.
+ */
+export function gatewayPath(provider: string, integrationId?: string): string {
+	return `/api/integrations/${provider}/gateway${integrationId ? `/${integrationId}` : ''}`
+}
+
+/** A short, stable word for an account (an email address, say) to put in an MCP server key. */
+export function accountSlug(account: string): string {
+	return account
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, '-')
+		.replace(/^-+|-+$/g, '')
 }
 
 /** The MCP server entry an agent uses to reach a provider through Maskin. */
-export function gatewayServerSpec(provider: string): Record<string, unknown> {
+export function gatewayServerSpec(
+	provider: string,
+	integrationId?: string,
+): Record<string, unknown> {
 	return {
 		type: 'http',
-		url: `\${MASKIN_API_URL}${gatewayPath(provider)}`,
+		url: `\${MASKIN_API_URL}${gatewayPath(provider, integrationId)}`,
 		headers: {
 			Authorization: 'Bearer ${MASKIN_API_KEY}',
 			'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+			// Tells the gateway which chat the call comes from, so an Allow in this chat counts.
+			[MASKIN_SESSION_HEADER]: MASKIN_SESSION_HEADER_VALUE,
 		},
 	}
 }
@@ -168,16 +248,27 @@ export const RESEND_SEND_TOOLS: ReadonlySet<string> = new Set([
  * The refusal for one of those tools when the agent's send setting for emails is not "always
  * allow". Read & write alone lets an agent send; the setting is what can hold or turn it off.
  */
-export function resendSendRefusal(toolName: string, send: 'needs_approval' | 'denied'): string {
+export function resendSendRefusal(
+	toolName: string,
+	send: 'needs_approval' | 'denied',
+	pilot = false,
+): string {
 	return send === 'denied'
 		? `${toolName} is turned off for this agent: sending emails from its own address is set to deny in the workspace's send settings. Nothing was sent. Do not retry or look for another way to send it.`
-		: `${toolName} is not available to this agent because its emails from its own address ask first. Nothing was sent. Save the email as a task or object with metadata.kind email (to, subject; the text as its content), show it to a person (link it in the chat or put it on a decision card), and once they approved it (from the card, or by saying yes in the chat, then call approve_draft_from_chat), call resend_send_email with only object_id.`
+		: `${toolName} is not available to this agent because ${
+				pilot ? PILOT_REFUSAL : 'its emails from its own address ask first'
+			}. Nothing was sent. Save the email as a task or object with metadata.kind email (to, subject; the text as its content), show it to a person (link it in the chat or put it on a decision card), and once they approved it (from the card, or by saying yes in the chat, then call approve_draft_from_chat), call resend_send_email with only object_id.`
 }
 
 const COMMAND_GATED_HINT =
 	'Read access runs one query or lookup command per call; create, update and delete commands, chained commands and --confirm are refused.'
 const COMMAND_GATED_LIST_NOTE =
 	'Read access: query and lookup commands run; create, update and delete commands are refused.'
+
+/** The refusal for a tool that is not on the server's list of allowed tools. */
+export function toolNotListedMessage(providerLabel: string, toolName: string): string {
+	return `Access denied: ${toolName} is not one of the tools ${providerLabel} may use here. A person limited this server to a short list of tools. This is a permission, not an outage, so do not retry the same call or look for another way to do it. Say in your reply what you needed it for; a person can change the list.`
+}
 
 export function decideToolCall(input: {
 	provider: string
@@ -187,6 +278,8 @@ export function decideToolCall(input: {
 	args?: unknown
 	access: AgentAccess
 	annotations?: ToolAnnotationsLike | null
+	/** A custom server's allowed tools. Set, a tool outside it is refused whatever the access. */
+	allowedTools?: readonly string[]
 }): GatewayDecision {
 	const { kind, innerTool } = classifyCall(
 		input.provider,
@@ -194,6 +287,14 @@ export function decideToolCall(input: {
 		input.args,
 		input.annotations,
 	)
+	if (input.allowedTools && !input.allowedTools.includes(input.toolName)) {
+		return {
+			allowed: false,
+			kind,
+			innerTool,
+			message: toolNotListedMessage(input.providerLabel, input.toolName),
+		}
+	}
 	if (allows(input.access, kind)) return { allowed: true, kind, innerTool }
 	const named = innerTool ? `${input.toolName} (${innerTool})` : input.toolName
 	const message = accessDeniedMessage({
@@ -262,17 +363,33 @@ function annotateCommandGatedTool(
  */
 export function annotateToolsList(
 	result: { tools?: ListedTool[] } & Record<string, unknown>,
-	ctx: { provider: string; providerLabel: string; access: AgentAccess },
+	ctx: {
+		provider: string
+		providerLabel: string
+		access: AgentAccess
+		/** A custom server's allowed tools. Set, every other tool is left out of the list. */
+		allowedTools?: readonly string[]
+		/** The account behind this server (an email address), named in every tool description. */
+		account?: string
+	},
 ): { result: Record<string, unknown>; upstreamAnnotations: Map<string, ToolAnnotationsLike> } {
 	const upstreamAnnotations = new Map<string, ToolAnnotationsLike>()
-	const tools = (result.tools ?? []).map((tool) => {
+	const allowed = ctx.allowedTools
+	const listed = (result.tools ?? []).filter((tool) => !allowed || allowed.includes(tool.name))
+	const tools = listed.map((tool) => {
 		if (tool.annotations) upstreamAnnotations.set(tool.name, tool.annotations)
 		if (isCommandGated(ctx.provider, tool.name)) return annotateCommandGatedTool(tool, ctx)
 		const kind = classifyTool(ctx.provider, tool.name, tool.annotations)
 		const usable = kind === 'read' ? canRead(ctx.access) : canWrite(ctx.access)
 		const note = TOOL_DESCRIPTION_NOTES[ctx.provider]?.[tool.name]
-		const upstream = tool.description ?? ''
-		const description = note ? `${upstream} ${note}`.trim() : upstream
+		const upstream =
+			ctx.provider === 'dinero' && allowed && !allowed.includes('BookVoucher')
+				? withoutBookVoucherPointer(tool.description ?? '')
+				: (tool.description ?? '')
+		const described = note ? `${upstream} ${note}`.trim() : upstream
+		const description = ctx.account
+			? `${described} (${ctx.providerLabel} account: ${ctx.account}.)`.trim()
+			: described
 		return {
 			...tool,
 			annotations: { ...tool.annotations, readOnlyHint: kind === 'read' },
@@ -324,4 +441,16 @@ export function buildUpstreamHeaders(
 		if (!/\$\{[^}]*\}/.test(filled)) headers[name] = filled
 	}
 	return headers
+}
+
+/**
+ * The headers with the provider's read-only switch added when the agent may not write, for a
+ * server that has one (Azure DevOps: X-MCP-Readonly). A read and write agent gets them unchanged.
+ */
+export function withReadOnlyHeaders(
+	headers: Record<string, string>,
+	readOnlyHeaders: Record<string, string> | undefined,
+	access: AgentAccess,
+): Record<string, string> {
+	return canWrite(access) ? headers : { ...headers, ...readOnlyHeaders }
 }

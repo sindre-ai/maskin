@@ -17,8 +17,8 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 // The consent page Claude sends a person to (/oauth/authorize) and the Claude tab of Settings > MCP.
 // Preview, approve and deny are the real server routes; the only thing faked is Claude's own callback
-// address, which the browser would otherwise leave the app for. The sign-in switch, the flag for the two
-// fixed-id actors and the PostHog stub are set in playwright.config.ts.
+// address, which the browser would otherwise leave the app for. The sign-in switch and the PostHog stub
+// are set in playwright.config.ts.
 
 const authorizeQuery = (overrides: Record<string, string> = {}) =>
 	new URLSearchParams(authorizeParams(overrides)).toString()
@@ -226,16 +226,13 @@ test.describe('Claude connector: consent page', () => {
 		await expect(page.getByText('Reference: client_not_allowlisted')).toBeVisible()
 	})
 
-	test('with the flag off the page says it is not available yet', async ({ page }) => {
-		// A fresh actor is not in the tester list, so preview answers 403.
-		const outsider = await ensureOutsider()
-		await signIn(page, outsider)
+	test('a brand new person can allow the connection', async ({ page }) => {
+		const newcomer = await ensureNewcomer()
+		await signIn(page, newcomer)
 		await page.goto(authorizePath())
 
-		await expect(
-			page.getByRole('heading', { name: 'Not available for your account yet' }),
-		).toBeVisible()
-		await expect(page.getByRole('button', { name: 'Allow' })).toHaveCount(0)
+		await expect(page.getByRole('button', { name: 'Allow' })).toBeVisible()
+		await expect(page.getByRole('button', { name: 'Deny' })).toBeVisible()
 	})
 
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
@@ -256,11 +253,11 @@ test.describe('Claude connector: consent page', () => {
 	}
 })
 
-async function ensureOutsider(): Promise<OauthActor> {
+async function ensureNewcomer(): Promise<OauthActor> {
 	const unique = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`
 	const actor = await createTestActor({
-		name: `E2E Outsider ${unique}`,
-		email: `e2e-outsider-${unique}@test.invalid`,
+		name: `E2E Newcomer ${unique}`,
+		email: `e2e-newcomer-${unique}@test.invalid`,
 	})
 	return { id: actor.id, name: actor.name, email: actor.email ?? '', apiKey: actor.api_key }
 }

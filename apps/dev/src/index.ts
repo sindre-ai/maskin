@@ -23,9 +23,12 @@ import { KeychainUndoSweeperJob } from './jobs/keychain-undo-sweeper'
 import { LumaRegistrationsSyncJob } from './jobs/luma-registrations-sync'
 import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
 import { RotateDeksJob } from './jobs/rotate-deks'
+import { StripePaymentSyncJob } from './jobs/stripe-payment-sync'
 import { TelnyxRecordingSyncJob } from './jobs/telnyx-recording-sync'
 import { UpgradeLegacyCredentialsJob } from './jobs/upgrade-legacy-credentials'
 import { ViesSchedulerJob } from './jobs/vies-scheduler'
+import { YoutubeActionsSweepJob } from './jobs/youtube-actions-sweep'
+import { agentBaseWarmupSkipReason } from './lib/agent-base-warmup'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
 import { configurePosthogPrivacy, warnIfPosthogKeyUnset } from './lib/analytics/posthog'
 import { verifyVolumeBonusThresholds } from './lib/credit-billing'
@@ -49,9 +52,11 @@ import { assertKeychainKeyConfig } from './lib/keychain-kms'
 import { logger } from './lib/logger'
 import { recordDbTime, setRouteTimingSink } from './lib/request-timing'
 import { createRouteTimingStore } from './lib/route-timing-store'
+import { runSeededSkillSyncOnBoot } from './lib/seeded-skill-boot'
 import { getStripeClient } from './lib/stripe'
 import { isWorkspaceMember } from './lib/workspace-auth'
 import { initMcpRateLimit, stopMcpRateLimit } from './routes/mcp'
+import { fetchServerHealth } from './services/agent-server-client'
 import { AgentStorageManager } from './services/agent-storage'
 import { ApnsSender } from './services/apns'
 import { BlockedToolCallsCleaner } from './services/blocked-tool-calls-cleaner'
@@ -68,6 +73,7 @@ import { DriverWaker } from './services/driver-wake'
 import { FlowActivityNotifier } from './services/flow-activity'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { GscSyncScheduler } from './services/gsc-sync-scheduler'
+import { createHeldSessionRelease } from './services/held-session-release'
 import { LifecyclePushScheduler } from './services/lifecycle-push-scheduler'
 import { LiveActivityFanout } from './services/live-activity-push'
 import { LoopVersionPusher } from './services/loop-version-pusher'
@@ -75,9 +81,9 @@ import { MeetTranscriptReconciler } from './services/meet-transcript-reconciler'
 import { MeetWatchRenewer } from './services/meet-watch-renewer'
 import { MicrosoftSyncScheduler } from './services/microsoft-sync-scheduler'
 import { NextStepSweep } from './services/next-step-sweep'
-import { NotificationEmailFanout } from './services/notification-email'
 import { NotificationPushFanout } from './services/notification-push'
 import { OAuthSweeper } from './services/oauth-sweeper'
+import { OpenRouterBalanceMonitor } from './services/openrouter-balance-monitor'
 import { OrphanThreadDetector } from './services/orphan-thread-detector'
 import { PosthogAccountSync } from './services/posthog-account-sync'
 import { ResendDomainVerifier } from './services/resend-domain-verifier'
@@ -120,11 +126,13 @@ const db = createDb(databaseUrl, {
 	poolSize: dbPoolSize,
 	inFlight: dbLoad,
 	onQuery: recordDbTime,
-	onPoolRecycled: ({ runningQueries, sql }) => {
-		logger.warn('DB pool replaced: a query got no answer and the database was not busy', {
-			runningQueries,
-			sql,
-		})
+	onPoolRecycled: ({ runningQueries, sql, reason }) => {
+		logger.warn(
+			reason === 'read_only'
+				? 'DB pool replaced: a write was refused as read-only, so the connections are on a node that is no longer the primary'
+				: 'DB pool replaced: a query got no answer and the database was not busy',
+			{ runningQueries, sql, reason },
+		)
 	},
 	onQueryTimeout: ({ timeoutMs, inFlight, sql }) => {
 		logger.error('DB query got no response', {
@@ -320,8 +328,9 @@ driverWaker.start()
 const stageTaskCreator = new StageTaskCreator(db, notifyBridge)
 stageTaskCreator.start()
 
-// Finds objects with an overdue or missing next step and wakes their driver. Record-only until a
-// workspace has the next-step-sweep flag for 3 days and next-step-sweep-wake too.
+// Finds objects with an overdue or missing next step and wakes their driver. Only looks at
+// workspaces with the next-step-sweep flag, and is record-only there until the workspace has been
+// swept for 3 days and has the next-step-sweep-wake flag.
 const nextStepSweep = new NextStepSweep(db)
 nextStepSweep.start()
 
@@ -337,9 +346,6 @@ notificationPush.start()
 
 const flowActivity = new FlowActivityNotifier(db, notifyBridge)
 flowActivity.start()
-
-const notificationEmail = new NotificationEmailFanout(db, notifyBridge)
-notificationEmail.start()
 
 const liveActivityPush = new LiveActivityFanout(db, notifyBridge, apnsSender, {
 	turns: sessionManager,
@@ -385,6 +391,10 @@ logger.info('Blocked tool calls cleaner started')
 const briefCacheCleaner = new BriefCacheCleaner(storageProvider)
 briefCacheCleaner.start()
 logger.info('Brief cache cleaner started')
+
+const openRouterBalanceMonitor = new OpenRouterBalanceMonitor(db)
+openRouterBalanceMonitor.start()
+logger.info('OpenRouter balance monitor started')
 
 const posthogAccountSync = new PosthogAccountSync(db)
 posthogAccountSync.start()
@@ -442,6 +452,8 @@ logger.info('Webhook deliveries reconciler started')
 
 const purgeIdempotencyJob = new PurgeIdempotencyJob(db)
 purgeIdempotencyJob.start()
+const youtubeActionsSweepJob = new YoutubeActionsSweepJob(db, undefined, storageProvider)
+youtubeActionsSweepJob.start()
 logger.info('Purge idempotency job started')
 
 // Direct uploads: aborts uploads nobody finished and settles ones whose complete
@@ -474,6 +486,26 @@ if (telnyxSyncWorkspaceId && telnyxSyncActorId && telnyxSyncLoopId) {
 	})
 	telnyxRecordingSyncJob.start()
 	logger.info('Telnyx recording sync started')
+}
+
+// Stripe payments: reads paid invoices and completed checkouts from our own Stripe account and
+// writes a stripe.paid reading on the person whose email matches exactly. No model in the path.
+// Off unless STRIPE_PAYMENT_SYNC_WORKSPACE_ID, _ACTOR_ID (the agent granted the Stripe key) and
+// _LOOP_ID (where the count of unmatched payments is written) are set. Optional: _KEY_NAME
+// (Keychain name, default Stripe), _FROM (earliest payment to read, default 2026-11-01).
+const stripeSyncWorkspaceId = process.env.STRIPE_PAYMENT_SYNC_WORKSPACE_ID
+const stripeSyncActorId = process.env.STRIPE_PAYMENT_SYNC_ACTOR_ID
+const stripeSyncLoopId = process.env.STRIPE_PAYMENT_SYNC_LOOP_ID
+if (stripeSyncWorkspaceId && stripeSyncActorId && stripeSyncLoopId) {
+	const stripePaymentSyncJob = new StripePaymentSyncJob(db, {
+		workspaceId: stripeSyncWorkspaceId,
+		actorId: stripeSyncActorId,
+		loopId: stripeSyncLoopId,
+		keyName: process.env.STRIPE_PAYMENT_SYNC_KEY_NAME || 'Stripe',
+		backfillFrom: new Date(process.env.STRIPE_PAYMENT_SYNC_FROM || '2026-11-01T00:00:00Z'),
+	})
+	stripePaymentSyncJob.start()
+	logger.info('Stripe payment sync started')
 }
 
 // Luma registrations: every 30 minutes reads the guest list of each Luma event between planned
@@ -534,6 +566,11 @@ void runDefaultHeartbeatBackfillOnBoot(db)
 // database, and never blocks or fails startup.
 void runDraftApprovalSkillBackfillOnBoot(db, agentStorage)
 
+// Keeps the seeded Chief of Staff skills in step with the code: gives each existing workspace the
+// skill once, then carries later edits of the seeded text into copies nobody has changed. Runs on
+// every boot with nothing to switch on, and never blocks or fails startup.
+void runSeededSkillSyncOnBoot(db, agentStorage)
+
 const loopVersionPusher = new LoopVersionPusher(db, agentStorage, undefined, storageProvider)
 loopVersionPusher.start()
 logger.info('Loop version pusher started')
@@ -571,6 +608,14 @@ const sessionDispatchQueue = new SessionDispatchQueue(db, async () => ({ kind: '
 	// way the trigger runner learns to stop firing against it.
 	onPermanentFailure: ({ workspaceId, reasonCode, noCredentialsConfigured }) =>
 		triggerRunner.handleDispatchPermanentFailure(workspaceId, reasonCode, noCredentialsConfigured),
+	// Daily budget: lets sessions held at the daily limit go when there is room (most important
+	// first). Runs on the queue's tick, throttled; nothing is held outside production.
+	beforeClaim: () => releaseHeldSessionsOnTick(),
+})
+const releaseHeldSessionsOnTick = createHeldSessionRelease({
+	db,
+	makeDue: (sessionId) => sessionDispatchQueue.makeDue(sessionId),
+	freeStartSlots: (workspaceId) => sessionManager.freeStartSlots(workspaceId),
 })
 if (process.env.NODE_ENV === 'production') {
 	const dispatcher = new SessionDispatcher({
@@ -609,6 +654,12 @@ if (process.env.NODE_ENV === 'production') {
 				...(spec.skillsManifest.length > 0 && { skills: spec.skillsManifest }),
 			}
 		},
+		// A server whose disk or file storage is failing answers /health with 503 and a
+		// reason; the dispatcher then picks another server. SKIP_RED_AGENT_SERVERS=0
+		// turns this off without a deploy (default on).
+		...(!['0', 'false'].includes((process.env.SKIP_RED_AGENT_SERVERS ?? '').toLowerCase()) && {
+			checkServerHealth: (server) => fetchServerHealth(server),
+		}),
 		// Interactive sessions get no ACTION_PROMPT env var — agent-run.sh's
 		// interactive branch reads its first turn from stdin, fed by whatever
 		// POSTs /sessions/:id/input. Mirrors session-manager.ts's launchContainer()
@@ -669,6 +720,7 @@ const shutdown = async (signal: string, exitCode = 0) => {
 	decisionDefaultWake.stop()
 	stopMcpRateLimit()
 	purgeIdempotencyJob.stop()
+	youtubeActionsSweepJob.stop()
 	oauthSweeper.stop()
 	keychainUndoSweeperJob.stop()
 	fileUploadReaperJob.stop()
@@ -677,7 +729,6 @@ const shutdown = async (signal: string, exitCode = 0) => {
 	chainSnapshotJob.stop()
 	notificationPush.stop()
 	flowActivity.stop()
-	notificationEmail.stop()
 	briefingPushScheduler.stop()
 	briefingEmailScheduler.stop()
 	lifecyclePushScheduler.stop()
@@ -728,14 +779,15 @@ logger.info(`Starting server on port ${port}`)
 
 let bootstrap: DevBootstrapResult | null = null
 try {
-	bootstrap = await maybeBootstrapDev(db, agentStorage, sessionManager)
+	// Before the dev workspace is made: a new workspace installs Knowledge Wiki from the marketplace.
+	await seedMarketplaceIfEmpty(db)
+	bootstrap = await maybeBootstrapDev(db, agentStorage, sessionManager, storageProvider)
 	if (bootstrap) {
 		logger.info('Dev bootstrap created default actor + workspace', {
 			actorEmail: bootstrap.actorEmail,
 			workspaceName: bootstrap.workspaceName,
 		})
 	}
-	await seedMarketplaceIfEmpty(db)
 } catch (err) {
 	logger.error('Dev bootstrap failed', { error: err instanceof Error ? err.message : String(err) })
 }
@@ -785,10 +837,11 @@ ${mcpSetup}
 	// canonical "install_completed" moment for the open-source launch bet.
 	// Fire-and-forget — never blocks or throws.
 	emitInstallCompleted().catch(() => {})
-	// scripts/lib/docker-absent-guard.sh sets this on the no-Docker dev path when
-	// no Docker socket exists; the warm call below could only fail there.
-	if (process.env.MASKIN_DOCKER_UNAVAILABLE === '1') {
-		logger.warn('Docker unavailable; skipping agent-base image warm-up')
+	// Production routes sessions to the agent servers and has no Docker socket, so
+	// the build could only fail; the no-Docker dev path is skipped the same way.
+	const warmupSkipReason = agentBaseWarmupSkipReason(process.env)
+	if (warmupSkipReason) {
+		logger.info('Skipping agent-base image warm-up', { reason: warmupSkipReason })
 		return
 	}
 	sessionManager.warmAgentBaseImage().catch((err) => {

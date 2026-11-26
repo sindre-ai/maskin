@@ -32,6 +32,7 @@ import { unclassifiedFingerprint } from '../lib/credit-classifier'
 import { recordEvent } from '../lib/events/record-event'
 import { LLM_ROUTE_MASKIN_PLAN } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
+import { getSessionContextSize } from '../lib/session-context-size'
 import { MAX_RETRY_ATTEMPTS } from '../lib/subscription-limit-reset'
 import { assertInWorkspace } from '../lib/workspace-scope'
 import { postRetryNotice } from './chat-retry-notice'
@@ -230,7 +231,9 @@ export async function startSession(
 
 	// The gate on work agents start for themselves: labels why the session started and refuses a
 	// self-started one over a cap, in back-off or over the agent's daily budget (throws
-	// SessionNotAdmittedError before any row exists). A session a person started always passes.
+	// SessionNotAdmittedError before any row exists). Work that is not urgent while the workspace's
+	// daily target is used up comes back with `hold` and is parked below. A session a person
+	// started always passes.
 	const admission = await admitSessionStart(db, {
 		workspaceId: input.workspaceId,
 		actorId: input.actorId,
@@ -241,18 +244,25 @@ export async function startSession(
 		hasChat: belongsToChat(input),
 		createdBy,
 		initiatedFromObjectId: input.initiatedFromObjectId,
+		humanFacing: isHumanFacing(input),
 	})
 
 	const params: CreateSessionParams = {
 		actorId: input.actorId,
 		actionPrompt: input.actionPrompt ?? '',
-		config: withStartReason(withBackgroundDefaults(input), admission.reason, belongsToChat(input)),
+		config: {
+			...withStartReason(withBackgroundDefaults(input), admission.reason, belongsToChat(input)),
+			// Set on the row when it is made, so a held session never counts against the workspace
+			// start limit, not even for the moment before it is parked.
+			...(admission.hold ? { held: admission.hold } : {}),
+		},
 		triggerId: input.triggerId,
 		triggerType: input.triggerType,
 		triggerSource: input.triggerSource,
 		sourceCommentEventId: input.sourceCommentEventId,
 		createdBy,
-		autoStart: input.autoStart,
+		// A held session is parked below instead of started; the rest start as the caller asked.
+		autoStart: admission.hold ? false : input.autoStart,
 		sourceSessionId: input.parentSessionId,
 		spawnedBySessionId: input.spawnedBySessionId,
 		initiatedFromObjectId: input.initiatedFromObjectId,
@@ -262,9 +272,25 @@ export async function startSession(
 
 	const session = await sessionManager.createSession(input.workspaceId, params)
 
-	// Daily budget 1a: one admission event per start, the baseline 1b is judged against. Every
-	// decision is 'admitted' until the gate exists. Best effort and not awaited: reporting must not
-	// slow the start path. recordSessionAdmission never throws, so there is nothing to catch here.
+	// Held at the daily limit: park the row, or start it as usual when it cannot be parked (no
+	// dispatch queue, or the queue write failed): a gate that cannot hold must not stop work.
+	const held =
+		admission.hold !== undefined &&
+		(await sessionManager.holdSession(session.id, new Date(admission.hold.until)))
+	if (admission.hold && !held) {
+		await releaseHeldMark(db, session.id)
+		if (input.autoStart !== false) {
+			sessionManager
+				.startSession(session.id)
+				.catch((err) =>
+					logger.error('Session start failed', { sessionId: session.id, error: String(err) }),
+				)
+		}
+	}
+
+	// Daily budget: one admission event per start (admitted, or deferred when the session is held),
+	// the record 1b is judged against. Best effort and not awaited: reporting must not slow the
+	// start path. recordSessionAdmission never throws, so there is nothing to catch here.
 	void recordSessionAdmission(db, {
 		sessionId: session.id,
 		workspaceId: input.workspaceId,
@@ -274,6 +300,9 @@ export async function startSession(
 		humanFacing: isHumanFacing(input),
 		startReason: admission.reason,
 		selfStarted: admission.selfStarted,
+		importance: admission.importance,
+		decision: held ? 'deferred' : 'admitted',
+		heldUntil: held ? admission.hold?.until : undefined,
 	})
 
 	// Commit-8 lifecycle fields set on the fresh row. session_state='queued'
@@ -333,6 +362,20 @@ export async function startSession(
 	}
 
 	return handle
+}
+
+/** The session could not be held after all: take the mark off so it counts and starts as normal. */
+async function releaseHeldMark(db: Database, sessionId: string): Promise<void> {
+	await db
+		.update(sessions)
+		.set({ config: sql`${sessions.config} - 'held'` })
+		.where(eq(sessions.id, sessionId))
+		.catch((err) =>
+			logger.warn('Failed to clear the held mark on a session that was not held', {
+				sessionId,
+				error: String(err),
+			}),
+		)
 }
 
 function belongsToChat(input: StartSessionInput): boolean {
@@ -842,6 +885,8 @@ export async function emitCompletion(
 	const skillsStaged = typeof staging?.staged === 'number' ? staging.staged : null
 	const triggerSource = typeof config.trigger_source === 'string' ? config.trigger_source : null
 
+	const contextSize = getSessionContextSize(session.id)
+
 	await capturePosthogEvent('agent_session_completed', session.workspaceId, {
 		session_id: session.id,
 		actor_id: session.actorId,
@@ -851,7 +896,16 @@ export async function emitCompletion(
 		host,
 		outcome: mapKindToOutcomeProp(outcome.kind),
 		classification: outcome.classification,
-		stop_reason: outcome.reason ?? null,
+		// A full or failing window is its own end cause, so the first sibling bet's thrashing
+		// count and this bet's failure count can read it: context_full, compaction_failed.
+		stop_reason: contextSize?.endCause ?? outcome.reason ?? null,
+		// The size of the window at the last model call of the last turn, and the window the
+		// session reports. Left off when the session showed neither (PostHog reads them as absent).
+		last_turn_window_tokens: contextSize?.lastTurnWindowTokens,
+		// assistant_usage is the model's own reading, log_estimate a rough count of log lines
+		// (DeepSeek writes zero usage), so the two can be told apart in the baseline.
+		size_source: contextSize?.sizeSource,
+		context_window_tokens: contextSize?.contextWindowTokens,
 		exit_code: outcome.exitCode ?? null,
 		duration_ms: durationMs,
 		input_tokens: totals.inputTokens ?? 0,
@@ -1156,8 +1210,9 @@ export async function settleSession(
 	// cost. Evict again now that the final cost is visible to every connection.
 	if (flipped) evictBillingUsage(row.workspaceId)
 
-	// A chat session that hit a usage limit and has a retry time gets its notice now, while the
-	// person is looking, not when the retry fires. A session at the attempt cap is not retried
+	// A chat session that has a retry time gets its notice now, while the person is looking, not
+	// when the retry fires. The wording follows the cause: a start the agent server never accepted
+	// is not a usage limit. A session at the attempt cap is not retried
 	// (the scheduler clears retry_at), so promising a retry there would be untrue.
 	if (
 		flipped &&
@@ -1170,6 +1225,8 @@ export async function settleSession(
 			workspaceId: row.workspaceId,
 			actorId: row.actorId,
 			retryAt: outcome.retryAt,
+			cause:
+				outcome.failureReason?.reason_code === 'dispatch_failed' ? 'start_failed' : 'usage_limit',
 		})
 	}
 
@@ -1377,15 +1434,20 @@ interface InitiatedFromBlock {
  * ON DELETE SET NULL cascade would normally have already nulled the id
  * column, but this covers the race window. One PK read per failed settle.
  */
-async function resolveInitiatedFromBlock(
+export async function resolveInitiatedFromBlock(
 	db: Database,
-	session: { initiatedFromObjectId: string | null },
+	session: { initiatedFromObjectId: string | null; workspaceId: string },
 ): Promise<InitiatedFromBlock | null> {
 	if (!session.initiatedFromObjectId) return null
 	const [obj] = await db
 		.select({ type: objects.type, title: objects.title })
 		.from(objects)
-		.where(eq(objects.id, session.initiatedFromObjectId))
+		.where(
+			and(
+				eq(objects.id, session.initiatedFromObjectId),
+				eq(objects.workspaceId, session.workspaceId),
+			),
+		)
 		.limit(1)
 	if (!obj) return null
 	return {

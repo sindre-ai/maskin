@@ -22,6 +22,9 @@ public protocol ObjectsRemote: Sendable {
 		objectId: String, content: String, mentions: [String], refs: [String],
 		attachmentFileIds: [String], parentEventId: Int?, idempotencyKey: String
 	) async throws -> ObjectEvent
+	/// `PATCH /api/events/{id}`: new words for a comment the caller wrote. The server keeps who was
+	/// tagged and wakes no one.
+	func editComment(eventId: Int, content: String) async throws
 	/// `POST /api/relationships`: links `sourceId` → `targetId` with `type` (`informs`, `blocks`…).
 	/// Returns the new edge as seen from the source. `idempotencyKey` stays the same across retries.
 	func createRelationship(
@@ -37,6 +40,10 @@ public protocol ObjectsRemote: Sendable {
 }
 
 extension ObjectsRemote {
+	public func editComment(eventId: Int, content: String) async throws {
+		throw ObjectsError("Editing a comment isn't available.")
+	}
+
 	public func board(_ query: ObjectsBoardQuery) async throws -> [ObjectsBoardColumn] {
 		throw ObjectsError("The board isn't available.")
 	}

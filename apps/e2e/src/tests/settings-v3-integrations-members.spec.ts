@@ -45,6 +45,8 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 		await page.goto(`/${account.workspaceId}/settings/members`)
 		await expect(page.getByRole('heading', { name: 'Members' })).toBeVisible({ timeout: 15_000 })
 		await expect(page.getByText('owner', { exact: true })).toBeVisible()
+		// You are the only person here, and your own row has no Message icon.
+		await expect(page.getByRole('button', { name: /^Message / })).toHaveCount(0)
 
 		await page.getByRole('button', { name: /Add member/ }).click()
 		await page.getByRole('menuitem', { name: 'Invite member' }).click()

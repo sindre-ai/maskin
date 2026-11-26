@@ -2,6 +2,7 @@ import {
 	MOCKUP_VIEWPORT_PRESETS,
 	detectViewerVariantFromDom,
 	detectViewerVariantFromFilename,
+	isSelfPagingDocument,
 	resolveViewerVariant,
 } from '@/lib/viewer-detect'
 import { describe, expect, it } from 'vitest'
@@ -102,6 +103,55 @@ describe('viewer-detect', () => {
 					override: null,
 				}),
 			).toBe('single')
+		})
+	})
+
+	describe('self-paging documents', () => {
+		const slides =
+			'<section class="slide" id="s1">a</section><section class="slide" id="s2">b</section>'
+		const metaDoc = `<meta name="maskin:paging" content="self">${slides}`
+		const cssDoc = `<style>.slide{opacity:0}.slide.active{opacity:1}</style>${slides}`
+
+		it('detects the maskin:paging meta tag', () => {
+			expect(isSelfPagingDocument(metaDoc)).toBe(true)
+			expect(isSelfPagingDocument(`<meta content="self" name="maskin:paging">${slides}`)).toBe(true)
+		})
+
+		it('detects a .slide.active CSS rule', () => {
+			expect(isSelfPagingDocument(cssDoc)).toBe(true)
+		})
+
+		it('does not flag a deck without either signal', () => {
+			expect(isSelfPagingDocument(slides)).toBe(false)
+			expect(isSelfPagingDocument(`<meta name="maskin:paging" content="viewer">${slides}`)).toBe(
+				false,
+			)
+		})
+
+		it('only scans the first 8KB', () => {
+			const padding = ' '.repeat(9_000)
+			expect(isSelfPagingDocument(`${slides}${padding}${metaDoc}`)).toBe(false)
+		})
+
+		it('resolves to single for either signal, even with a deck filename', () => {
+			for (const html of [metaDoc, cssDoc]) {
+				expect(resolveViewerVariant({ filename: 'b.html', html, override: null })).toBe('single')
+				expect(resolveViewerVariant({ filename: 'b.deck.html', html, override: null })).toBe(
+					'single',
+				)
+			}
+		})
+
+		it('a manual View as override still wins', () => {
+			expect(resolveViewerVariant({ filename: 'b.html', html: metaDoc, override: 'deck' })).toBe(
+				'deck',
+			)
+		})
+
+		it('a deck without the signals still gets the viewer paging', () => {
+			expect(resolveViewerVariant({ filename: 'b.html', html: slides, override: null })).toBe(
+				'deck',
+			)
 		})
 	})
 

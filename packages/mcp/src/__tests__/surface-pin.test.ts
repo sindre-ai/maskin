@@ -59,7 +59,7 @@ const EXPECTED_READ_TOOL_NAMES = [
 	'list_integration_providers',
 	'list_extensions',
 	'list_for_you',
-	'get_started',
+	'list_marketplace',
 ]
 
 // Pure reads that are not in READ_TOOL_NAMES; they keep re-throwing on error.
@@ -80,8 +80,8 @@ const READS_OUTSIDE_READ_TOOL_NAMES = [
 	'get_trigger',
 ]
 
-// get_started is in READ_TOOL_NAMES but its confirm path installs a loop.
-const NOT_READ_ONLY_DESPITE_READ_TOOL_NAMES = ['get_started']
+// Tools in READ_TOOL_NAMES that are not read-only. None today: install_loop split off list_marketplace.
+const NOT_READ_ONLY_DESPITE_READ_TOOL_NAMES: string[] = []
 
 // Tool names the default templates legitimately tell agents to call that live
 // on another MCP server, so they are never in the Maskin tool list.
@@ -216,11 +216,11 @@ describe('MCP surface pin', () => {
 		expect(violations, violations.join('\n')).toEqual([])
 	})
 
-	it('registers propose_file_changes as a plain write, not a read, delete or idempotent update', () => {
+	it('registers propose_file_changes as a plain write, not a read or idempotent update', () => {
 		expect(registeredTools.has('propose_file_changes')).toBe(true)
 		expect(TOOL_ANNOTATIONS.propose_file_changes).toMatchObject({
 			readOnlyHint: false,
-			destructiveHint: false,
+			destructiveHint: true,
 			idempotentHint: false,
 			openWorldHint: false,
 		})
@@ -313,30 +313,28 @@ describe('MCP surface pin', () => {
 			expect([...READ_ONLY_TOOLS].sort()).toEqual(expected)
 		})
 
-		it('no MUTATION_TOOL_KINDS tool is read-only, nor create_sub_chat, mark_read or get_started', () => {
+		it('no MUTATION_TOOL_KINDS tool is read-only, nor create_sub_chat, mark_read or install_loop', () => {
 			const readOnly = (name: string) => TOOL_ANNOTATIONS[name]?.readOnlyHint
 			for (const name of Object.keys(MUTATION_TOOL_KINDS)) {
 				expect(readOnly(name), `${name} is a mutation but readOnlyHint is true`).toBe(false)
 			}
-			for (const name of ['create_sub_chat', 'mark_read', 'get_started']) {
+			for (const name of ['create_sub_chat', 'mark_read', 'install_loop']) {
 				expect(readOnly(name), `${name} must not be read-only`).toBe(false)
 			}
 		})
 
-		it('destructiveHint is true for every delete_* tool, stop_session, disconnect_integration and desktop_run only', () => {
-			const expected = [
-				...Object.keys(TOOL_ANNOTATIONS).filter((n) => n.startsWith('delete_')),
+		it('destructiveHint is true for every tool that is not read-only, and for no read-only tool', () => {
+			for (const [name, entry] of Object.entries(TOOL_ANNOTATIONS)) {
+				expect(entry.destructiveHint, `${name} destructiveHint`).toBe(!entry.readOnlyHint)
+			}
+			for (const name of [
+				'delete_object',
 				'stop_session',
-				'stop_chat_agent',
 				'disconnect_integration',
 				'desktop_run',
-			].sort()
-			const actual = Object.entries(TOOL_ANNOTATIONS)
-				.filter(([, entry]) => entry.destructiveHint)
-				.map(([name]) => name)
-				.sort()
-			expect(actual).toEqual(expected)
-			for (const name of expected) expect(registeredTools.has(name)).toBe(true)
+			]) {
+				expect(TOOL_ANNOTATIONS[name]?.destructiveHint, name).toBe(true)
+			}
 		})
 
 		it('idempotentHint is true for update_*, delete_*, pause_session, mark_read, set_loop_view and withdraw_decision_card only', () => {

@@ -23,6 +23,7 @@ import {
 	delaySecondsOf,
 	dueAtOf,
 	evaluatePush,
+	isChatRollup,
 	isCriticalCard,
 	isForYouCard,
 	pushCategoryOf,
@@ -296,7 +297,17 @@ export class NotificationPushFanout {
 		})
 
 		if (verdict.action === 'skip') {
-			logger.debug('Push skipped by policy', { notificationId: n.id, reason: verdict.reason })
+			// Info for the categories a person waits on, so a missing push can be traced.
+			const log =
+				category === 'conversation' || category === 'needs_you' ? logger.info : logger.debug
+			log.call(logger, 'Push skipped by policy', {
+				notificationId: n.id,
+				targetActorId,
+				category,
+				reason: verdict.reason,
+				conversationId: typeof meta.conversation_id === 'string' ? meta.conversation_id : null,
+				messageId: typeof meta.message_id === 'number' ? meta.message_id : null,
+			})
 			return
 		}
 		if (verdict.action === 'delay') {
@@ -313,7 +324,9 @@ export class NotificationPushFanout {
 		if (verdict.action === 'rollup') {
 			const badge = await this.pendingCount(targetActorId)
 			message = {
-				title: `${verdict.rollupCount} things need you`,
+				title: isChatRollup(verdict)
+					? `${verdict.rollupCount} more ${verdict.rollupCount === 1 ? 'reply' : 'replies'}`
+					: `${verdict.rollupCount} things need you`,
 				body: null,
 				workspaceId: n.workspaceId,
 				notificationId: n.id,
@@ -384,7 +397,8 @@ export class NotificationPushFanout {
 			sent: true,
 			forYou: isForYouCard({ type: n.type, metadata: meta }),
 			critical: isCriticalCard(meta),
-			rollup: verdict.action === 'rollup',
+			// A chat roll-up is not a For You roll-up: the clearing logic reads `rollup` as the latter.
+			rollup: verdict.action === 'rollup' && !isChatRollup(verdict),
 		})
 	}
 

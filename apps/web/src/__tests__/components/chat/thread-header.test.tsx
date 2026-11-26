@@ -271,6 +271,38 @@ describe('ThreadHeader — v4 actions', () => {
 		})
 	})
 
+	describe('Copy link', () => {
+		it('copies the chat URL and toasts the same confirmation as the participants popover', async () => {
+			mockUseConversation.mockReturnValue({ data: buildConversation() })
+			const writeText = vi.fn().mockResolvedValue(undefined)
+			Object.defineProperty(navigator, 'clipboard', {
+				value: { writeText },
+				configurable: true,
+			})
+			renderHeader()
+
+			await userEvent.click(screen.getByRole('button', { name: 'More actions' }))
+			await userEvent.click(await screen.findByRole('menuitem', { name: 'Copy link' }))
+
+			await waitFor(() => expect(writeText).toHaveBeenCalledWith(window.location.href))
+			await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledWith('Link copied'))
+		})
+
+		it('toasts an error when the clipboard write fails', async () => {
+			mockUseConversation.mockReturnValue({ data: buildConversation() })
+			Object.defineProperty(navigator, 'clipboard', {
+				value: { writeText: vi.fn().mockRejectedValue(new Error('denied')) },
+				configurable: true,
+			})
+			renderHeader()
+
+			await userEvent.click(screen.getByRole('button', { name: 'More actions' }))
+			await userEvent.click(await screen.findByRole('menuitem', { name: 'Copy link' }))
+
+			await waitFor(() => expect(mockToastError).toHaveBeenCalledWith('Could not copy link'))
+		})
+	})
+
 	describe('Mark as unread', () => {
 		it('resets the read cursor via mark_unread, toasts and fires analytics', async () => {
 			mockUseConversation.mockReturnValue({ data: buildConversation() })

@@ -59,6 +59,14 @@ struct ConnectWithKeyView: View {
 			PageGroupLabel(text: "\(store.providerName) key")
 			PageTextField(title: "Paste your key", text: $store.key, mono: true, isURL: true, secure: true)
 			PageFootnote(text: "The key is stored encrypted and never shown again.")
+			if store.takesProject {
+				PageGroupLabel(text: "Project id (optional)")
+				PageTextField(title: "For example 12345", text: $store.projectID, mono: true)
+				PageFootnote(
+					text: store.projectIDIsValid
+						? "Agents start in this project. Leave it empty to use the one PostHog picks. You can find the number in the PostHog address after /project/."
+						: "The project id is a number, like 12345.")
+			}
 			if let error = store.error { FormError(error) }
 			Button("Connect") {
 				Task {

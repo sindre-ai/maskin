@@ -538,6 +538,16 @@ struct ObjectsStoreSwipeTests {
 		#expect(store.objects.first { $0.id == "t2" }?.status == "todo")
 	}
 
+	@Test("Done is hidden for a task in any finished status")
+	func doneHiddenWhenFinished() async {
+		let (store, _) = makeStore()
+		await store.load()
+		for status in ["validated", "done"] {
+			let finished = WorkObject(id: "f", type: "task", title: "Finished", status: status)
+			#expect(store.doneTarget(for: finished) == nil, "\(status)")
+		}
+	}
+
 	@Test("archiving one object uses its type's archive status")
 	func archiveOne() async {
 		let (store, _) = makeStore()

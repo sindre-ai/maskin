@@ -82,6 +82,7 @@ const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi
 interface ZodIssueLike {
 	code?: unknown
 	path?: unknown
+	message?: unknown
 	expected?: unknown
 	received?: unknown
 	options?: unknown
@@ -149,6 +150,10 @@ function describeIssue(i: ZodIssueLike): string {
 		detail = `${String(i.type)} ${String(i.minimum ?? i.maximum)}`
 	} else if (code === 'invalid_string') {
 		detail = typeof i.validation === 'string' ? i.validation : 'custom'
+	} else if (code === 'custom' && typeof i.message === 'string') {
+		// A custom rule's text is written in our schema code, not taken from the call, so it
+		// says which rule fired. Ids are scrubbed as in the free-text fallback.
+		detail = i.message.replace(UUID_RE, '<id>')
 	}
 	return detail ? `${path}: ${code} ${detail}` : `${path}: ${code}`
 }

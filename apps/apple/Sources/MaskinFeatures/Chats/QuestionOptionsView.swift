@@ -13,28 +13,35 @@ struct QuestionOptionsView: View {
 	let questions: [ChatQuestionItem]
 	/// What a later human message picked, when this question was already answered.
 	let answers: [ChatQuestionAnswer.Answer]?
+	/// Who answered and when, with the typed words when nothing was picked.
+	let note: ChatQuestionState.Note?
 	let onSubmit: ([Int: [String]]) -> Void
 	/// Closes the card without answering (the X).
 	var onDismiss: (() -> Void)?
+
+	/// A question's text (a whole draft, say) shows this many lines; the rest opens with Show all.
+	static let detailLines = 6
 
 	@State private var picked: [Int: [String]]
 
 	init(
 		questions: [ChatQuestionItem], answers: [ChatQuestionAnswer.Answer]?,
+		note: ChatQuestionState.Note? = nil,
 		picked: [Int: [String]] = [:], onSubmit: @escaping ([Int: [String]]) -> Void,
 		onDismiss: (() -> Void)? = nil
 	) {
 		self.onDismiss = onDismiss
 		self.questions = questions
 		self.answers = answers
+		self.note = note
 		self.onSubmit = onSubmit
 		_picked = State(initialValue: picked)
 	}
 
 	var body: some View {
 		if let answers {
-			// Answered by typing or dismissed: nothing to summarise, so nothing is drawn.
-			if !answers.isEmpty { answeredSummary(answers) }
+			// Answered by typing or dismissed with no record of who: nothing to summarise.
+			if !answers.isEmpty || note != nil { answeredSummary(answers) }
 		} else {
 			VStack(alignment: .leading, spacing: MaskinSpace.s8) {
 				ForEach(questions) { question in
@@ -120,14 +127,16 @@ struct QuestionOptionsView: View {
 
 	private func group(_ question: ChatQuestionItem) -> some View {
 		let chosen = picked[question.index] ?? []
+		let text = QuestionTextSplit(question.question)
 		return VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 			VStack(alignment: .leading, spacing: MaskinSpace.s2) {
 				Text(question.header.uppercased()).maskinText(.microLabel).foregroundStyle(MaskinColor.ink4)
-				Text(question.question).maskinText(.headline).foregroundStyle(MaskinColor.ink)
+				Text(text.lead).maskinText(.headline).foregroundStyle(MaskinColor.ink)
 					.fixedSize(horizontal: false, vertical: true)
 			}
 			.accessibilityElement(children: .combine)
 			.accessibilityAddTraits(.isHeader)
+			if let detail = text.detail { CutText(text: detail, lines: Self.detailLines) }
 			VStack(spacing: MaskinSpace.s4) {
 				ForEach(question.options, id: \.self) { option in
 					let isChosen = chosen.contains(option.label)
@@ -165,20 +174,38 @@ struct QuestionOptionsView: View {
 		picked[question.index] = current
 	}
 
-	private func answeredSummary(_ answers: [ChatQuestionAnswer.Answer]) -> some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s2) {
-			ForEach(questions) { question in
-				let selection = answers.first { $0.header == question.header }?.selected ?? []
-				HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s3) {
-					Image(systemName: "checkmark.circle.fill").foregroundStyle(MaskinColor.doneFg)
-						.accessibilityHidden(true)
-					Text("\(question.header): \(selection.joined(separator: ", "))")
-						.maskinText(.subhead).foregroundStyle(MaskinColor.ink3)
-				}
-				.accessibilityElement(children: .combine)
-			}
+	/// One quiet row per answered question: what was asked and what was picked (or typed), then who
+	/// answered and when. A question the answer does not cover is left out.
+	@ViewBuilder private func answeredSummary(_ answers: [ChatQuestionAnswer.Answer]) -> some View {
+		let rows = questions.enumerated().compactMap { offset, question -> (String, String)? in
+			let picks = answers.first { $0.header == question.header }?.selected ?? []
+			let reply = picks.isEmpty ? (offset == 0 ? note?.text : nil) : picks.joined(separator: ", ")
+			guard let reply, !reply.isEmpty else { return nil }
+			return (QuestionTextSplit(question.question).lead, reply)
 		}
-		.padding(.top, MaskinSpace.s2)
+		if !rows.isEmpty {
+			VStack(alignment: .leading, spacing: MaskinSpace.s2) {
+				ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+					HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s3) {
+						Image(systemName: "checkmark.circle.fill").foregroundStyle(MaskinColor.doneFg)
+							.accessibilityHidden(true)
+						Text("\(row.0) \(row.1)")
+							.maskinText(.subhead).foregroundStyle(MaskinColor.ink3)
+					}
+					.accessibilityElement(children: .combine)
+				}
+				if let byline { Text(byline).maskinText(.caption).foregroundStyle(MaskinColor.ink4) }
+			}
+			.padding(.top, MaskinSpace.s2)
+		}
+	}
+
+	/// "Sam, 08:04": who answered and when, when the row knows. The time follows the chat's clock
+	/// rule (as on the web): the time today, the weekday within a week, the date beyond.
+	private var byline: String? {
+		guard let note else { return nil }
+		let time = note.date.map { RelativeTimeFormatter.string(for: $0, style: .clock) }
+		return [note.actorName, time].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", ")
 	}
 }
 
@@ -235,5 +262,64 @@ private struct QuestionOptionStyle: ButtonStyle {
 
 	private var border: Color {
 		chosen ? .clear : (recommended ? MaskinColor.ruleStrong : MaskinSurface.line)
+	}
+}
+
+/// Running text cut after `lines` lines, faded into the card, with Show all / Show less when there is
+/// more. Text that fits shows in full with no button. The full text is measured by a hidden copy, so
+/// no character count stands in for the layout.
+private struct CutText: View {
+	let text: String
+	let lines: Int
+	@State private var expanded = false
+	@State private var fullHeight: CGFloat = 0
+	@State private var cutHeight: CGFloat = 0
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+	/// `cutHeight` only follows the text while it is cut, so it keeps the cut height once opened.
+	private var isCut: Bool { fullHeight > cutHeight + 1 }
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: 0) {
+			Text(text).maskinText(.subhead).foregroundStyle(MaskinColor.ink)
+				.lineLimit(expanded ? nil : lines)
+				.multilineTextAlignment(.leading)
+				.frame(maxWidth: .infinity, alignment: .leading)
+				.onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { if !expanded { cutHeight = $0 } }
+				.background(alignment: .top) {
+					Text(text).maskinText(.subhead).fixedSize(horizontal: false, vertical: true)
+						.frame(maxWidth: .infinity, alignment: .leading)
+						.hidden()
+						.onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { fullHeight = $0 }
+				}
+				.overlay(alignment: .bottom) {
+					if isCut && !expanded {
+						LinearGradient(
+							colors: [MaskinSurface.card.opacity(0), MaskinSurface.card], startPoint: .top, endPoint: .bottom
+						)
+						.frame(height: MaskinSpace.s11)
+						.allowsHitTesting(false)
+					}
+				}
+			if isCut {
+				Button {
+					MaskinHaptics.play(.light)
+					if reduceMotion { expanded.toggle() } else { withAnimation(MaskinMotion.standard) { expanded.toggle() } }
+				} label: {
+					HStack(spacing: MaskinSpace.s3) {
+						Text(expanded ? "Show less" : "Show all")
+						Image(systemName: "chevron.down").maskinSymbol(MaskinFontSize.t12, weight: .semibold)
+							.rotationEffect(.degrees(expanded ? 180 : 0))
+					}
+					.maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.ink3)
+					.frame(minHeight: MaskinSpace.touchMin, alignment: .leading)
+					.contentShape(Rectangle())
+				}
+				.buttonStyle(.maskinPressed)
+				.accessibilityValue(expanded ? "Expanded" : "Collapsed")
+			}
+		}
+		.accessibilityElement(children: .contain)
+		.accessibilityLabel("Text to review")
 	}
 }

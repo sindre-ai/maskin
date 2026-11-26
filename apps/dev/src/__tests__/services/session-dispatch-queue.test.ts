@@ -27,6 +27,8 @@ type SessionRow = {
 	result: unknown
 	completedAt: Date | null
 	updatedAt: Date
+	attemptNumber?: number
+	retryAt?: Date | null
 }
 
 type EventRow = {
@@ -283,6 +285,8 @@ vi.mock('@maskin/db/schema', () => {
 			containerId: col('containerId'),
 			agentServerId: col('agentServerId'),
 			result: col('result'),
+			attemptNumber: col('attemptNumber'),
+			retryAt: col('retryAt'),
 			// Columns settleSession's usage overlay names via `sql\`\`` — the
 			// fake DB never applies the SQL delta, but the column stubs still
 			// need to exist so the template interpolation doesn't reference
@@ -337,6 +341,8 @@ function aSessionRow(overrides: Partial<SessionRow> = {}): SessionRow {
 		result: null,
 		completedAt: null,
 		updatedAt: new Date('2026-06-12T07:59:00Z'),
+		attemptNumber: 1,
+		retryAt: null,
 		...overrides,
 	}
 }
@@ -510,6 +516,51 @@ describe('SessionDispatchQueue.tick — outcomes', () => {
 		expect(result.failure_reason.verbatim_output).toContain('still failing')
 
 		expect(appendSystemLog).toHaveBeenCalledWith(session.id, result.failure_reason.human_message)
+	})
+
+	it('re-queues a first attempt that never started, once, about 10 minutes later', async () => {
+		const row = aDispatchRow({ attempt: 2, maxAttempts: 3 })
+		const { db, sessionRows } = makeFakeDb({
+			dispatchRows: [row],
+			sessionRows: [aSessionRow({ attemptNumber: 1 })],
+		})
+		const queue = makeQueue(db, async () => ({ kind: 'transient_failure', error: 'refused' }))
+
+		const before = Date.now()
+		await queue.tick()
+
+		const session = sessionRows[0]
+		expect(session?.status).toBe('failed')
+		const retryMs = session?.retryAt?.getTime() ?? 0
+		expect(retryMs).toBeGreaterThanOrEqual(before + 10 * 60_000)
+		expect(retryMs).toBeLessThanOrEqual(Date.now() + 10 * 60_000)
+	})
+
+	it('does not re-queue a rerun that fails to start again', async () => {
+		const row = aDispatchRow({ attempt: 2, maxAttempts: 3 })
+		const { db, sessionRows } = makeFakeDb({
+			dispatchRows: [row],
+			sessionRows: [aSessionRow({ attemptNumber: 2 })],
+		})
+		const queue = makeQueue(db, async () => ({ kind: 'transient_failure', error: 'refused' }))
+
+		await queue.tick()
+
+		expect(sessionRows[0]?.status).toBe('failed')
+		expect(sessionRows[0]?.retryAt).toBeNull()
+	})
+
+	it('does not re-queue a permanent failure', async () => {
+		const { db, sessionRows } = makeFakeDb({
+			dispatchRows: [aDispatchRow()],
+			sessionRows: [aSessionRow({ attemptNumber: 1 })],
+		})
+		const queue = makeQueue(db, async () => ({ kind: 'permanent_failure', error: 'bad request' }))
+
+		await queue.tick()
+
+		expect(sessionRows[0]?.status).toBe('failed')
+		expect(sessionRows[0]?.retryAt).toBeNull()
 	})
 
 	it('still marks the session failed when the system-log write throws', async () => {

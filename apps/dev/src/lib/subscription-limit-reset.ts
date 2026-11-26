@@ -407,6 +407,13 @@ function clamp(candidateMs: number, nowMs: number): number | null {
  */
 export const MAX_RETRY_ATTEMPTS = 5
 
+/**
+ * Set on the config of a session the scheduler restarts after a Claude limit. Such a retry runs on
+ * a subscription login or not at all: the workspace API key, a custom endpoint and the funded plan
+ * are routes the first run did not choose, and the first one has no credit to give.
+ */
+export const RETRY_SUBSCRIPTION_ONLY_CONFIG_KEY = 'retry_subscription_only'
+
 const NO_RESET_RETRY_BACKOFF_MS = 30 * 60 * 1000
 // weekly_limit and opus_limit are left out on purpose: 5 attempts 30 minutes apart span 2.5
 // hours and cannot outlast a weekly reset, so a blind retry would only burn attempts.

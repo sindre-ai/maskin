@@ -6,14 +6,14 @@ import {
 	typeIconOf,
 	typeTileClass,
 } from '@/components/chat/linked-card-face'
-import { LOOP_PILL_STYLES } from '@/components/loops/loop-pill'
+import { loopPillStyle } from '@/components/loops/loop-pill'
 import { loopActivityLine } from '@/components/loops/loop-row'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { RelativeTime, formatRelative } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TRIGGER_TYPE_ICON, describeTrigger } from '@/components/triggers/trigger-row'
 import { Sheet, SheetClose, SheetContent, SheetTitle } from '@/components/ui/sheet'
-import { useActors } from '@/hooks/use-actors'
+import { useActorRecheck, useActors } from '@/hooks/use-actors'
 import { useLinkedChat } from '@/hooks/use-linked-chat'
 import { useLoop } from '@/hooks/use-loops'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
@@ -1108,7 +1108,7 @@ export function LoopReferenceChip({
 	}
 
 	const name = loop.name?.trim() || 'Untitled flow'
-	const state = LOOP_PILL_STYLES[loop.pill].label.toLowerCase()
+	const state = loopPillStyle(loop.pill).label.toLowerCase()
 	return (
 		<ChipPreview card={card} sheet={sheet} enabled>
 			<Link
@@ -1157,7 +1157,7 @@ export function LoopReferenceCard({
 		return <UnavailableCard shell={shell} marker={marker} kind="loop" />
 	}
 
-	const pill = LOOP_PILL_STYLES[loop.pill]
+	const pill = loopPillStyle(loop.pill)
 	const snippet = plainSnippet(loop.content)
 	const activity = loopActivityLine(loop)
 	const agentNames = agents.map((agent) => agent.name).join(', ')
@@ -1373,14 +1373,16 @@ export function TriggerReferenceCard({
 /**
  * What the app knows of a linked agent, read from the workspace's actor list and the sessions list
  * the sidebar uses (the 100 newest), so a link costs no request of its own. `loading` until both
- * are in, `gone` when the actor is not on the list, `person` when the address points at a human
+ * are in, `gone` when the actor is not on the list even after the list was read once more (an agent
+ * made seconds ago is not in the cached list yet), `person` when the address points at a human
  * (that stays a plain link). A connected tool is a system actor: it is never working.
  */
 function useLinkedAgent(workspaceId: string, agentId: string) {
 	const { data: actors } = useActors(workspaceId, { enabled: true })
 	const { data: sessions, isLoading } = useWorkspaceSessions(workspaceId)
-	if (!actors || isLoading) return { state: 'loading' as const }
-	const actor: ActorListItem | undefined = actors.find((a) => a.id === agentId)
+	const actor: ActorListItem | undefined = actors?.find((a) => a.id === agentId)
+	const { checking } = useActorRecheck(workspaceId, agentId, !!actors && !actor)
+	if (!actors || isLoading || checking) return { state: 'loading' as const }
 	if (!actor) return { state: 'gone' as const }
 	if (actor.type === 'human') return { state: 'person' as const }
 	const own = (sessions ?? []).filter((s) => s.actorId === agentId)

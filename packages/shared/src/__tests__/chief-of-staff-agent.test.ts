@@ -126,7 +126,7 @@ describe('CONTINUOUS_ONBOARDING_SKILL', () => {
 
 	it('recommends only from the catalog, as an Install link, and never installs', () => {
 		expect(content).toContain('Never recommend something that is not in the catalog')
-		expect(content).toContain('NEVER call it with a loop id or confirm')
+		expect(content).toContain('NEVER call install_loop')
 		expect(content).toContain('Install is a link, not a button in the chat')
 	})
 

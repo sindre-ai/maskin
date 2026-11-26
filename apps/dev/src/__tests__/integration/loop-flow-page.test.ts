@@ -106,7 +106,7 @@ describe('Flow page reads: next steps and briefings (real Postgres)', () => {
 			const two = await insertTrigger(db, workspaceId, actorId, quill.id, { name: 'Two waiting' })
 			const loop = await insertObject(db, workspaceId, actorId, {
 				type: 'loop',
-				status: 'learning',
+				status: 'pilot',
 				title: 'Flow',
 				// Spine order: quiet, one, two. Two has more waiting so it leads.
 				metadata: { trigger_ids: [quiet.id, one.id, two.id] },
@@ -159,7 +159,7 @@ describe('Flow page reads: next steps and briefings (real Postgres)', () => {
 		it('caps the open members at 10', async () => {
 			const loop = await insertObject(db, workspaceId, actorId, {
 				type: 'loop',
-				status: 'learning',
+				status: 'pilot',
 			})
 			for (let i = 0; i < 12; i++) {
 				const member = await insertObject(db, workspaceId, actorId, {
@@ -176,7 +176,7 @@ describe('Flow page reads: next steps and briefings (real Postgres)', () => {
 		it("uses the flow's own closed rules, and counts a member without the rule field as open", async () => {
 			const loop = await insertObject(db, workspaceId, actorId, {
 				type: 'loop',
-				status: 'learning',
+				status: 'pilot',
 				metadata: {
 					closed_statuses: { task: ['parked'] },
 					closed_when: { insight: ['loop_stage=live'] },
@@ -229,7 +229,7 @@ describe('Flow page reads: next steps and briefings (real Postgres)', () => {
 			const trig = await insertTrigger(db, other.id, actorId, relay.id)
 			const foreign = await insertObject(db, other.id, actorId, {
 				type: 'loop',
-				status: 'learning',
+				status: 'pilot',
 				metadata: { trigger_ids: [trig.id] },
 			})
 			await insertSession(db, other.id, relay.id, actorId, {
@@ -248,7 +248,7 @@ describe('Flow page reads: next steps and briefings (real Postgres)', () => {
 			// A member from another workspace linked into a flow here stays out.
 			const loop = await insertObject(db, workspaceId, actorId, {
 				type: 'loop',
-				status: 'learning',
+				status: 'pilot',
 			})
 			await addToLoop(loop.id, foreignMember.id)
 			expect((await read<NextSteps>(`/api/loops/${loop.id}/next-steps`)).items).toEqual([])
@@ -283,7 +283,7 @@ describe('Flow page reads: next steps and briefings (real Postgres)', () => {
 		it('lists briefing pages attached to the flow or a member, newest first, each once', async () => {
 			const loop = await insertObject(db, workspaceId, actorId, {
 				type: 'loop',
-				status: 'learning',
+				status: 'pilot',
 				title: 'Weekly review',
 			})
 			const member = await insertObject(db, workspaceId, actorId, {
@@ -325,11 +325,11 @@ describe('Flow page reads: next steps and briefings (real Postgres)', () => {
 		it('leaves out other kinds of file, other flows, and other workspaces', async () => {
 			const loop = await insertObject(db, workspaceId, actorId, {
 				type: 'loop',
-				status: 'learning',
+				status: 'pilot',
 			})
 			const otherLoop = await insertObject(db, workspaceId, actorId, {
 				type: 'loop',
-				status: 'learning',
+				status: 'pilot',
 			})
 			const notMember = await insertObject(db, workspaceId, actorId, { type: 'task' })
 			await addToLoop(otherLoop.id, notMember.id)
@@ -344,7 +344,7 @@ describe('Flow page reads: next steps and briefings (real Postgres)', () => {
 			const other = await insertWorkspace(db, actorId)
 			const foreignLoop = await insertObject(db, other.id, actorId, {
 				type: 'loop',
-				status: 'learning',
+				status: 'pilot',
 			})
 			const foreignPage = await addFile(other.id, { name: 'foreign.html' })
 			await attach(foreignLoop.id, foreignPage.id)

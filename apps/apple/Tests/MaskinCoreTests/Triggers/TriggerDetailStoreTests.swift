@@ -8,7 +8,8 @@ import Testing
 struct TriggerDescriberTests {
 	@Test("describes event, cron and reminder triggers")
 	func describes() {
-		#expect(trig("a", kind: .cron).summary == "Runs every day at 9:00 AM UTC")
+		// 09:00 UTC is 10:00 in Copenhagen winter time and 11:00 in summer time.
+		#expect(["Runs every day at 10:00", "Runs every day at 11:00"].contains(trig("a", kind: .cron).summary))
 		#expect(trig("a", kind: .cron, config: .object([:])).summary == "Runs on a schedule")
 		#expect(
 			trig("a", kind: .event, config: .object(["entity_type": .string("bet"), "action": .string("created")])).summary

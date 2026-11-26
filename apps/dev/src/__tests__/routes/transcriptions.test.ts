@@ -6,8 +6,11 @@ import { createTestContext, withTestEnv } from '../setup'
 
 const { default: transcriptionsRoutes } = await import('../../routes/transcriptions')
 
+const WORKSPACE_ID = '00000000-0000-4000-8000-000000000001'
+
 // authMiddleware puts the caller's role on the context when X-Workspace-Id is
-// sent; the test app stands in for that with an X-Test-Role header.
+// sent; the test app stands in for that with an X-Test-Role header, and sends
+// X-Workspace-Id too because the route reads it for the spend event.
 function post(body: unknown, role: string | null = 'member') {
 	const app = new OpenAPIHono()
 	const { db } = createTestContext()
@@ -22,7 +25,12 @@ function post(body: unknown, role: string | null = 'member') {
 	)
 	app.route('/api/transcriptions', transcriptionsRoutes as never)
 	return app.request(
-		jsonRequest('POST', '/api/transcriptions', body, role ? { 'X-Test-Role': role } : {}),
+		jsonRequest(
+			'POST',
+			'/api/transcriptions',
+			body,
+			role ? { 'X-Test-Role': role, 'X-Workspace-Id': WORKSPACE_ID } : {},
+		),
 	)
 }
 

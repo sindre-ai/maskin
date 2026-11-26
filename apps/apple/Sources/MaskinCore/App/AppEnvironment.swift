@@ -18,23 +18,31 @@ public final class AppEnvironment {
 	public let auth: AuthSession
 	public let workspaces: WorkspaceStore
 	public let client: Client
+	/// A client on the host the web app is served from, for the one call that cannot move to the
+	/// API host: starting an integration connect. The server sets the OAuth state cookie on the host
+	/// that answered, and the provider's callback lands on the web host, so the connect call has to
+	/// be made there. The same as `client` when no separate host is configured.
+	public let connectClient: Client
 	public let events: EventHub
 
 	public init(
 		baseURL: URL, clientSource: String, auth: AuthSession, workspaces: WorkspaceStore,
-		client: Client, events: EventHub
+		client: Client, events: EventHub, connectClient: Client? = nil
 	) {
 		self.baseURL = baseURL
 		self.clientSource = clientSource
 		self.auth = auth
 		self.workspaces = workspaces
 		self.client = client
+		self.connectClient = connectClient ?? client
 		self.events = events
 	}
 
-	/// The real wiring. `clientSource` is `ios` / `macos` / `watchos` / `tvos`.
+	/// The real wiring. `clientSource` is `ios` / `macos` / `watchos` / `tvos`. `connectBaseURL` is
+	/// the web host when `baseURL` is the API host that skips the Cloudflare Worker (see
+	/// `connectClient`); nil keeps every call on `baseURL`.
 	public convenience init(
-		baseURL: URL, clientSource: String, secretStore: any SecretStore
+		baseURL: URL, clientSource: String, secretStore: any SecretStore, connectBaseURL: URL? = nil
 	) {
 		let auth = AuthSession(
 			authenticator: APIAuthenticator(serverURL: baseURL, clientSource: clientSource),
@@ -44,6 +52,11 @@ public final class AppEnvironment {
 		let client = MaskinClient.make(
 			serverURL: baseURL, clientSource: clientSource, credentials: credentials,
 			onUnauthorized: { [weak auth] key in await auth?.sessionRejected(apiKey: key) })
+		let connectClient = connectBaseURL.map {
+			MaskinClient.make(
+				serverURL: $0, clientSource: clientSource, credentials: credentials,
+				onUnauthorized: { [weak auth] key in await auth?.sessionRejected(apiKey: key) })
+		}
 		DictationBackend.service = APIBackendDictation(client: client)
 		let events = EventHub(baseURL: baseURL, clientSource: clientSource, credentials: credentials)
 		events.onUnauthorized = { [weak auth] key in
@@ -54,7 +67,7 @@ public final class AppEnvironment {
 			baseURL: baseURL, clientSource: clientSource, auth: auth,
 			workspaces: WorkspaceStore(
 				source: APIWorkspaceSource(client: client), auth: auth, disk: .shared),
-			client: client, events: events)
+			client: client, events: events, connectClient: connectClient)
 	}
 
 	/// The selected workspace id, if signed in.

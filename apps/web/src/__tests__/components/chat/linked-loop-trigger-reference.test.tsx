@@ -185,18 +185,19 @@ describe('TriggerReferenceCard', () => {
 	})
 
 	it('never shows the instruction text or the raw schedule', () => {
-		// A weekday range is a schedule the app cannot put into words; the row would echo it raw.
-		useTrigger.mockReturnValue(found(triggerRow()))
+		// A step inside a weekday window is a schedule the app cannot put into words.
+		useTrigger.mockReturnValue(found(triggerRow({ config: { expression: '*/15 9-17 * * 1-5' } })))
 		const { container } = renderCard()
 		expect(container.textContent).not.toContain('SECRET INSTRUCTION TEXT')
-		expect(container.textContent).not.toContain('0 9 * * 1-5')
+		expect(container.textContent).not.toContain('*/15 9-17 * * 1-5')
 		expect(screen.getByText('Runs on a schedule')).toBeInTheDocument()
 	})
 
 	it('describes a schedule the app can put into words', () => {
 		useTrigger.mockReturnValue(found(triggerRow({ config: { expression: '0 9 * * *' } })))
 		renderCard()
-		expect(screen.getByText(/^Runs every day at 9:00/i)).toBeInTheDocument()
+		// 09:00 UTC is 10:00 or 11:00 in Copenhagen, depending on the season.
+		expect(screen.getByText(/^Runs every day at 1[01]:00$/)).toBeInTheDocument()
 	})
 
 	it('reads Off muted for a trigger that is off', () => {
@@ -233,13 +234,13 @@ describe('LoopReferenceChip', () => {
 	})
 
 	it('reads kind, state and name as one link, with only the icon and name on the plate', () => {
-		useLoop.mockReturnValue(found(loopRow({ pill: 'fully_autonomous' })))
+		useLoop.mockReturnValue(found(loopRow({ pill: 'live' })))
 		renderChip()
-		const link = screen.getByRole('link', { name: 'Flow, fully autonomous: Nightly triage' })
+		const link = screen.getByRole('link', { name: 'Flow, live: Nightly triage' })
 		expect(link).toHaveTextContent(/^\u2060?Nightly triage$/)
 		expect(link.className).toContain('bg-muted')
 		expect(link.querySelector('svg')).not.toBeNull()
-		expect(screen.queryByText('fully autonomous')).not.toBeInTheDocument()
+		expect(screen.queryByText('live')).not.toBeInTheDocument()
 		expect(screen.queryByText('the original link')).not.toBeInTheDocument()
 	})
 

@@ -3,6 +3,7 @@ import { useActors } from '@/hooks/use-actors'
 import { useObject } from '@/hooks/use-objects'
 import type { NextStep } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { COPENHAGEN_TIME_ZONE } from '@/lib/cron'
 import { Link } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
 
@@ -12,7 +13,8 @@ export function isNextStepOverdue(step: Pick<NextStep, 'status' | 'due_at'>, now
 }
 
 function formatDue(iso: string): string {
-	return new Date(iso).toLocaleString(undefined, {
+	return new Date(iso).toLocaleString('en-GB', {
+		timeZone: COPENHAGEN_TIME_ZONE,
 		weekday: 'short',
 		day: 'numeric',
 		month: 'short',

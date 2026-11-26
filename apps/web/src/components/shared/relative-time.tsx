@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react'
 // ("2h", "1d", "4d"), so the unit stands alone with no "ago" suffix and dates
 // older than a month collapse to a day/month token ("Jan 15") rather than a
 // full locale date that would never fit.
-function formatCompact(date: Date, dayLimit: number): string {
+export function formatCompact(date: Date, dayLimit: number): string {
 	const diff = Date.now() - date.getTime()
 	const minutes = Math.floor(diff / 60_000)
 	const hours = Math.floor(minutes / 60)

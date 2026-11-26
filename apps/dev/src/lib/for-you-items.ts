@@ -16,6 +16,7 @@ import {
 } from './for-you-visibility'
 import { objectResponseSchema } from './openapi-schemas'
 import { serialize } from './serialize'
+import { liveYoutubeCards, youtubeActionIdOf } from './youtube/for-you'
 
 /** Decision cards older than this are not live asks any more; the scan also stays bounded. */
 const DECISION_WINDOW_DAYS = 14
@@ -123,15 +124,19 @@ export async function buildForYouItems(
 		.orderBy(desc(events.id))
 		.limit(DECISION_SCAN_LIMIT)
 
-	// Newest decision per object; the rows arrive newest first.
+	// Newest decision per object; the rows arrive newest first. A YouTube change card is its own
+	// ask, one per held action, so it never replaces or is replaced by another card on its object.
 	const latestDecisionByEntity = new Map<string, typeof events.$inferSelect>()
 	for (const { event } of decisionRows) {
-		if (curatedEntityIds.has(event.entityId)) continue
-		if (!latestDecisionByEntity.has(event.entityId))
-			latestDecisionByEntity.set(event.entityId, event)
+		const youtubeActionId = youtubeActionIdOf(event)
+		if (!youtubeActionId && curatedEntityIds.has(event.entityId)) continue
+		const key = youtubeActionId ? `youtube:${youtubeActionId}` : event.entityId
+		if (!latestDecisionByEntity.has(key)) latestDecisionByEntity.set(key, event)
 	}
 
-	const decisionEntityIds = [...latestDecisionByEntity.keys()]
+	const decisionEntityIds = [
+		...new Set([...latestDecisionByEntity.values()].map((event) => event.entityId)),
+	]
 	const decisionIds = [...latestDecisionByEntity.values()].map((e) => Number(e.id))
 	const [decisionObjects, viewerReplies, dismissedIds, withdrawnIds] = decisionEntityIds.length
 		? await Promise.all([
@@ -177,7 +182,7 @@ export async function buildForYouItems(
 		...stampedObjects.map((o) => [o.id, o.status] as const),
 	])
 
-	const liveDecisions = [...latestDecisionByEntity.values()].filter((event) => {
+	const liveCandidates = [...latestDecisionByEntity.values()].filter((event) => {
 		// Withdrawn by its writer or the Chief of Staff. Dropped after the newest decision per
 		// object is picked, so an older decision on the same object does not take its place.
 		if (withdrawnIds.has(Number(event.id))) return false
@@ -201,6 +206,9 @@ export async function buildForYouItems(
 		// dismissed it. Reading the object or commenting elsewhere on it does neither.
 		return !isCardAnswered(event, viewerReplies) && !dismissedIds.has(Number(event.id))
 	})
+	// A YouTube change card also goes once its held action is decided or has run out of time, and
+	// is drawn from the stored action rather than from the event.
+	const liveDecisions = await liveYoutubeCards(db, workspaceId, liveCandidates)
 
 	const rankBase = curatedItems.reduce((max, i) => Math.max(max, i.rank), 0)
 	const decisionItems = liveDecisions.map((event, index) => {

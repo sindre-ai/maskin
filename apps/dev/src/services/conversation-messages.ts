@@ -7,6 +7,7 @@ import { fileIdsInText, linkFilesToConversation } from '../lib/conversation-file
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import { resolveCardFromAnswerMessage } from './card-resolution'
+import { messageNeedsPerson, reopenArchivedChat } from './chat-needs-person'
 import { notifyChatMention, notifyChatReply, resolveAnsweredQuestions } from './chat-notifications'
 
 export type InsertConversationMessageArgs = {
@@ -84,6 +85,12 @@ export async function insertConversationMessage(
 		.update(conversations)
 		.set({ lastMessageAt: created.createdAt ?? new Date(), updatedAt: new Date() })
 		.where(eq(conversations.id, args.conversationId))
+
+	// A question, request card or failed-turn notice needs the person: a chat they marked Done comes
+	// back to their list before anything is pushed for it.
+	if ((args.kind ?? 'message') === 'message' && messageNeedsPerson(args.metadata)) {
+		await reopenArchivedChat(db, args.conversationId)
+	}
 
 	await recordEvent(db, {
 		workspaceId: args.workspaceId,

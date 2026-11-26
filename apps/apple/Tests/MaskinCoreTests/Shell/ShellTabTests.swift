@@ -80,7 +80,7 @@ struct SettingsPageRowTests {
 		#expect(SettingsPageRow.rows(in: .account, hasWorkspace: true).map(\.title) == ["Account", "Billing"])
 		#expect(
 			SettingsPageRow.rows(in: .preferences, hasWorkspace: true).map(\.title)
-				== ["Notifications", "App lock", "Sign in a device"])
+				== ["Notifications", "Permissions", "App lock", "Sign in a device"])
 		#expect(
 			SettingsPageRow.rows(in: .workspace, hasWorkspace: true).map(\.title)
 				== ["Members", "Integrations", "Triggers", "Files"])

@@ -1,4 +1,5 @@
 import CoreSpotlight
+import MaskinAPI
 import MaskinCore
 import MaskinFeatures
 import SwiftUI
@@ -26,19 +27,26 @@ struct MaskinApp: App {
 				let session = try? JSONDecoder().decode(StoredSession.self, from: Data(raw.utf8))
 			{
 				let environment = AppEnvironment(
-					baseURL: apiBaseURL, clientSource: source, secretStore: InMemorySecretStore())
+					baseURL: apiBaseURL, clientSource: source, secretStore: InMemorySecretStore(),
+					connectBaseURL: connectBaseURL)
 				try? environment.auth.adopt(session)
 				return environment
 			}
 		#endif
 		let environment = AppEnvironment(
-			baseURL: apiBaseURL, clientSource: source, secretStore: KeychainSecretStore())
+			baseURL: apiBaseURL, clientSource: source, secretStore: KeychainSecretStore(),
+			connectBaseURL: connectBaseURL)
 		environment.auth.restore()
 		return environment
 	}
 
 	init() {
 		Perf.event("app.init")
+		// Crash and error reports (Sentry, project maskin-ios). Nil in debug builds, tests and any build
+		// without an address; then every report is a no-op. Started first so a crash during launch counts.
+		let errorSink = SentrySink.forThisBuild()
+		errorSink?.start()
+		ErrorReporter.shared.configure(sink: errorSink)
 		#if os(macOS)
 			let source = "macos"
 			let platform = DevicePlatform.macos
@@ -76,6 +84,10 @@ struct MaskinApp: App {
 				pushDelegate.attach(registrar: push, router: runtime.router)
 				// Siri / Shortcuts / Spotlight open threads through the same deep-link router.
 				IntentDeepLinkRelay.attach(openAgent: { runtime.openAgent($0) }) { runtime.router.open($0) }
+				// A tap on the home screen icon's menu; dropped when nobody is signed in.
+				HomeScreenQuickActionRelay.attach { action in
+					if environment.auth.session != nil { runtime.perform(action) }
+				}
 				#if os(iOS)
 					// The wrist's offline copy of Needs you, the briefing and the flows.
 					watchPublisher?.stop()
@@ -102,6 +114,7 @@ struct MaskinApp: App {
 				// "Agents working" activity at the signed-in workspace.
 				.onChange(of: environment.auth.session, initial: true) { _, session in
 					Analytics.shared.sessionChanged(actorId: session?.actorId, workspaceId: session?.workspaceId)
+					ErrorReporter.shared.setWorkspace(session?.workspaceId)
 					watchBridge.publish(session)
 					Task { await AgentsActivityRuntime.shared?.sessionChanged(workspaceId: session?.workspaceId) }
 					Task { await CycleActivityController.shared?.workspaceChanged(session?.workspaceId) }
@@ -183,5 +196,12 @@ struct MaskinApp: App {
 	private static var apiBaseURL: URL {
 		let raw = Bundle.main.object(forInfoDictionaryKey: "MaskinAPIBaseURL") as? String
 		return raw.flatMap(URL.init(string:)) ?? URL(string: "https://maskin.io")!
+	}
+
+	/// `MASKIN_CONNECT_BASE_URL` build setting: the host that answers the integration connect call
+	/// when `MASKIN_API_BASE_URL` is a host that skips the Cloudflare Worker. Empty keeps one host.
+	private static var connectBaseURL: URL? {
+		let raw = Bundle.main.object(forInfoDictionaryKey: "MaskinConnectBaseURL") as? String
+		return raw.flatMap { $0.isEmpty ? nil : URL(string: $0) }
 	}
 }

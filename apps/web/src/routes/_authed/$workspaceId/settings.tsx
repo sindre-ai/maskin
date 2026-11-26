@@ -1,6 +1,7 @@
 import { PageHeader } from '@/components/layout/page-header'
 import { SettingsPageTitle } from '@/components/settings/settings-page-title'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, Outlet, createFileRoute, useMatchRoute } from '@tanstack/react-router'
@@ -24,6 +25,8 @@ interface SettingsNavItem {
 		| '/$workspaceId/settings/notifications'
 		| '/$workspaceId/settings/keys'
 		| '/$workspaceId/settings/keychain'
+		| '/$workspaceId/settings/send-permissions'
+		| '/$workspaceId/settings/dinero-review'
 	exact?: boolean
 }
 
@@ -54,17 +57,40 @@ const keychainNavItem: SettingsNavItem = {
 	to: '/$workspaceId/settings/keychain',
 }
 
+// Send permissions is listed only while its flag is on. The route reads the flag too.
+const sendPermissionsNavItem: SettingsNavItem = {
+	label: 'Send permissions',
+	to: '/$workspaceId/settings/send-permissions',
+}
+
+// Dinero review is listed only while its flag is on, and only for an admin or owner. The route reads
+// the flag too.
+const dineroReviewNavItem: SettingsNavItem = {
+	label: 'Dinero review',
+	to: '/$workspaceId/settings/dinero-review',
+}
+
 function SettingsLayout() {
 	useDocumentTitle('Settings')
 	const { workspace, workspaceId } = useWorkspace()
 	const matchRoute = useMatchRoute()
+	const sendPermissionsEnabled = useFeatureFlag('send-permissions-screen')
+	const dineroReviewEnabled =
+		useFeatureFlag('dinero-review-screen') &&
+		(workspace?.role === 'owner' || workspace?.role === 'admin')
 	const isGeneral = !!matchRoute({ to: '/$workspaceId/settings', params: { workspaceId } })
 	const groups: { label: string; items: SettingsNavItem[] }[] = [
 		{ label: 'Workspace', items: WORKSPACE_NAV },
 		{ label: 'Agents', items: AGENTS_NAV },
 		{
 			label: 'Access',
-			items: [...ACCESS_NAV, keychainNavItem, ...(workspace?.enterprise ? [keysNavItem] : [])],
+			items: [
+				...ACCESS_NAV,
+				keychainNavItem,
+				...(sendPermissionsEnabled ? [sendPermissionsNavItem] : []),
+				...(dineroReviewEnabled ? [dineroReviewNavItem] : []),
+				...(workspace?.enterprise ? [keysNavItem] : []),
+			],
 		},
 	]
 	const isItemActive = (item: SettingsNavItem) =>

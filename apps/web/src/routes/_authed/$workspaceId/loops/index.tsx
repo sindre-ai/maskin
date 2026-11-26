@@ -12,6 +12,7 @@ import type { DisplayFilterSectionModel } from '@/components/objects/data-table/
 import { DisplayPanel } from '@/components/objects/data-table/display-panel'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { EmptyState } from '@/components/shared/empty-state'
+import { FilterTabs } from '@/components/shared/filter-tabs'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { PageSearchInput } from '@/components/shared/page-search-input'
 import { QueryStateError } from '@/components/shared/query-state'
@@ -26,6 +27,7 @@ import { useCanWrite } from '@/hooks/use-can-write'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useLoops } from '@/hooks/use-loops'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { sortByRank, usePageSearchRank } from '@/hooks/use-page-search-rank'
 import { usePlanUsage } from '@/hooks/use-plan-usage'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import { useTriggers } from '@/hooks/use-triggers'
@@ -70,6 +72,7 @@ type LoopTab = 'all' | 'to-decide' | 'running'
 
 const NO_AREA = '__none'
 const NO_AREA_LABEL = 'No team'
+const areaLabel = (key: string) => (key === NO_AREA ? NO_AREA_LABEL : key)
 const TAB_LABEL: Record<Exclude<LoopTab, 'all'>, string> = {
 	'to-decide': 'Needs you',
 	running: 'Running',
@@ -96,7 +99,14 @@ function compareLoops(a: LoopSummary, b: LoopSummary, sort: string): number {
 
 export const Route = createFileRoute('/_authed/$workspaceId/loops/')({
 	component: LoopsRoute,
-	errorComponent: ({ error }) => <RouteError error={error} />,
+	errorComponent: ({ error, reset }) => (
+		<RouteError
+			error={error}
+			reset={reset}
+			title="This page could not load"
+			message="Something went wrong on our side. Try again, or reload the page."
+		/>
+	),
 })
 
 function LoopsRoute() {
@@ -205,30 +215,54 @@ function LoopsRoute() {
 
 	const hasLoops = sortedLoops.length > 0
 	const words = useMemo(() => query.trim().toLowerCase().split(/\s+/).filter(Boolean), [query])
+	// While words are typed the server's order wins over the Display sort, across sections too.
+	const rank = usePageSearchRank(workspaceId, query, 'loop')
 	const visibleLoops = useMemo(
 		() =>
-			sortedLoops.filter(
-				(loop) =>
-					matchesTab(loop, tab) &&
-					(areaFilter === undefined || (loop.tags[0] ?? NO_AREA) === areaFilter) &&
-					matchesQuery(loop, words),
+			sortByRank(
+				sortedLoops.filter(
+					(loop) =>
+						matchesTab(loop, tab) &&
+						(areaFilter === undefined || (loop.tags[0] ?? NO_AREA) === areaFilter) &&
+						matchesQuery(loop, words),
+				),
+				rank,
+				(loop) => loop.id,
 			),
-		[sortedLoops, tab, areaFilter, words],
+		[sortedLoops, tab, areaFilter, words, rank],
 	)
 
-	// The Display menu's Show and Area rows. Counts come off the unfiltered list
-	// so a row's number stays put while it is the active filter.
-	const filterSections = useMemo<DisplayFilterSectionModel[]>(() => {
-		const areaCounts = new Map<string, number>()
+	// Per-tag flow counts and the tag order (A to Z, untagged last), shared by the
+	// Display menu's Area rows and the pill row above the list. Counts come off the
+	// unfiltered list so a number stays put while it is the active filter.
+	const { areaCounts, areas } = useMemo(() => {
+		const counts = new Map<string, number>()
 		for (const loop of sortedLoops) {
 			const key = loop.tags[0] ?? NO_AREA
-			areaCounts.set(key, (areaCounts.get(key) ?? 0) + 1)
+			counts.set(key, (counts.get(key) ?? 0) + 1)
 		}
-		const areas = [...areaCounts.keys()].sort((a, b) => {
+		const ordered = [...counts.keys()].sort((a, b) => {
 			if (a === NO_AREA || b === NO_AREA) return a === NO_AREA ? 1 : -1
 			return a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true })
 		})
-		const areaLabel = (key: string) => (key === NO_AREA ? NO_AREA_LABEL : key)
+		return { areaCounts: counts, areas: ordered }
+	}, [sortedLoops])
+	// Areas only exist once some flow carries a tag.
+	const hasAreas = areas.some((key) => key !== NO_AREA)
+	const areaTabs = useMemo(
+		() => [
+			{ label: 'All', value: undefined as string | undefined, count: sortedLoops.length },
+			...areas.map((key) => ({
+				label: areaLabel(key),
+				value: key as string | undefined,
+				count: areaCounts.get(key),
+			})),
+		],
+		[areas, areaCounts, sortedLoops.length],
+	)
+
+	// The Display menu's Show and Area rows.
+	const filterSections = useMemo<DisplayFilterSectionModel[]>(() => {
 		const sections: DisplayFilterSectionModel[] = [
 			{
 				id: 'show',
@@ -244,8 +278,7 @@ function LoopsRoute() {
 				})),
 			},
 		]
-		// Areas only exist once some flow carries a tag.
-		if (areas.some((key) => key !== NO_AREA)) {
+		if (hasAreas) {
 			sections.push({
 				id: 'area',
 				label: 'Area',
@@ -261,12 +294,13 @@ function LoopsRoute() {
 			})
 		}
 		return sections
-	}, [sortedLoops, tab, areaFilter])
+	}, [sortedLoops, tab, areaFilter, areas, areaCounts, hasAreas])
 	const activeFilterCount = (tab !== 'all' ? 1 : 0) + (areaFilter !== undefined ? 1 : 0)
 	// Sections follow the loops' first free-form tag (`metadata.tags`: team,
 	// business unit, ...), A to Z, untagged last. With no tags anywhere the list
 	// stays one flat run with no headers.
 	const loopGroups = useMemo(() => {
+		if (rank) return [{ label: '', items: visibleLoops }]
 		const byTag = new Map<string, LoopSummary[]>()
 		for (const loop of visibleLoops) {
 			const key = loop.tags[0] ?? ''
@@ -278,7 +312,7 @@ function LoopsRoute() {
 				return a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true })
 			})
 			.map(([label, items]) => ({ label, items }))
-	}, [visibleLoops])
+	}, [visibleLoops, rank])
 	const hasTaggedLoops = loopGroups.some((g) => g.label)
 
 	return (
@@ -326,6 +360,20 @@ function LoopsRoute() {
 				>
 					<strong className="font-bold text-foreground">{brief.lead}</strong>
 				</p>
+			)}
+			{hasAreas && !loopsLoading && (
+				// Same chips as the team row on Agents. Scrolls sideways on touch widths
+				// rather than wrapping.
+				<div className="mb-6 flex min-h-8 flex-nowrap items-center gap-2 overflow-x-auto md:flex-wrap md:overflow-visible">
+					<FilterTabs
+						variant="chip-outline"
+						aria-label="Filter flows by tag"
+						className="shrink-0 md:shrink md:flex-wrap md:overflow-visible"
+						tabs={areaTabs}
+						value={areaFilter}
+						onChange={(area) => setAreaFilter(area === areaFilter ? undefined : area)}
+					/>
+				</div>
 			)}
 			{loopsLoading ? (
 				<ListSkeleton />

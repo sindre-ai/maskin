@@ -228,22 +228,15 @@ struct ChatInteractionSnapshotTests {
 		#expect(ThreadNav.showsMemberStack(participants: [relay, sam, forge], flow: nil))
 	}
 
-	@Test("jump-to-latest, pinned strip, quick replies and the search bar render", arguments: [false, true])
+	@Test("jump-to-latest, pinned strip, and quick replies render", arguments: [false, true])
 	func chrome(dark: Bool) throws {
 		let pinned = agentMessage("Decision: we ship the importer fix on Thursday, legal has signed off on the addendum.")
 		for width in Self.widths {
-			struct SearchHost: View {
-				@State var text = "importer"
-				var body: some View {
-					ThreadSearchBar(text: $text, matchCount: 5, index: 1, onStep: { _ in }, onClose: {})
-				}
-			}
 			let view = VStack(alignment: .trailing, spacing: MaskinSpace.s7) {
 				JumpToLatest(unseen: 0) {}
 				JumpToLatest(unseen: 3) {}
 				PinnedMessageStrip(message: pinned, onOpen: {}, onUnpin: {})
 				QuickReplyChips(replies: QuickReplyRules.replies(for: .permission), onPick: { _ in })
-				SearchHost()
 			}
 			try render(view, width: width, dark: dark, name: "thread-chrome")
 		}

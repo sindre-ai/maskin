@@ -1017,11 +1017,33 @@ ${surviving}
 			expect(calls).toHaveLength(0)
 			const rows = await messagesFor(conversationId)
 			expect(rows).toHaveLength(1)
-			// The detail still reaches the human — it is the actionable part.
-			expect(rows[0]?.content).toContain('Credit balance is too low')
-			expect(
-				(rows[0]?.metadata as { final_output?: { error_kind?: string } })?.final_output?.error_kind,
-			).toBe('permanent')
+			// The body is one plain line: no provider text. The raw text stays on the message.
+			expect(rows[0]?.content).toBe('Maskin could not run this. Nothing was created.')
+			expect(rows[0]?.content).not.toContain('Credit balance is too low')
+			const output = (
+				rows[0]?.metadata as { final_output?: { error_kind?: string; error_detail?: string } }
+			)?.final_output
+			expect(output?.error_kind).toBe('permanent')
+			expect(output?.error_detail).toBe('Credit balance is too low')
+		})
+
+		it('does not say nothing was created when the failed turn ran a tool', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance } = withRetry()
+			finalizer = instance
+
+			await feed(session.id, `${userTurnLine(13)}\n`)
+			await feed(session.id, `${toolUseLine('mcp__maskin__create_objects')}\n`)
+			await feed(
+				session.id,
+				`${resultLine({ is_error: true, result: 'Credit balance is too low' })}\n`,
+			)
+			await finalizer.settlePendingRetries()
+
+			const rows = await messagesFor(conversationId)
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.content).toBe('Maskin could not run this. Some steps may already be done.')
 		})
 
 		describe('a turn that hits "Credit balance is too low"', () => {
@@ -1210,6 +1232,65 @@ ${surviving}
 			expect(stopped).toEqual([])
 		})
 
+		it('stops the session when its login expired so a retry after a token refresh starts fresh', async () => {
+			// The container keeps the login it launched with. Left running, a retry
+			// after the human refreshes the token replays on the dead login and
+			// fails the same way; a fresh session refreshes the slot at start.
+			const stopped: Array<{ sessionId: string; reason: string }> = []
+			const instance = new InteractiveTurnFinalizer(db, {
+				delay: async () => {},
+				onSubscriptionLimit: async () => null,
+				onStopSession: async (sessionId, reason) => {
+					stopped.push({ sessionId, reason })
+				},
+			})
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+
+			await feedInstance(
+				instance,
+				session.id,
+				`${resultLine({
+					is_error: true,
+					result: 'Failed to authenticate: OAuth session expired and could not be refreshed',
+				})}\n`,
+			)
+			await instance.settlePendingRetries()
+
+			expect(stopped).toEqual([{ sessionId: session.id, reason: 'login_expired' }])
+			const rows = await messagesFor(conversationId)
+			// The body is the plain line; the provider's own text stays on the message.
+			expect(rows[0]?.content).toBe('Maskin could not run this. Nothing was created.')
+			expect(
+				(rows[0]?.metadata as { final_output?: { error_detail?: string } })?.final_output
+					?.error_detail,
+			).toContain('OAuth session expired')
+		})
+
+		it('keeps the session running for a 403 block page that also opens with Failed to authenticate', async () => {
+			const stopped: string[] = []
+			const instance = new InteractiveTurnFinalizer(db, {
+				delay: async () => {},
+				onStopSession: async (sessionId) => {
+					stopped.push(sessionId)
+				},
+			})
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+
+			await feedInstance(
+				instance,
+				session.id,
+				`${resultLine({
+					is_error: true,
+					result: 'Failed to authenticate. API Error: 403 Attention Required! | Cloudflare',
+				})}\n`,
+			)
+			await instance.settlePendingRetries()
+
+			expect(stopped).toEqual([])
+		})
+
 		it('does not treat an onStopSession failure as fatal — the human still sees the moved-subscription notice', async () => {
 			// The stop is best-effort. A stopSession error (network blip to the
 			// remote agent-server, or a container that's already gone) must not
@@ -1251,8 +1332,11 @@ ${surviving}
 			await instance.settlePendingRetries()
 
 			const rows = await messagesFor(conversationId)
-			expect(rows[0]?.content).toContain("You've hit your weekly limit")
-			expect(rows[0]?.content).not.toContain('switched this workspace')
+			expect(rows[0]?.content).toBe('Maskin could not run this. Nothing was created.')
+			expect(
+				(rows[0]?.metadata as { final_output?: { error_detail?: string } })?.final_output
+					?.error_detail,
+			).toContain("You've hit your weekly limit")
 		})
 
 		it('does not treat a non-limit permanent failure as a subscription limit', async () => {

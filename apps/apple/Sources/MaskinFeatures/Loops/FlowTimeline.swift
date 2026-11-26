@@ -75,7 +75,7 @@ final class FlowTimelineModel {
 	}
 
 	func send() {
-		let text = composer.trimmedText
+		let text = composer.commentText
 		guard !text.isEmpty, !composer.isUploading, !composer.hasFailedAttachment else { return }
 		let mentions = composer.mentions.map(\.id).filter { $0 != store.currentActorId }
 		let files = composer.attachments.compactMap(\.ref)

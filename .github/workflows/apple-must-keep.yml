@@ -1,0 +1,144 @@
+name: Apple must-keep UI tests
+
+# Runs apps/apple/scripts/run-must-keep.sh (MustKeepTests and MustKeepMoreTests, every row in
+# apps/apple/docs/must-keep-features.md) against the offline demo server on a hosted Mac runner,
+# so the UI tests get compiled and run without anyone needing a Mac.
+#
+# Only runs when the tests, the demo server or the script change (or by hand). Not a required check.
+# By hand you can name one test (for example MustKeepMoreTests/testMK15b_...) to run just that row.
+#
+# Output: the step summary (pass or fail per test) and the `must-keep` artifact (xcodebuild.log, and
+# the screenshot + element tree that a failing step leaves in dump/).
+
+on:
+  pull_request:
+    paths:
+      - apps/apple/Apps/MaskinUITests/**
+      - apps/apple/scripts/demo-server/**
+      - apps/apple/scripts/run-must-keep.sh
+      - .github/workflows/apple-must-keep.yml
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "One test as Class/testName (empty runs every row)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+# A run is 30 to 40 Mac minutes: a newer push replaces the one still going for the same branch.
+concurrency:
+  group: apple-must-keep-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  must-keep:
+    name: must-keep
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      OUT: ${{ github.workspace }}/must-keep-out
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Select Xcode 26
+        run: |
+          set -euo pipefail
+          xcode=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)
+          if [ -z "$xcode" ]; then
+            echo "::error::No Xcode 26.x on this runner image (needed for iOS 26 APIs / Swift 6.x). Installed:"
+            ls -d /Applications/Xcode*.app || true
+            exit 1
+          fi
+          sudo xcode-select -s "$xcode/Contents/Developer"
+          xcodebuild -version
+
+      # The demo server uses only Node built-ins, so no pnpm install.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Create an iPhone simulator
+        id: sim
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUT/dump"
+          runtime_id() {
+            xcrun simctl list -j runtimes available |
+              jq -r '[.runtimes[] | select(.platform == "iOS" or (.identifier | test("SimRuntime.iOS")))] | sort_by(.version | split(".") | map(tonumber)) | last | .identifier // empty'
+          }
+          runtime=$(runtime_id)
+          if [ -z "$runtime" ]; then
+            echo "No iOS simulator runtime on this image, downloading one."
+            xcodebuild -downloadPlatform iOS
+            runtime=$(runtime_id)
+          fi
+          if [ -z "$runtime" ]; then
+            echo "::error::No iOS simulator runtime available."
+            exit 1
+          fi
+          # Take the iPhone model from this runtime's own list (the global list holds models that
+          # need a newer runtime than the image has, and simctl create then fails).
+          devicetype=$(xcrun simctl list -j runtimes available |
+            jq -r --arg rt "$runtime" '[.runtimes[] | select(.identifier == $rt) | .supportedDeviceTypes[] | select(.productFamily == "iPhone")] | last | .identifier // empty')
+          echo "runtime: $runtime"
+          echo "device type: ${devicetype:-none}"
+          if [ -z "$devicetype" ]; then
+            echo "::error::The iOS runtime lists no iPhone device type. Runtimes on this image:"
+            xcrun simctl list runtimes available
+            exit 1
+          fi
+          udid=$(xcrun simctl create must-keep "$devicetype" "$runtime")
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+
+      - name: Run must-keep UI tests
+        working-directory: apps/apple
+        env:
+          DEST: id=${{ steps.sim.outputs.udid }}
+          DERIVED: ${{ github.workspace }}/maskin-must-keep-dd
+          MUSTKEEP_DUMP_DIR: ${{ github.workspace }}/must-keep-out/dump
+          ONLY: ${{ inputs.only }}
+        run: |
+          set -euo pipefail
+          # bash, not ./: the script may reach the repo without the executable bit.
+          bash scripts/run-must-keep.sh ${ONLY:+"$ONLY"} 2>&1 | tee "$OUT/xcodebuild.log"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Must-keep UI tests"
+            echo
+            if [ -f "$OUT/xcodebuild.log" ]; then
+              echo "| Test | Result |"
+              echo "| --- | --- |"
+              grep -iE "^Test case '.*' (passed|failed)" "$OUT/xcodebuild.log" |
+                sed -E "s/^Test case '-\[([^]]*)\]' (passed|failed).*/\1 \2/I" |
+                awk '{ printf "| %s | %s |\n", $1" "$2, tolower($3) }' || true
+              echo
+              grep -E "^\s*Executed [0-9]+ tests?" "$OUT/xcodebuild.log" | tail -1 || true
+              echo
+              if grep -qiE "BUILD FAILED|TEST BUILD FAILED|error:" "$OUT/xcodebuild.log"; then
+                echo "Errors (first 20):"
+                echo '```'
+                grep -E "error:" "$OUT/xcodebuild.log" | head -20 || true
+                echo '```'
+              fi
+            else
+              echo "No xcodebuild.log: the job stopped before the tests ran."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # always(): a failing or timed-out run is exactly when the screenshots and logs are needed.
+      - name: Upload logs and failure evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: must-keep
+          path: ${{ env.OUT }}
+          if-no-files-found: warn
+          retention-days: 30

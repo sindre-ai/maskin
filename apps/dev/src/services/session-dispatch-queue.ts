@@ -1,8 +1,9 @@
 import type { Database } from '@maskin/db'
 import { sessionDispatchAttempts, sessions } from '@maskin/db/schema'
 import type { SessionResultFailureReason } from '@maskin/shared'
-import { and, asc, eq, lte, notInArray, sql } from 'drizzle-orm'
+import { and, asc, eq, gt, lte, notInArray, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
+import { pickRetryAt } from '../lib/subscription-limit-reset'
 import { type SettleDependencies, settleSession } from './session-lifecycle'
 
 /**
@@ -87,6 +88,11 @@ export interface SessionDispatchQueueOptions {
 	 */
 	tickTimeoutMs?: number
 	/**
+	 * Run at the start of every tick, before rows are claimed: the release pass for sessions held at
+	 * the daily limit (held-session-release.ts). Best-effort: a throw is logged and the tick goes on.
+	 */
+	beforeClaim?: () => Promise<void>
+	/**
 	 * Append a `system`-stream line to a session's transcript (SessionManager's
 	 * insertSystemLog). Optional and best-effort — a log write must never stop
 	 * the row from being marked failed. Without it a user watching a session
@@ -159,6 +165,13 @@ const DISPATCH_FAILED_MESSAGE =
 const START_TIMED_OUT_MESSAGE =
 	'This session could not be started — the agent server did not answer the start request in time, after several attempts. Start a new session to try again.'
 
+/**
+ * When a session that never started is tried again. A session that ends with
+ * DISPATCH_FAILED_MESSAGE ran nothing, so starting it again is safe. 10 minutes is
+ * long enough for an agent-server outage that outlasted the 5 quick tries to clear.
+ */
+const DISPATCH_REQUEUE_DELAY_MS = 10 * 60_000
+
 /** The only statuses a dispatch failure may still turn into a failed session. */
 const DISPATCHABLE_STATUSES: readonly string[] = ['pending', 'queued', 'starting']
 
@@ -181,6 +194,7 @@ export class SessionDispatchQueue {
 	private readonly tickTimeoutMs: number
 	private readonly appendSystemLog?: (sessionId: string, content: string) => Promise<void>
 	private readonly onPermanentFailure?: SessionDispatchQueueOptions['onPermanentFailure']
+	private readonly beforeClaim?: () => Promise<void>
 	private readonly settleDeps: SettleDependencies
 
 	constructor(
@@ -198,6 +212,7 @@ export class SessionDispatchQueue {
 		this.tickTimeoutMs = opts.tickTimeoutMs ?? this.leaseMs
 		this.appendSystemLog = opts.appendSystemLog
 		this.onPermanentFailure = opts.onPermanentFailure
+		this.beforeClaim = opts.beforeClaim
 		// Dispatch-queue sessions never reached an agent-server, so there is no
 		// sandbox to stop and no `/agent` workspace to push. settleSession's
 		// classification guard also skips pushAgentFiles for `dispatch_failure`,
@@ -272,6 +287,28 @@ export class SessionDispatchQueue {
 	}
 
 	/**
+	 * Make a parked row due now (a session held at the daily limit, enqueued with a `runAt` far
+	 * ahead). Only a row nobody has claimed yet is touched: a row already leased or attempted is
+	 * on its way and must not be reset. Returns false when there was no such row.
+	 */
+	async makeDue(sessionId: string): Promise<boolean> {
+		const now = new Date()
+		const rows = await this.db
+			.update(sessionDispatchAttempts)
+			.set({ nextAttemptAt: now, updatedAt: now })
+			.where(
+				and(
+					eq(sessionDispatchAttempts.sessionId, sessionId),
+					eq(sessionDispatchAttempts.status, 'pending'),
+					eq(sessionDispatchAttempts.attempt, 0),
+					gt(sessionDispatchAttempts.nextAttemptAt, now),
+				),
+			)
+			.returning({ id: sessionDispatchAttempts.id })
+		return rows.length > 0
+	}
+
+	/**
 	 * Process up to `batchSize` ready rows. Each row is claimed inside a short
 	 * transaction (SELECT FOR UPDATE SKIP LOCKED + UPDATE next_attempt_at to
 	 * `now + leaseMs`), so the lock is released before the dispatch call. If
@@ -292,6 +329,9 @@ export class SessionDispatchQueue {
 			// its backoff passes, but a long tick must not reclaim it either.
 			const tried: string[] = []
 			let startCalls = 0
+			await this.beforeClaim?.().catch((err) =>
+				logger.warn('Session dispatch queue beforeClaim failed', { error: String(err) }),
+			)
 			while (startCalls < this.batchSize) {
 				current = null
 				const claimed = await this.claimOne(tried)
@@ -461,6 +501,8 @@ export class SessionDispatchQueue {
 			await this.markSessionFailed(
 				row.sessionId,
 				`Dispatch exhausted after ${attempt} attempts: ${error}`,
+				undefined,
+				{ requeue: true },
 			)
 			logger.error('Session dispatch exhausted', {
 				sessionId: row.sessionId,
@@ -584,6 +626,7 @@ export class SessionDispatchQueue {
 		sessionId: string,
 		errorMessage: string,
 		failureReason?: SessionResultFailureReason,
+		opts: { requeue?: boolean } = {},
 	): Promise<string | null> {
 		// A bare `result.error` string renders nowhere: the session detail panel's
 		// FailureCard reads `result.failure_reason`, and use-conversation-activity
@@ -606,13 +649,15 @@ export class SessionDispatchQueue {
 		// a raced write — the caller's null-return semantics are preserved by
 		// re-reading `workspaceId` from the row post-settle only when settle
 		// actually flipped it.
+		let retryAt =
+			resolvedFailureReason.provider === 'anthropic' ? pickRetryAt(resolvedFailureReason) : null
 		let settled: Awaited<ReturnType<typeof settleSession>>
 		try {
 			// settleSession only refuses the four terminal statuses, so without
 			// this check a running, paused or waiting_for_input session would be
 			// overwritten to failed by a dispatch worker that lost the race for it.
 			const [current] = await this.db
-				.select({ status: sessions.status })
+				.select({ status: sessions.status, attemptNumber: sessions.attemptNumber })
 				.from(sessions)
 				.where(eq(sessions.id, sessionId))
 				.limit(1)
@@ -623,6 +668,13 @@ export class SessionDispatchQueue {
 				})
 				return null
 			}
+			// A start that kept failing for transient reasons ran nothing, so hand it to the retry
+			// scheduler once, a while later. Only the first attempt qualifies: the scheduler's rerun
+			// carries attempt_number 2, so a rerun that fails to start the same way is not queued
+			// again. A permanent failure is not queued: it would fail the same way.
+			if (opts.requeue && current?.attemptNumber === 1) {
+				retryAt = new Date(Date.now() + DISPATCH_REQUEUE_DELAY_MS)
+			}
 			settled = await settleSession(
 				sessionId,
 				{
@@ -632,6 +684,9 @@ export class SessionDispatchQueue {
 					reason: errorMessage,
 					exitCode: 0,
 					failureReason: resolvedFailureReason,
+					// A retry that found every Claude login still limited carries the reset time;
+					// the scheduler starts it again then. Null for every other dispatch failure.
+					...(retryAt ? { retryAt } : {}),
 				},
 				this.settleDeps,
 			)

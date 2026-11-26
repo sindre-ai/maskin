@@ -7,7 +7,7 @@ import { LoopDecisions } from '@/components/loops/loop-decisions'
 import { LoopDetailTabs } from '@/components/loops/loop-detail-tabs'
 import { LoopFirstRunBanner } from '@/components/loops/loop-first-run-banner'
 import { LoopFlow } from '@/components/loops/loop-flow'
-import { LOOP_PILL_STYLES, isLiveLoopPill } from '@/components/loops/loop-pill'
+import { LOOP_PILL_STYLES, isLiveLoopPill, loopPillStyle } from '@/components/loops/loop-pill'
 import {
 	LoopProposedEdit,
 	type PlanDiffRow,
@@ -18,6 +18,7 @@ import { LoopStats } from '@/components/loops/loop-stats'
 import { LoopTags } from '@/components/loops/loop-tags'
 import { LoopUtteranceInput } from '@/components/loops/loop-utterance-input'
 import { LoopViewTab } from '@/components/loops/loop-view-tab'
+import { ReceiptRoutesPanel } from '@/components/loops/receipt-routes-panel'
 import { TargetsAndOwners } from '@/components/loops/targets-and-owners'
 import { ListView } from '@/components/objects/list/list-view'
 import { ObjectDetailBody } from '@/components/objects/object-detail-body'
@@ -41,7 +42,9 @@ import {
 import { useActors } from '@/hooks/use-actors'
 import { useLoopBriefingPages } from '@/hooks/use-briefings'
 import { useCanWrite } from '@/hooks/use-can-write'
+import { useCreateViewWithAgent } from '@/hooks/use-create-view-with-agent'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useLoadFailed } from '@/hooks/use-load-failed'
 import {
 	useLoop,
@@ -58,6 +61,7 @@ import { api } from '@/lib/api'
 import type { LoopSummary } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
+import { CREATE_VIEW_LABEL } from '@/lib/create-view-message'
 import { nextFireAt, nextFireLabel } from '@/lib/loop-next-fire'
 import { type LoopPlan, parseLoopDescription } from '@/lib/loop-plan'
 import { queryKeys } from '@/lib/query-keys'
@@ -72,7 +76,15 @@ import {
 import { useQueryClient } from '@tanstack/react-query'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import type { GroupingState, RowSelectionState, VisibilityState } from '@tanstack/react-table'
-import { Check, ChevronDown, MoreHorizontal, Pause, Play, Trash2 } from 'lucide-react'
+import {
+	Check,
+	ChevronDown,
+	LayoutDashboard,
+	MoreHorizontal,
+	Pause,
+	Play,
+	Trash2,
+} from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -90,7 +102,14 @@ const SLOW_LOAD_MESSAGE = 'The server may be busy.'
 
 export const Route = createFileRoute('/_authed/$workspaceId/loops/$loopId')({
 	component: LoopDetailRoute,
-	errorComponent: ({ error }) => <RouteError error={error} />,
+	errorComponent: ({ error, reset }) => (
+		<RouteError
+			error={error}
+			reset={reset}
+			title="This page could not load"
+			message="Something went wrong on our side. Try again, or reload the page."
+		/>
+	),
 })
 
 interface ProposedEdit {
@@ -103,11 +122,7 @@ interface ProposedEdit {
 	nextSource: string
 }
 
-const LOOP_STAGES = [
-	'learning',
-	'supervised',
-	'fully_autonomous',
-] as const satisfies readonly LoopStatus[]
+const LOOP_STAGES = ['pilot', 'supervised', 'live'] as const satisfies readonly LoopStatus[]
 
 function SetupBlock({ label, text }: { label: string; text: string | null }) {
 	return (
@@ -126,6 +141,8 @@ function LoopDetailRoute() {
 	const { loopId } = Route.useParams()
 	const { workspaceId, workspace } = useWorkspace()
 	const canWrite = useCanWrite()
+	const receiptIntakeOn = useFeatureFlag('receipt-intake')
+	const createView = useCreateViewWithAgent()
 	const {
 		data: loop,
 		isLoading: loopLoading,
@@ -609,7 +626,7 @@ function LoopDetailRoute() {
 	// Best-effort derivations against the current LoopSummary shape, feeding
 	// LoopStats' v4 5-tile branch:
 	// - cyclesRunning: `inProgressCount` while the loop is on the live rungs of
-	//   the pill ladder (learning / supervised / fully_autonomous), else 0 —
+	//   the pill ladder (pilot / supervised / live), else 0 —
 	//   matches the SPEC's "count of open cycles where pill.stateSlug === live".
 	// - asksWaiting: `waitingCount` from the loop payload — the count of
 	//   sessions on this loop's triggers currently in `waiting_for_input`.
@@ -621,7 +638,7 @@ function LoopDetailRoute() {
 	const cyclesRunning = isLiveLoopPill(loop.pill) ? loop.inProgressCount : 0
 	const asksWaiting = loop.waitingCount
 	const nextFire = nextFireLabel(nextFireAt(loopTriggers))
-	const pill = LOOP_PILL_STYLES[loop.pill]
+	const pill = loopPillStyle(loop.pill)
 	// The flow's driver is the object's own `driver`; no driver, no pill.
 	const driver = object?.driver ? actors?.find((a) => a.id === object.driver) : undefined
 	const needsYouRows = itemsNeedingYou(
@@ -649,7 +666,7 @@ function LoopDetailRoute() {
 	const isPreFirstRun =
 		childIds.length === 0 && (activityEvents?.length ?? 0) === 0 && !edgesFailed && !activityFailed
 
-	// Resuming returns the loop to `learning`, the lowest live rung of the
+	// Resuming returns the loop to `pilot`, the lowest live rung of the
 	// autonomy ladder, matching every server-side creation path
 	// (installed-loops.ts, workspace-bootstrap.ts): a loop that has been paused
 	// re-earns trust rather than snapping back to full autonomy. The trigger
@@ -659,7 +676,7 @@ function LoopDetailRoute() {
 		if (!canWrite) return
 		updateObject.mutate({
 			id: loop.id,
-			data: { status: isPaused ? 'learning' : 'paused' },
+			data: { status: isPaused ? 'pilot' : 'paused' },
 		})
 	}
 
@@ -705,6 +722,19 @@ function LoopDetailRoute() {
 									</DropdownMenuTrigger>
 								</ViewerTooltip>
 								<DropdownMenuContent align="end">
+									{createView.open && (
+										<DropdownMenuItem
+											onSelect={() =>
+												createView.open?.({
+													kind: 'flow',
+													id: loop.id,
+													name: loop.name ?? 'Untitled flow',
+												})
+											}
+										>
+											<LayoutDashboard size={14} /> {CREATE_VIEW_LABEL}
+										</DropdownMenuItem>
+									)}
 									<DropdownMenuItem
 										onSelect={togglePause}
 										disabled={updateObject.isPending || !canWrite}
@@ -780,7 +810,7 @@ function LoopDetailRoute() {
 									type="button"
 									data-testid="loop-pill"
 									disabled={!canWrite || !object}
-									aria-label={`Stage: ${LOOP_PILL_STYLES[loop.status].label}`}
+									aria-label={`Stage: ${loopPillStyle(loop.status).label}`}
 									className="inline-flex h-9 items-center gap-2 rounded-full border border-border px-3.5 text-[13.5px] font-semibold text-foreground disabled:cursor-default"
 								>
 									<span
@@ -791,7 +821,7 @@ function LoopDetailRoute() {
 											isLiveLoopPill(loop.pill) && 'animate-pulse',
 										)}
 									/>
-									{LOOP_PILL_STYLES[loop.status].label}
+									{loopPillStyle(loop.status).label}
 									{canWrite && object && (
 										<ChevronDown size={11} aria-hidden="true" className="text-muted-foreground" />
 									)}
@@ -813,15 +843,26 @@ function LoopDetailRoute() {
 							))}
 						</DropdownMenuContent>
 					</DropdownMenu>
-					{driver && (
-						<span
-							data-testid="loop-driver"
-							className="inline-flex h-9 items-center gap-2 rounded-full border border-border px-3.5 text-[13.5px]"
-						>
-							<ActorAvatar id={driver.id} name={driver.name} type={driver.type} />
-							<span className="font-semibold text-foreground">{driver.name}</span>
-						</span>
-					)}
+					{driver &&
+						(driver.type === 'agent' ? (
+							<Link
+								to="/$workspaceId/agents/$agentId"
+								params={{ workspaceId, agentId: driver.id }}
+								data-testid="loop-driver"
+								className="inline-flex h-9 items-center gap-2 rounded-full border border-border px-3.5 text-[13.5px] transition-colors hover:bg-accent/50 focus-visible:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+							>
+								<ActorAvatar id={driver.id} name={driver.name} type={driver.type} />
+								<span className="font-semibold text-foreground">{driver.name}</span>
+							</Link>
+						) : (
+							<span
+								data-testid="loop-driver"
+								className="inline-flex h-9 items-center gap-2 rounded-full border border-border px-3.5 text-[13.5px]"
+							>
+								<ActorAvatar id={driver.id} name={driver.name} type={driver.type} />
+								<span className="font-semibold text-foreground">{driver.name}</span>
+							</span>
+						))}
 					{needsYouRows.length > 0 && (
 						<span
 							data-testid="loop-decisions-chip"
@@ -899,6 +940,10 @@ function LoopDetailRoute() {
 						)}
 
 						<TargetsAndOwners loop={loop} actors={actors} />
+
+						{receiptIntakeOn && isInstalledFromMarketplace && (
+							<ReceiptRoutesPanel workspaceId={workspaceId} loopId={loopId} />
+						)}
 
 						<LoopDecisions
 							workspaceId={workspaceId}
@@ -1030,6 +1075,7 @@ function LoopDetailRoute() {
 					placeholder={
 						driver ? `Message ${driver.name}, who drives ${loop.name ?? 'this flow'}` : undefined
 					}
+					agent={driver?.type === 'agent' ? { id: driver.id, name: driver.name } : undefined}
 					onUtterance={handleUtterance}
 				>
 					{proposedEdit && (

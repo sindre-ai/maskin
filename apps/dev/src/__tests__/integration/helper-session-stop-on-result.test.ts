@@ -183,6 +183,99 @@ describe('Helper sessions end on their result (Integration)', () => {
 			expect(onLimitResult).not.toHaveBeenCalled()
 		})
 	})
+
+	describe('background jobs still running', () => {
+		let retryTurn: ReturnType<typeof vi.fn>
+
+		const system = (subtype: string, fields: Record<string, unknown>) =>
+			`${JSON.stringify({ type: 'system', subtype, ...fields })}\n`
+		const started = (taskId: string, fields: Record<string, unknown> = {}) =>
+			system('task_started', { task_id: taskId, task_type: 'local_bash', ...fields })
+		const finished = (taskId: string) =>
+			system('task_notification', { task_id: taskId, status: 'completed' })
+
+		beforeEach(() => {
+			retryTurn = vi.fn().mockResolvedValue(undefined)
+			finalizer = new InteractiveTurnFinalizer(db, { onHelperResult, onLimitResult, retryTurn })
+		})
+
+		it('does not end the session and tells the helper while a job runs', async () => {
+			const session = await helper({})
+			if (!session) throw new Error('no session')
+			await feed(session.id, started('job1', { is_backgrounded: true }))
+
+			await feed(session.id, `${resultLine()}\n`)
+
+			expect(onHelperResult).not.toHaveBeenCalled()
+			expect(retryTurn).toHaveBeenCalledOnce()
+			expect(retryTurn.mock.calls[0]?.[1].message.content).toContain(
+				'1 background job is still running',
+			)
+		})
+
+		it('ends the session once the nudges are spent', async () => {
+			const session = await helper({})
+			if (!session) throw new Error('no session')
+			await feed(session.id, started('job1'))
+
+			await feed(session.id, `${resultLine({ result: 'first' })}\n`)
+			await feed(session.id, `${resultLine({ result: 'second' })}\n`)
+			expect(onHelperResult).not.toHaveBeenCalled()
+			await feed(session.id, `${resultLine({ result: 'third' })}\n`)
+
+			expect(retryTurn).toHaveBeenCalledTimes(2)
+			expect(onHelperResult).toHaveBeenCalledOnce()
+		})
+
+		it('ends the session when every job has reported back', async () => {
+			const session = await helper({})
+			if (!session) throw new Error('no session')
+			await feed(session.id, started('job1'))
+			await feed(session.id, started('job2'))
+			await feed(session.id, finished('job1'))
+			await feed(
+				session.id,
+				system('task_updated', { task_id: 'job2', patch: { status: 'completed' } }),
+			)
+
+			await feed(session.id, `${resultLine()}\n`)
+
+			expect(retryTurn).not.toHaveBeenCalled()
+			expect(onHelperResult).toHaveBeenCalledOnce()
+		})
+
+		it('ignores a job that ran in the foreground', async () => {
+			const session = await helper({})
+			if (!session) throw new Error('no session')
+			await feed(session.id, started('job1', { is_backgrounded: false }))
+
+			await feed(session.id, `${resultLine()}\n`)
+
+			expect(retryTurn).not.toHaveBeenCalled()
+			expect(onHelperResult).toHaveBeenCalledOnce()
+		})
+
+		it('ends the session as before when it has no jobs', async () => {
+			const session = await helper({})
+			if (!session) throw new Error('no session')
+
+			await feed(session.id, `${resultLine()}\n`)
+
+			expect(retryTurn).not.toHaveBeenCalled()
+			expect(onHelperResult).toHaveBeenCalledOnce()
+		})
+
+		it('ends the session on an error result even with a job running', async () => {
+			const session = await helper({})
+			if (!session) throw new Error('no session')
+			await feed(session.id, started('job1'))
+
+			await feed(session.id, `${resultLine({ is_error: true, result: 'boom' })}\n`)
+
+			expect(retryTurn).not.toHaveBeenCalled()
+			expect(onHelperResult).toHaveBeenCalledOnce()
+		})
+	})
 })
 
 describe('resolveAskConversationId (Integration)', () => {

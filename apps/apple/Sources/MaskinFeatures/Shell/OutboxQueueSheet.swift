@@ -13,9 +13,10 @@ struct OutboxQueueSheet: View {
 	var body: some View {
 		let entries = queue.entries
 		let failures = queue.failures
+		let sections = queue.sections
 		NavigationStack {
 			List {
-				if !entries.isEmpty {
+				if sections.contains(.waiting) {
 					Section {
 						ForEach(entries) { entry in
 							VStack(alignment: .leading, spacing: MaskinSpace.s1) {
@@ -30,7 +31,7 @@ struct OutboxQueueSheet: View {
 						Text("They send in order when the connection returns.")
 					}
 				}
-				if !failures.isEmpty {
+				if sections.contains(.couldNotSend) {
 					Section("Could not send") {
 						ForEach(failures) { failure in
 							HStack(alignment: .top, spacing: MaskinSpace.s5) {
@@ -39,10 +40,12 @@ struct OutboxQueueSheet: View {
 									Text(failure.message).maskinText(.caption).foregroundStyle(MaskinColor.danger)
 								}
 								Spacer(minLength: MaskinSpace.s3)
-								Button("Dismiss") { queue.dismissFailure(failure.id) }
-									.maskinText(.subhead).fontWeight(.semibold)
-									.buttonStyle(.plain)
-									.frame(minHeight: MaskinSpace.touchMin)
+								ForEach(queue.choices(for: failure), id: \.self) { choice in
+									Button("Dismiss") { queue.perform(choice, on: failure) }
+										.maskinText(.subhead).fontWeight(.semibold)
+										.buttonStyle(.plain)
+										.frame(minHeight: MaskinSpace.touchMin)
+								}
 							}
 							.accessibilityElement(children: .combine)
 						}
@@ -50,7 +53,7 @@ struct OutboxQueueSheet: View {
 				}
 			}
 			.overlay {
-				if entries.isEmpty && failures.isEmpty {
+				if sections.isEmpty {
 					EmptyState(
 						symbol: "checkmark.circle", title: "Nothing waiting",
 						message: "Everything you did has been sent.")

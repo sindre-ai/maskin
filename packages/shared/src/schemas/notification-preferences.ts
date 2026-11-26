@@ -94,8 +94,9 @@ export const notificationCategoriesSchema = z.object({
 })
 
 /**
- * The kinds that can also arrive as their own email, as it happens. Off for everyone until the
- * person switches one on. Digests are not here: the summary email has its own switch.
+ * The saved Email choice per kind. Only flow_activity is still read for sending. needs_you,
+ * conversation and tips stay in the schema so older clients keep working, but no notification
+ * sends an email by itself any more. Digests are not here: the summary email has its own switch.
  */
 export const EMAIL_KINDS = ['needs_you', 'conversation', 'tips', 'flow_activity'] as const
 export type EmailKind = (typeof EMAIL_KINDS)[number]

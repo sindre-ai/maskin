@@ -3,6 +3,40 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
+#if os(iOS)
+	import UIKit
+#endif
+
+/// The iPad is the one device with a single navigation: a rail of destinations down the left and no
+/// sidebar or top tab bar. iPhone and Mac keep their layouts. Gated on the device, not the width, so
+/// Slide Over does not change what is where.
+enum ShellIdiom {
+	static var isPad: Bool {
+		#if os(iOS)
+			UIDevice.current.userInterfaceIdiom == .pad
+		#else
+			false
+		#endif
+	}
+
+	/// The iPad shows the rail. The system tab bar can only be hidden on iOS 18 and later, so an iPad on
+	/// iOS 17 keeps the top tab bar and each screen's own avatar.
+	static var hasRail: Bool {
+		#if os(iOS)
+			if #available(iOS 18, *) { return isPad }
+		#endif
+		return false
+	}
+
+	/// Whether a root screen draws the account avatar itself. The sidebar and the rail hold the account at
+	/// their foot (landscape, Slide Over, a one-third split). Only where the bottom bar is used (portrait at
+	/// regular width) has the window no sidebar or rail, so every top screen carries the avatar. Without a
+	/// rail (iPhone, Mac, iOS 17) the screen always draws it.
+	static func barShowsAvatar(hasRail: Bool, bottomBar: Bool) -> Bool {
+		!hasRail || bottomBar
+	}
+}
+
 /// What a screen puts in the floating pill at the top right, besides its title and the profile
 /// avatar (which every root screen gets).
 ///
@@ -45,7 +79,8 @@ public struct ShellActions {
 	public var displaySymbol: String
 	/// The display options are off their defaults: the Display button tints Patina (specs 7 §6, 8).
 	public var displayActive: Bool
-	/// Hides the profile avatar on this screen (Team).
+	/// Hides the profile avatar on this screen (Team, Objects) on iPhone and Mac. An iPad with no rail
+	/// (iOS 17) shows it on every screen: it has no sidebar to hold the profile row.
 	public var hidesAvatar: Bool
 	/// Keeps the "+" button in the bar while the content scrolls (Team).
 	public var newAlwaysVisible: Bool
@@ -101,12 +136,19 @@ private struct ShellToolbarModifier: ViewModifier {
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@Environment(\.liveMeeting) private var liveMeeting
 	@Environment(\.shellShowsAvatar) private var avatarAllowed
+	@Environment(\.shellIsPortrait) private var isPortrait
+	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
 	/// True once the content has scrolled away from the top: New folds away.
 	@State private var scrolled = false
 
-	/// The avatar opens the profile sheet. Not shown inside a sheet (it would open one over it).
+	/// The avatar opens the profile sheet. Not shown inside a sheet (it would open one over it), and
+	/// not where the iPad's sidebar or rail holds it.
 	private var showsAvatar: Bool {
 		runtime != nil && avatarAllowed && environment.auth.session != nil
+			&& ShellIdiom.barShowsAvatar(
+				hasRail: ShellIdiom.hasRail,
+				bottomBar: PadBarLayout.usesBottomBar(portrait: isPortrait, regularWidth: horizontalSizeClass == .regular))
+			&& (!actions.hidesAvatar || ShellIdiom.isPad)
 	}
 
 	func body(content: Content) -> some View {
@@ -158,17 +200,10 @@ private struct ShellToolbarModifier: ViewModifier {
 						}
 						.accessibilityLabel(actions.displayActive ? "Display, options changed" : "Display")
 					}
-					if showsAvatar, !actions.hidesAvatar {
-						Button {
-							runtime?.showProfile = true
-						} label: {
-							ShellNavAvatar(
-								name: environment.auth.session?.name ?? "", actorID: environment.auth.session?.actorId)
-							.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
-							.contentShape(Circle())
-						}
-						.buttonStyle(.plain)
-						.accessibilityLabel("Account")
+					if showsAvatar {
+						ShellAccountButton(
+							name: environment.auth.session?.name ?? "", actorID: environment.auth.session?.actorId
+						) { runtime?.showProfile = true }
 					}
 					if let new = actions.new, !scrolled || actions.newAlwaysVisible {
 						Button(action: new) {
@@ -217,6 +252,24 @@ struct ShellInkCircle: View {
 	}
 }
 
+/// The round account button: the avatar as a 44 pt target that opens the profile sheet. In a screen's
+/// glass capsule, and left of "+" in the iPad Chats list header.
+struct ShellAccountButton: View {
+	let name: String
+	var actorID: String? = nil
+	let open: () -> Void
+
+	var body: some View {
+		Button(action: open) {
+			ShellNavAvatar(name: name, actorID: actorID)
+				.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
+				.contentShape(Circle())
+		}
+		.buttonStyle(.plain)
+		.accessibilityLabel("Account")
+	}
+}
+
 /// The profile button in the bar: a filled accent disc (v15) with the person's one initial.
 struct ShellNavAvatar: View {
 	let name: String
@@ -250,7 +303,17 @@ private struct ShellShowsAvatarKey: EnvironmentKey {
 	static let defaultValue = true
 }
 
+private struct ShellIsPortraitKey: EnvironmentKey {
+	static let defaultValue = false
+}
+
 extension EnvironmentValues {
+	/// True while the app's window is taller than it is wide. Set once by the shell.
+	var shellIsPortrait: Bool {
+		get { self[ShellIsPortraitKey.self] }
+		set { self[ShellIsPortraitKey.self] = newValue }
+	}
+
 	/// False inside a sheet, where a root screen's avatar would open a profile sheet over it.
 	var shellShowsAvatar: Bool {
 		get { self[ShellShowsAvatarKey.self] }

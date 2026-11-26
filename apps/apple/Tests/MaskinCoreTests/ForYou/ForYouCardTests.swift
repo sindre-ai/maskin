@@ -27,6 +27,18 @@ struct ForYouCardTests {
 		#expect(c.contextTitle == "Onboarding bet")
 	}
 
+	@Test func theQuestionLineIsTheAskOrTitleOnlyWhenItIsAQuestion() {
+		func prompt(title: String, ask: String) -> DecisionPrompt {
+			DecisionPrompt(title: title, summary: "s", ask: ask, options: [DecisionOption(label: "Go")])
+		}
+		#expect(prompt(title: "Send Alan the room request?", ask: "").question == "Send Alan the room request?")
+		#expect(prompt(title: "t?", ask: " Ship Friday? ").question == "Ship Friday?")
+		// The ask that explains why it came to the person is not the question: the title is.
+		#expect(prompt(title: "Send Alan the room request?", ask: "I will not send this alone.").question
+			== "Send Alan the room request?")
+		#expect(prompt(title: "Room request", ask: "I will not send this alone.").question == nil)
+	}
+
 	@Test func aCardCachedBeforeRankingExistedStillDecodes() throws {
 		let json = #"{"id":"o1","entityType":"object","unreadCount":1}"#
 		let c = try JSONDecoder().decode(ForYouCard.self, from: Data(json.utf8))

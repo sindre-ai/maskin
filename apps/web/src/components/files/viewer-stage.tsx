@@ -24,12 +24,15 @@ import {
 } from '@/lib/mini-app'
 import type { ListSourceEntry } from '@/lib/view-lists'
 import {
+	FIT_TOLERANCE,
 	type Size,
 	ZOOM_MAX,
 	ZOOM_MIN,
 	clampZoom,
 	computeFit,
 	docToStage,
+	settleFit,
+	settleSize,
 	stageToDoc,
 	zoomAt,
 	zoomStep,
@@ -51,7 +54,15 @@ import {
 	Minus,
 	Plus,
 } from 'lucide-react'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+	type MutableRefObject,
+	useCallback,
+	useEffect,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from 'react'
 import { EditableMarkdownStage, useEditableMarkdown } from './editable-markdown-stage'
 import {
 	MediaPlayer,
@@ -109,6 +120,8 @@ interface ViewerStageProps {
 	annotateMode?: boolean
 	pins?: StagePin[]
 	onPinPlace?: (position: { x: number; y: number }, page: number | null) => void
+	// Kept at the slide on screen (zero-based) so a host outside the stage can export it.
+	pageRef?: MutableRefObject<number>
 }
 
 export function ViewerStage({
@@ -118,6 +131,7 @@ export function ViewerStage({
 	annotateMode = false,
 	pins,
 	onPinPlace,
+	pageRef,
 }: ViewerStageProps) {
 	const editableMarkdown = useEditableMarkdown(file)
 	// Large files arrive without bytes: only media with a storage URL can be shown.
@@ -134,6 +148,7 @@ export function ViewerStage({
 				annotateMode={annotateMode}
 				pins={pins}
 				onPinPlace={onPinPlace}
+				pageRef={pageRef}
 			/>
 		)
 	if (editableMarkdown)
@@ -251,6 +266,7 @@ function HtmlViewerStage({
 	annotateMode = false,
 	pins,
 	onPinPlace,
+	pageRef,
 }: {
 	file: FileDetail
 	variantOverride: ViewerVariantOverride
@@ -258,6 +274,7 @@ function HtmlViewerStage({
 	annotateMode?: boolean
 	pins?: StagePin[]
 	onPinPlace?: (position: { x: number; y: number }, page: number | null) => void
+	pageRef?: MutableRefObject<number>
 }) {
 	const navigate = useNavigate()
 	const html = useMemo(() => fileText(file), [file])
@@ -309,6 +326,7 @@ function HtmlViewerStage({
 	// and that is what fit k is derived from. `null` for non-paged docs.
 	const [page, setPage] = useState<{ index: number; total: number } | null>(null)
 	const [pageSize, setPageSize] = useState<Size | null>(null)
+	if (pageRef) pageRef.current = page?.index ?? 0
 	const [viewportSize, setViewportSize] = useState<Size | null>(null)
 	const [zoom, setZoom] = useState<number>(ZOOM_MIN)
 	// Whether the current `zoom` was chosen automatically (fit) or by the user.
@@ -327,7 +345,7 @@ function HtmlViewerStage({
 		const el = viewportRef.current
 		if (!el) return
 		const update = () => {
-			setViewportSize({ w: el.clientWidth, h: el.clientHeight })
+			setViewportSize((prev) => settleSize(prev, { w: el.clientWidth, h: el.clientHeight }))
 		}
 		update()
 		const observer = new ResizeObserver(update)
@@ -365,7 +383,7 @@ function HtmlViewerStage({
 				const w = typeof data.w === 'number' ? data.w : 0
 				const h = typeof data.h === 'number' ? data.h : 0
 				if (w <= 0 || h <= 0) return
-				setDocSize({ w, h })
+				setDocSize((prev) => settleSize(prev, { w, h }))
 				return
 			}
 			if (data.type === VIEWER_PAGE_MESSAGE) {
@@ -375,7 +393,7 @@ function HtmlViewerStage({
 				setPage({ index: Math.max(0, index), total })
 				const w = typeof data.w === 'number' ? data.w : 0
 				const h = typeof data.h === 'number' ? data.h : 0
-				if (w > 0 && h > 0) setPageSize({ w, h })
+				if (w > 0 && h > 0) setPageSize((prev) => settleSize(prev, { w, h }))
 				return
 			}
 			if (data.type === VIEWER_WHEEL_MESSAGE) {
@@ -492,7 +510,7 @@ function HtmlViewerStage({
 	useEffect(() => {
 		if (!fitSize || !viewportSize) return
 		if (!zoomIsAutoFitRef.current) return
-		setZoom(computeFit(fitSize, viewportSize))
+		setZoom((prev) => settleFit(prev, computeFit(fitSize, viewportSize)))
 	}, [fitSize, viewportSize])
 
 	const emitZoom = useCallback(
@@ -741,6 +759,13 @@ function HtmlViewerStage({
 		[handleFit, handleStepZoom, toggleFullscreen, isPaged, page, gotoPage, annotateMode],
 	)
 
+	// While the zoom sits at the fit, the scaled box is the stage size give or take
+	// float noise. A scrollbar for that sliver narrows the stage, which lowers the
+	// fit, which drops the scrollbar, which widens the stage again: the zoom flickers.
+	// So a fitted stage never scrolls; a zoomed-in one still does.
+	const isFitted =
+		!!fitSize && !!viewportSize && zoom <= computeFit(fitSize, viewportSize) * (1 + FIT_TOLERANCE)
+
 	const scaledSize = useMemo(() => {
 		if (!fitSize) return null
 		return { w: fitSize.w * zoom, h: fitSize.h * zoom }
@@ -793,7 +818,11 @@ function HtmlViewerStage({
 						{/* biome-ignore lint/a11y/useKeyWithClickEvents: viewport is a pin-placement surface, not a button — pin placement is a mouse-first interaction, and the outer <div role="application" tabIndex={0}> owns the keyboard shortcuts (0/+/-/F/C/Esc). Keyboard equivalent of "click anywhere to place a pin at that pixel" isn't a coherent affordance; annotate mode itself is the affordance a keyboard-only user would use, and it's already exposed via the C key from the route. */}
 						<div
 							ref={viewportRef}
-							className={cn('relative flex-1 overflow-auto', annotateMode && 'cursor-crosshair')}
+							className={cn(
+								'relative flex-1',
+								isFitted ? 'overflow-hidden' : 'overflow-auto',
+								annotateMode && 'cursor-crosshair',
+							)}
 							data-annotate-mode={annotateMode || undefined}
 							onClick={(event) => {
 								if (!annotateMode || !onPinPlace || !fitSize) return

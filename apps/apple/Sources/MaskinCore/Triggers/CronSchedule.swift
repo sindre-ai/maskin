@@ -104,7 +104,8 @@ public struct CronSchedule: Equatable, Sendable {
 	}
 
 	/// "5:00 PM"-style time, locale independent so summaries read the same everywhere. This is a
-	/// UTC clock time; `summary` adds the zone.
+	/// UTC clock time; `summary` adds the zone. The schedule editor uses it because its hour picker
+	/// writes UTC; lists use `describe`, which is Copenhagen time.
 	public var timeLabel: String {
 		let h12 = hour == 0 ? 12 : (hour > 12 ? hour - 12 : hour)
 		let mm = minute < 10 ? "0\(minute)" : "\(minute)"
@@ -121,10 +122,99 @@ public struct CronSchedule: Equatable, Sendable {
 		}
 	}
 
-	/// Human description of a raw expression; the expression itself when it is outside the shapes
-	/// this type models.
-	public static func describe(_ expression: String) -> String {
-		CronSchedule(expression: expression)?.summary ?? expression
+	// MARK: Copenhagen wording
+
+	/// The calendar every schedule is shown in. The server runs schedules in UTC; the lists show
+	/// Copenhagen time (summer and winter), like the web app.
+	static let copenhagenCalendar: Calendar = {
+		var c = Calendar(identifier: .gregorian)
+		c.timeZone = TimeZone(identifier: "Europe/Copenhagen") ?? TimeZone(secondsFromGMT: 3600)!
+		return c
+	}()
+
+	private static let monthNames = [
+		"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+	]
+
+	/// 24-hour `09:00`, locale independent.
+	static func clock24(hour: Int, minute: Int) -> String {
+		"\(hour < 10 ? "0" : "")\(hour):\(minute < 10 ? "0" : "")\(minute)"
+	}
+
+	/// "3 Nov at 09:00" in Copenhagen time. The year is added only when it is not the current one.
+	public static func copenhagenDateTime(_ date: Date, now: Date = Date()) -> String {
+		let calendar = copenhagenCalendar
+		let at = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
+		let year = at.year == calendar.component(.year, from: now) ? "" : " \(at.year ?? 0)"
+		let month = monthNames.indices.contains((at.month ?? 1) - 1) ? monthNames[(at.month ?? 1) - 1] : ""
+		return "\(at.day ?? 1) \(month)\(year) at \(clock24(hour: at.hour ?? 0, minute: at.minute ?? 0))"
+	}
+
+	/// "every Sunday at 18:00": the wording of `describe`, in Copenhagen time. The time is the one of
+	/// the next firing after `now`, so summer and winter time are right, and a weekly or monthly
+	/// schedule that lands on another day after the conversion takes that weekday or day number.
+	/// `nil` when there is no next firing.
+	public func copenhagenSummary(now: Date = Date()) -> String? {
+		if frequency == .hourly { return "every hour at minute \(minute)" }
+		guard let next = nextFire(after: now) else { return nil }
+		let at = Self.copenhagenCalendar.dateComponents([.day, .weekday, .hour, .minute], from: next)
+		guard let day = at.day, let weekday = at.weekday, let hour = at.hour, let minute = at.minute
+		else { return nil }
+		let time = Self.clock24(hour: hour, minute: minute)
+		switch frequency {
+		case .hourly: return nil
+		case .daily: return "every day at \(time)"
+		case .weekly: return "every \(Self.dayName(weekday - 1)) at \(time)"
+		case .monthly: return "on day \(day) of each month at \(time)"
+		}
+	}
+
+	/// A fixed day and month, e.g. `0 8 3 11 *`. The app treats it as a one-time date (UTC).
+	private struct OneTime {
+		var minute: Int, hour: Int, dayOfMonth: Int, month: Int
+
+		init?(expression: String) {
+			let parts = expression.split(whereSeparator: \.isWhitespace).map(String.init)
+			if parts.count == 6, parts[0] != "0" { return nil }
+			let fields = parts.count == 6 ? Array(parts.dropFirst()) : parts
+			guard fields.count == 5, fields[4] == "*",
+				CronSchedule.valid(fields[0], 0, 59), fields[0] != "*",
+				CronSchedule.valid(fields[1], 0, 23), fields[1] != "*",
+				CronSchedule.valid(fields[2], 1, 31), fields[2] != "*",
+				CronSchedule.valid(fields[3], 1, 12), fields[3] != "*"
+			else { return nil }
+			minute = Int(fields[0])!
+			hour = Int(fields[1])!
+			dayOfMonth = Int(fields[2])!
+			month = Int(fields[3])!
+		}
+
+		/// The next instant after `from`. Looks a few years ahead so 29 Feb still resolves; `nil`
+		/// for a date that never exists (31 Nov).
+		func nextFire(after from: Date) -> Date? {
+			let calendar = CronSchedule.utcCalendar
+			let year = calendar.component(.year, from: from)
+			for y in year...(year + 8) {
+				let parts = DateComponents(year: y, month: month, day: dayOfMonth, hour: hour, minute: minute)
+				guard let candidate = calendar.date(from: parts) else { continue }
+				let back = calendar.dateComponents([.month, .day], from: candidate)
+				guard back.month == month, back.day == dayOfMonth else { continue }
+				if candidate > from { return candidate }
+			}
+			return nil
+		}
+	}
+
+	/// Human description of a raw expression in Copenhagen time, worded like the web list; the
+	/// expression itself when it is outside the shapes this type models.
+	public static func describe(_ expression: String, now: Date = Date()) -> String {
+		if let schedule = CronSchedule(expression: expression) {
+			return schedule.copenhagenSummary(now: now) ?? expression
+		}
+		if let once = OneTime(expression: expression), let next = once.nextFire(after: now) {
+			return "once on \(copenhagenDateTime(next, now: now))"
+		}
+		return expression
 	}
 
 	/// The UTC calendar the server evaluates schedules in.

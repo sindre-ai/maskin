@@ -96,7 +96,8 @@ struct TriggersStoreTests {
 		let made = try await store.create(draft)
 		#expect(store.triggers.first?.id == made.id)
 		#expect(made.name == "Nightly")
-		#expect(made.summary == "Runs every day at 10:00 PM UTC")
+		// 22:00 UTC is 23:00 in Copenhagen winter time and 00:00 in summer time.
+		#expect(["Runs every day at 23:00", "Runs every day at 00:00"].contains(made.summary))
 	}
 
 	@Test("an incomplete draft is rejected before any request")

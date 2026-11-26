@@ -1,3 +1,4 @@
+import { MarkdownContent } from '@/components/shared/markdown-content'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { Button } from '@/components/ui/button'
 import type { FileDetail } from '@/lib/api'
@@ -7,9 +8,31 @@ import { Link } from '@tanstack/react-router'
 import { ChevronRight } from 'lucide-react'
 import { useMemo } from 'react'
 
+function fileText(file: FileDetail): string {
+	return file.encoding === 'utf8' ? file.content : decodeBase64Utf8(file.content)
+}
+
+const TABLE_SEPARATOR = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/
+const LIST_ITEM = /^\s*([-*+]|\d+[.)])\s+[^-*_\s]/
+
+/**
+ * Whether the text holds a table, a list or a code fence. Those lose their
+ * meaning when every line becomes its own row, so the file shows as a document.
+ * Plain prose, such as a meeting transcript, stays a list of lines.
+ */
+export function hasBlockStructure(text: string): boolean {
+	const lines = text.split('\n')
+	return lines.some(
+		(line, i) =>
+			line.trim().startsWith('```') ||
+			LIST_ITEM.test(line) ||
+			(line.includes('|') && i > 0 && lines[i - 1]?.includes('|') && TABLE_SEPARATOR.test(line)),
+	)
+}
+
 /** The text of a file, one entry per paragraph, with block markers stripped. */
 export function readableLines(file: FileDetail): string[] {
-	const text = file.encoding === 'utf8' ? file.content : decodeBase64Utf8(file.content)
+	const text = fileText(file)
 	const lines: string[] = []
 	let inFence = false
 	for (const raw of text.split('\n')) {
@@ -49,6 +72,7 @@ export function FileReadView({
 	onAsk: () => void
 }) {
 	const lines = useMemo(() => readableLines(file), [file])
+	const asDocument = useMemo(() => hasBlockStructure(fileText(file)), [file])
 	const meta = ['Markdown', formatSize(file.sizeBytes), authorName].filter((p): p is string =>
 		Boolean(p),
 	)
@@ -95,29 +119,33 @@ export function FileReadView({
 					</section>
 				)}
 
-				<section className="flex flex-col gap-2">
-					<SectionLabel>Tap a line to pin a comment</SectionLabel>
-					{lines.length === 0 ? (
-						<p className="border-t border-border py-3 text-sm text-muted-foreground">
-							This file has no text yet.
-						</p>
-					) : (
-						<ul className="flex flex-col border-t border-border">
-							{lines.map((line, i) => (
-								// Lines can repeat, so the position is part of the identity.
-								<li key={`${i}-${line}`} className="border-b border-border">
-									<button
-										type="button"
-										onClick={onOpenEditor}
-										className="block w-full py-3 text-left text-base font-medium hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-									>
-										{line}
-									</button>
-								</li>
-							))}
-						</ul>
-					)}
-				</section>
+				{asDocument ? (
+					<MarkdownContent content={fileText(file)} />
+				) : (
+					<section className="flex flex-col gap-2">
+						<SectionLabel>Tap a line to pin a comment</SectionLabel>
+						{lines.length === 0 ? (
+							<p className="border-t border-border py-3 text-sm text-muted-foreground">
+								This file has no text yet.
+							</p>
+						) : (
+							<ul className="flex flex-col border-t border-border">
+								{lines.map((line, i) => (
+									// Lines can repeat, so the position is part of the identity.
+									<li key={`${i}-${line}`} className="border-b border-border">
+										<button
+											type="button"
+											onClick={onOpenEditor}
+											className="block w-full py-3 text-left text-base font-medium hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+										>
+											{line}
+										</button>
+									</li>
+								))}
+							</ul>
+						)}
+					</section>
+				)}
 
 				<div className="flex flex-wrap items-center gap-3">
 					<Button type="button" className="h-11 rounded-full px-6 text-base" onClick={onAsk}>

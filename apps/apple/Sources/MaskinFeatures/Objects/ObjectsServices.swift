@@ -17,7 +17,8 @@ struct ObjectsServices {
 	init(environment: AppEnvironment) {
 		self.environment = environment
 		let remote = APIObjectsRemote(
-			client: environment.client, credentials: environment.auth.credentialsProvider)
+			client: environment.client, credentials: environment.auth.credentialsProvider,
+			baseURL: environment.baseURL, clientSource: environment.clientSource)
 		self.remote = remote
 		let auth = environment.auth
 		directory = ObjectsDirectory(remote: remote, workspaceId: { auth.session?.workspaceId })

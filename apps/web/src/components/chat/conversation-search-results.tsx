@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import type { useChatListSearch } from '@/hooks/use-chat-list-search'
 import type { ConversationListItemResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
+import { keepListFilter } from '@/lib/chat-list-search'
 import { cn } from '@/lib/cn'
 import { type LoadedList, hitLine, isArchivedHit } from '@/lib/conversation-search'
 import { highlightText } from '@/lib/search-highlight'
@@ -25,6 +26,8 @@ interface ConversationSearchResultsProps {
 	loaded: LoadedList | null
 	/** A person opened a hit; the position is its 1-based place among the hits. */
 	onOpen: (position: number) => void
+	/** Replaces the empty result's wording (the new chat list's own copy). */
+	emptyTitle?: string
 }
 
 /**
@@ -39,6 +42,7 @@ export function ConversationSearchResults({
 	known,
 	loaded,
 	onOpen,
+	emptyTitle,
 }: ConversationSearchResultsProps) {
 	const rows = search.data?.results ?? []
 	if (search.isError && !search.data) {
@@ -60,8 +64,10 @@ export function ConversationSearchResults({
 		return (
 			<EmptyState
 				icon={<SearchX size={24} aria-hidden="true" />}
-				title="No chats found"
-				description="No chat has that in its title, its people or its messages."
+				title={emptyTitle ?? 'No chats found'}
+				description={
+					emptyTitle ? undefined : 'No chat has that in its title, its people or its messages.'
+				}
 			/>
 		)
 	}
@@ -119,6 +125,7 @@ function SearchHit({
 			<Link
 				to="/$workspaceId/chats/$conversationId"
 				params={{ workspaceId, conversationId: row.id }}
+				search={keepListFilter}
 				onClick={onOpen}
 				activeProps={{ className: 'bg-accent' }}
 				className="flex items-start gap-3 rounded-lg px-2 py-[11px] text-left hover:bg-accent"

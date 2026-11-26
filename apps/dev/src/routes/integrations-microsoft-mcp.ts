@@ -72,6 +72,7 @@ app.post('/', async (c) => {
 		integrationId,
 		provider: 'microsoft',
 		providerLabel: 'Microsoft',
+		sessionId: c.req.header('x-maskin-session-id') || undefined,
 	})
 	const mcpServer = createMicrosoftMcpServer(
 		{ db, workspaceId, actorId, sessionId: c.get('maskinSessionId'), integrationId },

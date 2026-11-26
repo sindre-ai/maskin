@@ -15,6 +15,8 @@ public final class AppRuntime {
 	}
 
 	public let environment: AppEnvironment
+	/// The flags resolved for the signed-in actor; reloaded on every sign-in and workspace change.
+	public let featureFlags: FeatureFlagStore
 	public let router: DeepLinkRouter
 	public let push: PushRegistrar?
 	/// The in-app pre-prompt before the system's notification prompt. Nil without a registrar.
@@ -53,8 +55,20 @@ public final class AppRuntime {
 		chiefChatRequested = true
 	}
 
+	/// A chat or flow room is open in the Chats tab. `ChatsScreen` sets it; the iPad's landscape
+	/// sidebar folds to icons while it is true and Chats is on show.
+	var chatIsOpen = false
+
 	/// The Team filter pill the tab bar carries as its bottom accessory (iPhone, iOS 26.1+).
 	let teamPill = TeamPillModel()
+
+	/// iPad portrait: a chat is open beside the chat list. `ChatsScreen` sets it; the bottom bar
+	/// reads it to shrink to icons under the list.
+	var chatOpenBesideList = false
+
+	/// Screens on top of a tab's root (a pushed detail, the New conversation sheet) that take the
+	/// iPad bottom bar away while they show. See `View.hidesPadBar(_:)`.
+	var padBarHiders: Set<UUID> = []
 
 	/// What the shell shows in its ONE sheet. A single value (not a flag per sheet) so two
 	/// presentations requested in the same tick (a tap that opens an object) replace each
@@ -179,19 +193,41 @@ public final class AppRuntime {
 		public let live: Bool
 		/// Text for the new chat's message box (item detail's Message mode).
 		public let draft: String
+		/// Where it started, for `chat_session_started`.
+		public let entryPoint: String
 	}
 	public var agentChatRequest: AgentChatRequest?
 
-	public func startChat(with agent: ChatParticipant, live: Bool = false, draft: String = "") {
+	public func startChat(
+		with agent: ChatParticipant, live: Bool = false, draft: String = "", entryPoint: String = "agent_one_shot"
+	) {
 		presentation = nil
 		selectedTab = .chats
-		agentChatRequest = AgentChatRequest(agent: agent, live: live, draft: draft)
+		agentChatRequest = AgentChatRequest(agent: agent, live: live, draft: draft, entryPoint: entryPoint)
 	}
 
 	public func buildInChat(_ text: String) {
 		presentation = nil
 		selectedTab = .chats
 		chatDraft = ChatDraft(text: text)
+	}
+
+	/// "Create view with agent": the Design Studio agent for the selected workspace, refreshed by
+	/// `sync()` once the flag is on.
+	public let createView: CreateViewStore
+
+	/// Design Studio, when the "Create view with agent" item should show: flag on, the person can
+	/// write (not a viewer) and the workspace has the agent. Nil hides the item.
+	public var createViewAgent: ChatParticipant? {
+		let role = environment.workspaces.workspaces.first { $0.id == environment.workspaceId }?.role
+		return createView.agent(
+			forRole: role, flagOn: featureFlags.isEnabled(FeatureFlagID.createViewWithAgent))
+	}
+
+	/// Opens a new chat with Design Studio, the first message filled in and not sent.
+	public func startCreateView(_ scope: CreateViewScope) {
+		guard let agent = createViewAgent else { return }
+		startChat(with: agent, draft: CreateViewMessage.text(for: scope), entryPoint: CreateViewMessage.entryPoint)
 	}
 
 	public private(set) var isSigningOut = false
@@ -227,6 +263,8 @@ public final class AppRuntime {
 			NotificationPromptCoordinator(policy: NotificationPromptPolicy(storage: promptStorage), push: $0)
 		}
 		self.environment = environment
+		self.featureFlags = FeatureFlagStore(api: APIFeatureFlagsSource(client: environment.client))
+		self.createView = CreateViewStore(source: APICreateViewSource(client: environment.client))
 		self.push = push
 		self.router = router ?? DeepLinkRouter(environment: environment)
 		self.signOutTimeout = signOutTimeout
@@ -337,6 +375,18 @@ public final class AppRuntime {
 			selectedTab = .forYou
 		}
 		lastSyncedWorkspaceId = environment.workspaceId
+		Task { [workspaceID = environment.workspaceId] in
+			await featureFlags.load()
+			// Design Studio is only looked up once the flag is on, so flag-off people pay nothing.
+			if featureFlags.isEnabled(FeatureFlagID.createViewWithAgent) {
+				await createView.load(workspaceID: workspaceID)
+			} else {
+				createView.reset()
+			}
+			if featureFlags.isEnabled(FeatureFlagID.iosShareSuggestions) {
+				await ShareSuggestions.refresh(environment: environment)
+			}
+		}
 		// Start the chat runtime now (not when the Chats tab first appears) so messages queued
 		// offline, or before the app was last killed, replay as soon as the user is signed in.
 		_ = ChatsRuntime.shared(environment: environment)
@@ -395,8 +445,10 @@ public final class AppRuntime {
 		forYouRuntime?.stop()
 		forYouRuntime = nil
 		notificationPreferences = nil
+		featureFlags.reset()
 		rosterProvider = nil
 		storiesProvider = StoriesProvider()
+		createView.reset()
 		stopSyncCoordinator()
 		router.reset()
 		environment.workspaces.reset()
@@ -474,6 +526,15 @@ public final class AppRuntime {
 		await deliveredSync?.reconcile()
 	}
 
+	/// A chat's people have loaded: a one-to-one with an agent makes that agent a share suggestion.
+	func chatParticipantsLoaded(_ participants: [ChatParticipant], selfID: String) {
+		guard featureFlags.isEnabled(FeatureFlagID.iosShareSuggestions), let workspaceId = environment.workspaceId
+		else { return }
+		let others = participants.filter { $0.id != selfID }
+		guard others.count == 1, let agent = others.first, agent.kind == .agent else { return }
+		ShareSuggestions.chatted(agentID: agent.id, name: agent.name, workspaceId: workspaceId)
+	}
+
 	/// The person opened a chat: its pushes are read.
 	func chatOpened(_ conversationId: String) {
 		Task { await deliveredSync?.chatOpened(conversationId: conversationId) }
@@ -511,8 +572,7 @@ public final class AppRuntime {
 			openFile(id)
 		case .notifications:
 			// The old inbox link: its replacement is the For You tab.
-			presentation = nil
-			selectedTab = .forYou
+			openForYou()
 		case .agents:
 			presentation = .agents
 		case .agent(_, let id):
@@ -561,6 +621,21 @@ public final class AppRuntime {
 	}
 
 	public func openAgent(_ id: String) { presentedAgentId = id }
+
+	/// Selects the For You tab, closing anything open over it.
+	public func openForYou() {
+		presentation = nil
+		selectedTab = .forYou
+	}
+
+	/// A tap on the home screen icon's menu. New message is the new-conversation sheet the ⌘N
+	/// command opens; For you is the For You tab. Both act on the workspace that is open.
+	public func perform(_ action: HomeScreenQuickAction) {
+		switch action {
+		case .newMessage: requestNewConversation()
+		case .forYou: openForYou()
+		}
+	}
 
 	/// Selects the Chats tab and asks for the thread.
 	public func openChat(_ id: String) {
@@ -621,6 +696,8 @@ public final class AppRuntime {
 		let running = forYouRuntime
 		forYouRuntime = nil
 		notificationPreferences = nil
+		featureFlags.reset()
+		createView.reset()
 		rosterProvider = nil
 		storiesProvider = StoriesProvider()
 		if let push {
@@ -634,6 +711,8 @@ public final class AppRuntime {
 		ChatsRuntime.signOut(actorId: actorId)
 		// Shares parked by the share extension live in the App Group container; same rule.
 		ShareQueue.shared()?.removeAll()
+		// The agents offered in the system share sheet are this account's too.
+		ShareSuggestions.clear()
 		router.reset()
 		presentation = nil
 		requestedConversationId = nil
@@ -644,6 +723,7 @@ public final class AppRuntime {
 		// Local traces of this account: what they searched for and files they exported to share.
 		SearchRecents.clearAll()
 		FileStore.clearExports()
+		AttachmentDownloader.clearAll()
 		stopSyncCoordinator()
 		// The cached copy of this account's data (feed, objects...) goes with the session.
 		DiskCache.clearAll()

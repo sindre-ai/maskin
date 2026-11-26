@@ -11,6 +11,8 @@ const ENTRY_FIELDS = new Set([
 	'id',
 	'title',
 	'content',
+	'append',
+	'replace',
 	'status',
 	'metadata',
 	'driver',

@@ -342,7 +342,7 @@ public final class LoopsStore {
 			if !loops.contains(where: { $0.id == id }) {
 				loops.insert(
 					LoopSummary(
-						id: id, name: title, content: content.isEmpty ? nil : content, status: .learning),
+						id: id, name: title, content: content.isEmpty ? nil : content, status: .pilot),
 					at: 0)
 				phase = .loaded
 			}

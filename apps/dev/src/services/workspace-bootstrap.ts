@@ -3,6 +3,9 @@ import type { Database } from '@maskin/db'
 import {
 	actors,
 	agentSkills,
+	installedLoops,
+	marketplaceLoopItems,
+	marketplaceLoops,
 	objects,
 	triggers,
 	workspaceMembers,
@@ -16,21 +19,23 @@ import {
 	DEFAULT_WORKSPACE_KNOWLEDGE,
 	DEFAULT_WORKSPACE_LOOPS,
 	DEFAULT_WORKSPACE_TRIGGERS,
+	KNOWLEDGE_WIKI_LOOP_SLUG,
 	type SeedSkill,
 	WORKSPACE_COACH_DEFAULT,
 	parseSkillMd,
 	skillNameSchema,
 	workspaceSettingsSchema,
 } from '@maskin/shared'
+import type { StorageProvider } from '@maskin/storage'
 import { and, eq, sql } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
-import { isEnterpriseActor } from '../lib/enterprise'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import {
 	buildChiefOfStaffKickoffPrompt,
 	shouldSkipOnboardingKickoff,
 } from '../lib/onboarding/chief-of-staff-kickoff'
+import { SEEDED_SKILL_HASH_KEY, seededSkillHash } from '../lib/seeded-skill-hash'
 import {
 	OwnershipCapExceededError,
 	computeEffectiveTier,
@@ -41,8 +46,11 @@ import {
 } from '../lib/workspace-capacity'
 import { sealWorkspaceLlmSecrets } from '../lib/workspace-secrets'
 import { type AgentStorageManager, workspaceSkillKey } from './agent-storage'
+import { startLoopChecklistSession } from './loop-checklist-provisioning'
+import { installLoopInTransaction } from './loop-install'
 import { startSession } from './session-lifecycle'
 import type { SessionManager } from './session-manager'
+import { autoSubscribe } from './subscriptions'
 
 export const DEFAULT_AGENT_IDS = [
 	'workspace_coach',
@@ -50,7 +58,6 @@ export const DEFAULT_AGENT_IDS = [
 	'driver',
 	'signal_analyst',
 	'researcher',
-	'knowledge_curator',
 ] as const
 
 type DefaultAgentId = (typeof DEFAULT_AGENT_IDS)[number]
@@ -348,6 +355,8 @@ export async function attachSkill(
 						storageKey,
 						sizeBytes,
 						isValid,
+						// Lets the boot sync tell this copy is still the seeded text if the seed changes later.
+						metadata: { [SEEDED_SKILL_HASH_KEY]: seededSkillHash(skill.content) },
 						createdBy,
 					})
 					.onConflictDoNothing()
@@ -553,7 +562,7 @@ export async function bootstrapDefaultAgents(
 		}
 	}
 
-	// Create the default Loop objects (Workspace improvements, Knowledge Wiki → digest),
+	// Create the default Loop objects (Workspace improvements),
 	// wiring metadata.trigger_ids to the triggers seeded above. Idempotent per
 	// workspace via the objects.title check, mirroring the agent/trigger checks
 	// above.
@@ -592,7 +601,7 @@ export async function bootstrapDefaultAgents(
 					type: 'loop',
 					title: loop.name,
 					content: loop.content,
-					status: 'learning',
+					status: 'pilot',
 					createdBy,
 					metadata: {
 						entry_condition: loop.entryCondition,
@@ -722,6 +731,122 @@ export async function bootstrapDefaultAgents(
 	}
 }
 
+/**
+ * Marketplace flows every new workspace starts with. Each is installed the way a
+ * person installing it from the marketplace gets it (an `installed_loops` row, the
+ * bundle's agents, triggers, skills and tabs), so the marketplace shows it as
+ * installed and pushes later versions to it, rather than a hand-made copy.
+ */
+const DEFAULT_MARKETPLACE_LOOP_SLUGS = [KNOWLEDGE_WIKI_LOOP_SLUG] as const
+
+/**
+ * Installs the default marketplace flows into a workspace. Runs post-commit and
+ * never throws: a flow that fails to install is logged and skipped, so signup and
+ * workspace creation are never failed by it. Safe to run twice — a flow the
+ * workspace already has installed is left alone.
+ *
+ * A slug missing from `marketplace_loops` (the marketplace seed has not run) is
+ * logged and skipped as well.
+ *
+ * With `startChecklist`, a flow that ships a checklist gets its driver started on it right after
+ * the install commits (best effort, never throws). Off by default: the caller turns it on only
+ * when the workspace may run sessions yet, so a workspace waiting for its card starts nothing.
+ */
+export async function installDefaultMarketplaceLoops(
+	db: Database,
+	agentStorage: AgentStorageManager,
+	storageProvider: StorageProvider,
+	workspaceId: string,
+	actorId: string,
+	options: { startChecklist?: boolean } = {},
+): Promise<void> {
+	for (const slug of DEFAULT_MARKETPLACE_LOOP_SLUGS) {
+		try {
+			const [loop] = await db
+				.select()
+				.from(marketplaceLoops)
+				.where(eq(marketplaceLoops.slug, slug))
+				.limit(1)
+
+			if (!loop || loop.retiredAt) {
+				logger.error('Skipped default marketplace flow — not in the marketplace', {
+					workspaceId,
+					slug,
+				})
+				continue
+			}
+
+			const [existing] = await db
+				.select({ id: installedLoops.id })
+				.from(installedLoops)
+				.where(
+					and(
+						eq(installedLoops.workspaceId, workspaceId),
+						eq(installedLoops.sourceLoopId, loop.id),
+					),
+				)
+				.limit(1)
+			if (existing) continue
+
+			const items = await db
+				.select()
+				.from(marketplaceLoopItems)
+				.where(eq(marketplaceLoopItems.loopId, loop.id))
+
+			const { installed, provisioned, checklistStart } = await db.transaction((tx) =>
+				installLoopInTransaction(tx, {
+					workspaceId,
+					actorId,
+					loop,
+					items,
+					agentStorage,
+					storageProvider,
+				}),
+			)
+
+			if (installed.objectId) {
+				await autoSubscribe(db, {
+					workspaceId,
+					actorId,
+					entityType: 'object',
+					entityId: installed.objectId,
+					source: 'author',
+				})
+			}
+
+			logger.info('Default marketplace flow installed', {
+				workspaceId,
+				slug,
+				installedLoopId: installed.id,
+				provisioned,
+			})
+
+			if (
+				options.startChecklist &&
+				checklistStart &&
+				installed.objectId &&
+				!shouldSkipOnboardingKickoff()
+			) {
+				await startLoopChecklistSession({
+					db,
+					workspaceId,
+					installerId: actorId,
+					installId: installed.id,
+					loop: { objectId: installed.objectId, name: loop.name },
+					parentTaskId: checklistStart.parentTaskId,
+					driverActorId: checklistStart.driverActorId,
+				})
+			}
+		} catch (err) {
+			logger.error('Failed to install default marketplace flow during workspace bootstrap', {
+				workspaceId,
+				slug,
+				err,
+			})
+		}
+	}
+}
+
 /** Lowercased part after the last "@", or undefined if there is no usable domain. */
 function emailDomain(email: string | null | undefined): string | undefined {
 	if (!email?.includes('@')) return undefined
@@ -745,13 +870,14 @@ function emailDomain(email: string | null | undefined): string | undefined {
  *
  * In-transaction (rolled back as a unit on failure):
  *   - the `workspaces` row + the owner's `workspace_members` row
- *   - all seven default agent actors and their membership rows
+ *   - all five default agent actors and their membership rows
  *   - pinning Chief of Staff as `settings.default_agent_id`
  *
  * Post-commit (each step non-fatal — these hit S3 / PostHog / the container
  * runtime, none of which can participate in a DB transaction):
  *   - the `workspace_created` analytics event
- *   - skills, workspace_skill files, triggers, and the default Loop objects
+ *   - skills, workspace_skill files, triggers, the default Loop objects, and the
+ *     default marketplace flow installs (Knowledge Wiki)
  *   - Chief of Staff's welcome + first-pass-research session
  *
  * `bootstrapDefaultAgents` is awaited rather than fired-and-forgotten: callers
@@ -765,6 +891,8 @@ function emailDomain(email: string | null | undefined): string | undefined {
 export async function provisionWorkspace(params: {
 	db: Database
 	agentStorage: AgentStorageManager | undefined
+	/** Needed to write the pages of marketplace flows the workspace starts with; without it those flows are skipped. */
+	storageProvider?: StorageProvider
 	sessionManager: SessionManager | undefined
 	name: string
 	ownerActorId: string
@@ -777,7 +905,8 @@ export async function provisionWorkspace(params: {
 	 */
 	awaitingCard?: boolean
 }): Promise<typeof workspaces.$inferSelect | null> {
-	const { db, agentStorage, sessionManager, name, ownerActorId, awaitingCard } = params
+	const { db, agentStorage, storageProvider, sessionManager, name, ownerActorId, awaitingCard } =
+		params
 
 	// Every workspace is provisioned on the trial tier — `billing` is written
 	// only by the Stripe webhook and /api/billing/*. POST /api/workspaces
@@ -812,7 +941,7 @@ export async function provisionWorkspace(params: {
 		const ownedPlans = await ownedWorkspacePlans(tx, ownerActorId)
 		const effectiveTier = computeEffectiveTier(ownedPlans, candidatePlan)
 		const cap = ownershipCapForTier(effectiveTier)
-		if (cap !== null && ownedPlans.length >= cap && !isEnterpriseActor(ownerActorId)) {
+		if (cap !== null && ownedPlans.length >= cap) {
 			throw new OwnershipCapExceededError({
 				actorId: ownerActorId,
 				effectiveTier,
@@ -907,6 +1036,25 @@ export async function provisionWorkspace(params: {
 			ownerActorId,
 			sessionManager,
 		).catch((err) => logger.error('workspace bootstrap failed', { workspaceId: workspace.id, err }))
+
+		// Marketplace flows a new workspace starts with (Knowledge Wiki). After the bootstrap
+		// above so its skills exist first; never fails provisioning.
+		if (storageProvider) {
+			await installDefaultMarketplaceLoops(
+				db,
+				agentStorage,
+				storageProvider,
+				workspace.id,
+				ownerActorId,
+				// Same gate as the Chief of Staff welcome below: no sessions without a session
+				// manager, and none while the workspace waits for its card.
+				{ startChecklist: Boolean(sessionManager) && !awaitingCard },
+			)
+		} else {
+			logger.warn('provisionWorkspace: no storageProvider — skipped default marketplace flows', {
+				workspaceId: workspace.id,
+			})
+		}
 	} else {
 		// Not a silent branch: without agentStorage the workspace ships with its
 		// agents but no skills, no triggers and no default Loop objects. That is

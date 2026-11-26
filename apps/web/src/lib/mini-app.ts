@@ -26,7 +26,13 @@
 // host answers (only after a click, only contract fields) and who has the flag.
 
 import { type DataQuerySpec, dataQuerySpecSchema } from '@maskin/shared'
-import { type ListSourceEntry, isListDeclaration, parseListSource } from './view-lists'
+import {
+	LIST_REFUSED_MESSAGE,
+	type ListSourceEntry,
+	deniedCountKey,
+	isListDeclaration,
+	parseListSource,
+} from './view-lists'
 
 export const MINI_APP_CSP = [
 	"default-src 'none'",
@@ -233,6 +239,11 @@ export const VIEWER_PAGE_MESSAGE = 'maskin:viewer:page'
 // `{ page: number }` (zero-based slide index).
 export const VIEWER_GOTO_PAGE_MESSAGE = 'maskin:viewer:goto-page'
 
+// postMessage type a host-paged deck (see `prepareStoryHtml`) posts to its host when a key or a
+// swipe inside the frame asks to move one slide. Payload: `{ delta: 1 | -1 }`. The host owns the
+// position, so the frame only asks.
+export const VIEWER_STEP_MESSAGE = 'maskin:viewer:step'
+
 // Slide selector — the same three signals viewer-detect.ts's DOM heuristic
 // accepts as "this is a deck", so whatever resolved to `deck` is what the
 // controller can page.
@@ -240,7 +251,9 @@ export const VIEWER_SLIDE_SELECTOR = '[data-slide], section.slide, [id^="slide"]
 
 // Applies the one-slide-at-a-time invariant to an already-collected slide
 // list: the active slide keeps its natural display, every other slide gets
-// `display: none`. Returns the clamped active index. Kept as a plain function
+// `display: none`. The active slide also gets the class `active` and the others lose it:
+// the briefing decks show a slide through `.slide.active` (opacity and visibility), so a slide
+// shown by display alone stays invisible. Returns the clamped active index. Kept as a plain function
 // over `(slides, index)` — no module-scope references — because the injected
 // controller embeds its source via `toString()` (see below), which is what
 // keeps the in-frame behaviour and the unit-tested behaviour the same code.
@@ -249,6 +262,7 @@ export function applyViewerPage(slides: HTMLElement[], index: number): number {
 	const clamped = Math.max(0, Math.min(index, slides.length - 1))
 	for (let i = 0; i < slides.length; i++) {
 		slides[i].style.display = i === clamped ? '' : 'none'
+		slides[i].classList.toggle('active', i === clamped)
 	}
 	return clamped
 }
@@ -279,7 +293,36 @@ export function showViewerPage(root: ParentNode, index: number): number {
 //      layout settles, and a 0x0 report leaves the stage stuck at
 //      `data-viewer-state="loading"` with no fit until a nav key or resize.
 //   2. Apply page changes commanded by the stage as `VIEWER_GOTO_PAGE_MESSAGE`.
-const VIEWER_PAGING_CONTROLLER = `<script>(function(){var SEL='${VIEWER_SLIDE_SELECTOR}';var apply=${applyViewerPage.toString()};function slides(){return Array.prototype.slice.call(document.querySelectorAll(SEL))}var current=0;function box(el){var r=el.getBoundingClientRect();return{w:r.width||el.scrollWidth,h:r.height||el.scrollHeight}}function post(w,h,total){try{parent.postMessage({type:'${VIEWER_PAGE_MESSAGE}',index:current,total:total,w:w,h:h},'*')}catch(e){}}function report(){var all=slides();if(!all.length)return;var b=box(all[current]||all[0]);post(b.w,b.h,all.length)}function settle(frames){var all=slides();var el=all[current]||all[0];if(!el)return;var b=box(el);if((b.w>0&&b.h>0)||frames<=0){post(b.w,b.h,all.length);return}requestAnimationFrame(function(){settle(frames-1)})}function go(i){current=apply(slides(),i);settle(12)}window.addEventListener('message',function(e){if(!e.data||e.data.type!=='${VIEWER_GOTO_PAGE_MESSAGE}')return;go(e.data.page|0)});if(document.readyState==='complete')go(0);else window.addEventListener('load',function(){go(0)});window.addEventListener('resize',report)})();</script>`
+// The host-driven variant (the For you story viewer) also takes the deck's own navigation away,
+// so the host's one pager is the only way to move: the deck's tap zones and its own pager are
+// hidden, and its arrow / space / page keys and its swipe are caught in the capture phase on
+// window, before the deck's handlers see them, and sent to the host as VIEWER_STEP_MESSAGE. Keys
+// the host does not own (notes, fullscreen) still reach the deck. The deck's speaker notes follow
+// the slide the controller shows, because the deck's own `show()` no longer runs.
+const VIEWER_TAKEOVER = `var st=document.createElement('style');st.textContent='.zone,.tap,.foot .nav{display:none!important}.foot{justify-content:flex-end!important}';(document.head||document.documentElement).appendChild(st);function notes(){var t=document.getElementById('notesText'),s=slides()[current];if(t&&s&&s.hasAttribute('data-notes'))t.textContent=s.getAttribute('data-notes')}function step(d){try{parent.postMessage({type:'${VIEWER_STEP_MESSAGE}',delta:d},'*')}catch(e){}}var KEYS={ArrowRight:1,ArrowDown:1,PageDown:1,' ':1,j:1,J:1,ArrowLeft:-1,ArrowUp:-1,PageUp:-1,k:-1,K:-1,Home:0,End:0};window.addEventListener('keydown',function(e){if(e.metaKey||e.ctrlKey||e.altKey)return;var d=KEYS[e.key];if(d===undefined)return;e.preventDefault();e.stopImmediatePropagation();if(d)step(d)},true);var x0=null,y0=0;window.addEventListener('touchstart',function(e){var t=e.changedTouches[0];x0=t.clientX;y0=t.clientY;e.stopImmediatePropagation()},{capture:true,passive:true});window.addEventListener('touchend',function(e){e.stopImmediatePropagation();if(x0===null)return;var t=e.changedTouches[0],dx=t.clientX-x0,dy=t.clientY-y0;x0=null;if(Math.abs(dx)>40&&Math.abs(dx)>Math.abs(dy)*1.3)step(dx<0?1:-1)},{capture:true,passive:true});`
+
+// `start` is the slide the frame opens on: a host that walks back into a deck opens it on its
+// last slide, so there is no flash of slide one first. Zero for the file viewer, whose output is
+// unchanged.
+function pagingController(options?: { takeover?: boolean; start?: number }): string {
+	const start = Math.max(0, Math.trunc(options?.start ?? 0)) || 0
+	const takeover = options?.takeover ?? false
+	return `<script>(function(){var SEL='${VIEWER_SLIDE_SELECTOR}';var apply=${applyViewerPage.toString()};function slides(){return Array.prototype.slice.call(document.querySelectorAll(SEL))}var current=${start};function box(el){var r=el.getBoundingClientRect();return{w:r.width||el.scrollWidth,h:r.height||el.scrollHeight}}function post(w,h,total){try{parent.postMessage({type:'${VIEWER_PAGE_MESSAGE}',index:current,total:total,w:w,h:h},'*')}catch(e){}}function report(){var all=slides();if(!all.length)return;var b=box(all[current]||all[0]);post(b.w,b.h,all.length)}function settle(frames){var all=slides();var el=all[current]||all[0];if(!el)return;var b=box(el);if((b.w>0&&b.h>0)||frames<=0){post(b.w,b.h,all.length);return}requestAnimationFrame(function(){settle(frames-1)})}function go(i){current=apply(slides(),i);${takeover ? 'notes();' : ''}settle(12)}${takeover ? VIEWER_TAKEOVER : ''}window.addEventListener('message',function(e){if(!e.data||e.data.type!=='${VIEWER_GOTO_PAGE_MESSAGE}')return;go(e.data.page|0)});if(document.readyState==='complete')go(${start});else window.addEventListener('load',function(){go(${start})});window.addEventListener('resize',report)})();</script>`
+}
+
+const VIEWER_PAGING_CONTROLLER = pagingController()
+
+// For you story viewer variant of `prepareMiniAppHtml`: same CSP + data-slot bootstrap, plus the
+// paging controller in its host-driven form (see VIEWER_TAKEOVER). For a deck only: a page with
+// no slides keeps `prepareMiniAppHtml`, so its own keys and scrolling are left alone. `start` is
+// the zero-based slide the frame opens on.
+export function prepareStoryHtml(html: string, start = 0): string {
+	const scrubbed = stripMetaRefresh(stripAgentCsp(html))
+	return injectIntoHtml(
+		scrubbed,
+		CSP_META + DATA_SLOT_BOOTSTRAP + pagingController({ takeover: true, start }),
+	)
+}
 
 // Viewer-shell variant of `prepareMiniAppHtml`: same CSP + data-slot
 // bootstrap, plus the doc-size + wheel-forwarding reporter so the stage can
@@ -316,6 +359,10 @@ export const BRIDGE_OPEN_MESSAGE = 'maskin:bridge:open'
 export const BRIDGE_PROPOSE_MESSAGE = 'maskin:bridge:propose'
 /** Host -> frame: { type, id, data } or { type, id, error }. */
 export const BRIDGE_RESULT_MESSAGE = 'maskin:bridge:result'
+/** Host -> frame: { type, id: number }. Sent only on the person's Export click; the frame answers with BRIDGE_EXPORT_RESULT_MESSAGE. */
+export const BRIDGE_EXPORT_MESSAGE = 'maskin:bridge:export'
+/** Frame -> host: { type, id, pages: [{ xhtml, w, h, bg }] } or { type, id, error }. The rendered document, scripts removed, styles written onto each element. */
+export const BRIDGE_EXPORT_RESULT_MESSAGE = 'maskin:bridge:export-result'
 /** Host -> frame: fired every refresh tick; the frame re-emits it as a window "maskin:refresh" event. */
 export const BRIDGE_REFRESH_MESSAGE = 'maskin:bridge:refresh'
 
@@ -325,6 +372,14 @@ export const BRIDGE_REFRESH_MESSAGE = 'maskin:bridge:refresh'
 // the host is `parent.parent`; the frame only accepts results from it. Unlike VIEWER_REPORTER this
 // does not swallow wheel events: an inline view must let the page scroll.
 const BRIDGE_SCRIPT = `<script>(function(){var n=0,p={};window.maskin={query:function(name){return new Promise(function(res,rej){var id=++n;p[id]={res:res,rej:rej};parent.parent.postMessage({type:'${BRIDGE_QUERY_MESSAGE}',id:id,name:String(name)},'*')})},open:function(id){parent.parent.postMessage({type:'${BRIDGE_OPEN_MESSAGE}',id:String(id)},'*')},propose:function(id,field,value){parent.parent.postMessage({type:'${BRIDGE_PROPOSE_MESSAGE}',id:String(id),field:String(field),value:String(value)},'*')}};window.addEventListener('message',function(e){if(e.source!==parent.parent)return;var d=e.data;if(!d)return;if(d.type==='${BRIDGE_RESULT_MESSAGE}'){var h=p[d.id];if(!h)return;delete p[d.id];if(d.error)h.rej(new Error(d.error));else h.res(d.data)}else if(d.type==='${BRIDGE_REFRESH_MESSAGE}'){window.dispatchEvent(new Event('maskin:refresh'))}})})();</script>`
+
+// Answers an export request with what the frame has drawn. It runs only when the host asks, and
+// the host asks only after the person's Export click; it reads the frame's own document and posts
+// the result to the host, nothing else. The copy has no scripts, style sheets, links, frames or
+// event handlers, and every element carries its computed style, so the host can draw it as an
+// image without running anything. A document with slides answers one page per slide (the others
+// hidden while it is copied), anything else one page.
+const EXPORT_RESPONDER = `<script>(function(){var SEL='${VIEWER_SLIDE_SELECTOR}';var DROP='script,style,link,meta,noscript,iframe,frame,object,embed,base,template';function copy(o,c){var cs=getComputedStyle(o),t='';for(var i=0;i<cs.length;i++)t+=cs[i]+':'+cs.getPropertyValue(cs[i])+';';c.setAttribute('style',t)}function bg(){var a=[document.body,document.documentElement];for(var i=0;i<a.length;i++){var c=getComputedStyle(a[i]).backgroundColor;if(c&&c!=='transparent'&&c!=='rgba(0, 0, 0, 0)')return c}return '#ffffff'}function snap(keep,slides){var body=document.body,all=body.querySelectorAll('*'),clone=body.cloneNode(true),cl=clone.querySelectorAll('*'),i;copy(body,clone);for(i=0;i<all.length;i++)if(cl[i])copy(all[i],cl[i]);var cs=slides?clone.querySelectorAll(SEL):[];for(i=0;i<cs.length;i++)if(i!==keep&&cs[i].parentNode)cs[i].parentNode.removeChild(cs[i]);var cv=body.querySelectorAll('canvas'),cc=clone.querySelectorAll('canvas');for(i=0;i<cc.length;i++){try{var im=document.createElement('img');im.setAttribute('src',cv[i].toDataURL('image/png'));im.setAttribute('style',cc[i].getAttribute('style')||'');cc[i].parentNode.replaceChild(im,cc[i])}catch(e){cc[i].parentNode.removeChild(cc[i])}}var d=clone.querySelectorAll(DROP);for(i=0;i<d.length;i++)if(d[i].parentNode)d[i].parentNode.removeChild(d[i]);var e=[clone].concat(Array.prototype.slice.call(clone.querySelectorAll('*')));for(i=0;i<e.length;i++){var at=Array.prototype.slice.call(e[i].attributes);for(var j=0;j<at.length;j++){var n=at[j].name.toLowerCase();if(n.indexOf('on')===0||((n==='href'||n==='src'||n==='xlink:href')&&/^\\s*javascript:/i.test(at[j].value)))e[i].removeAttribute(at[j].name)}}return new XMLSerializer().serializeToString(clone)}function pages(){var s=Array.prototype.slice.call(document.querySelectorAll(SEL)),out=[],d=document.documentElement,b=document.body;if(!s.length){var r=b.getBoundingClientRect();out.push({xhtml:snap(0,false),w:Math.ceil(Math.max(d.scrollWidth,r.width)),h:Math.ceil(Math.max(d.scrollHeight,r.height)),bg:bg()});return out}var was=s.map(function(x){return x.style.display});try{for(var k=0;k<s.length;k++){for(var m=0;m<s.length;m++)s[m].style.display=m===k?was[m]:'none';var q=s[k].getBoundingClientRect();out.push({xhtml:snap(k,true),w:Math.ceil(q.width||s[k].scrollWidth),h:Math.ceil(q.height||s[k].scrollHeight),bg:bg()})}}finally{for(var z=0;z<s.length;z++)s[z].style.display=was[z]}return out}window.addEventListener('message',function(ev){if(ev.source!==parent.parent)return;var d=ev.data;if(!d||d.type!=='${BRIDGE_EXPORT_MESSAGE}')return;var id=d.id;try{parent.parent.postMessage({type:'${BRIDGE_EXPORT_RESULT_MESSAGE}',id:id,pages:pages()},'*')}catch(err){parent.parent.postMessage({type:'${BRIDGE_EXPORT_RESULT_MESSAGE}',id:id,error:'The view could not be read.'},'*')}})})();</script>`
 
 // Reports the document's content height (not scrollHeight, which can never
 // shrink below the frame's own height) on load, resize and every layout change,
@@ -352,6 +407,7 @@ export function prepareBridgedViewHtml(html: string, options?: { forwardWheel?: 
 			DATA_SLOT_BOOTSTRAP +
 			VIEW_SIZE_REPORTER +
 			BRIDGE_SCRIPT +
+			EXPORT_RESPONDER +
 			wheel,
 	)
 }
@@ -435,6 +491,9 @@ export function readViewSources(html: string): ViewSourcesResult {
 				error:
 					`Source "${name}" is not a valid query: ${issue?.path.join('.') || 'query'} ${issue?.message ?? ''}`.trim(),
 			}
+		}
+		if (deniedCountKey(parsed.data) !== null) {
+			return { ok: false, error: `Source "${name}": ${LIST_REFUSED_MESSAGE}.` }
 		}
 		sources.set(name, parsed.data)
 	}

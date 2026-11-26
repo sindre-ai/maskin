@@ -30,15 +30,28 @@ describe('trigger rows', () => {
 	})
 
 	it('shows the schedule for each kind', () => {
-		expect(triggerSchedule(row())).toBe('0 * * * * (UTC)')
+		expect(triggerSchedule(row(), NOW)).toBe('every hour at minute 0')
 		expect(
 			triggerSchedule(
 				row({ type: 'reminder', config: { scheduled_at: '2026-11-12T09:00:00.000Z' } }),
 			),
-		).toBe('once at 2026-11-12T09:00:00.000Z')
+		).toBe('once at 2026-11-12 10:00')
 		expect(
 			triggerSchedule(row({ type: 'event', config: { entity_type: 'task', action: 'created' } })),
 		).toBe('on created task')
+	})
+
+	it('shows a cron in Copenhagen time: 20:00 UTC is 21:00 in winter and 22:00 in summer', () => {
+		const daily = row({ config: { expression: '0 20 * * *' } })
+		expect(triggerSchedule(daily, NOW)).toBe('every day at 21:00')
+		expect(triggerSchedule(daily, new Date('2026-07-11T07:30:00.000Z'))).toBe('every day at 22:00')
+		expect(triggerSchedule(daily, NOW)).not.toMatch(/UTC|CET|CEST/)
+	})
+
+	it('keeps a cron it cannot convert as written and says which clock it runs on', () => {
+		expect(triggerSchedule(row({ config: { expression: '*/15 9-17 * * 1-5' } }), NOW)).toBe(
+			'*/15 9-17 * * 1-5 (UTC)',
+		)
 	})
 
 	it('gives the next run for an enabled recurring or one-time trigger, otherwise null', () => {
@@ -78,7 +91,8 @@ describe('trigger rows', () => {
 			name: 'Calling run',
 			status: 'enabled',
 			kind: 'recurring',
-			schedule: '0 * * * * (UTC)',
+			schedule: 'every hour at minute 0',
+			cron: '0 * * * *',
 			next_run: '2026-11-11T08:00:00.000Z',
 			last_run: '2026-11-11T07:00:00.000Z',
 			agent: AGENT,

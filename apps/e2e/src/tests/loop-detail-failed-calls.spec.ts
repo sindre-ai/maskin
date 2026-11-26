@@ -11,7 +11,7 @@ test.describe('Loop detail page when its calls fail', () => {
 			const loop = await account.api.createObject(account.workspaceId, {
 				type: 'loop',
 				title: 'Slow loop',
-				status: 'learning',
+				status: 'pilot',
 				content: 'Every slow request gets an answer',
 			})
 
@@ -58,7 +58,7 @@ test.describe('Loops list display setting', () => {
 		await account.api.createObject(account.workspaceId, {
 			type: 'loop',
 			title: 'Fresh loop',
-			status: 'learning',
+			status: 'pilot',
 		})
 		const failed: string[] = []
 		page.on('response', (res) => {

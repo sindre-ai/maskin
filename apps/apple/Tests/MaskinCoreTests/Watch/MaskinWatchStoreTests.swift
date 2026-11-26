@@ -86,7 +86,7 @@ struct WatchSnapshotTests {
 	func roundTrip() {
 		let original = WatchSnapshot(
 			cards: [.init(id: "1", sender: "Forge", headline: "Ship?", options: [DecisionOption(label: "Ship", recommended: true)])],
-			flows: [.init(id: "f", name: "Outreach", progress: 0.4, paused: false, needsYou: true, cycleStage: "Cycle 2 \u{00B7} Learning")],
+			flows: [.init(id: "f", name: "Outreach", progress: 0.4, paused: false, needsYou: true, cycleStage: "Cycle 2 \u{00B7} Pilot")],
 			briefing: "Hi", firstName: "Ada", updatedAt: Date(timeIntervalSince1970: 100))
 		#expect(WatchSnapshot(context: original.context()) == original)
 	}

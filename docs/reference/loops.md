@@ -18,7 +18,7 @@ A loop is not a separate table. It is composed from existing primitives:
 
 | Piece | Where it lives |
 |-------|----------------|
-| The loop itself | `objects` row with `type = 'loop'` (statuses: `draft`, `learning`, `supervised`, `fully_autonomous`, `paused` — see [Status](#status-a-graduated-trust-ladder)) |
+| The loop itself | `objects` row with `type = 'loop'` (statuses: `draft`, `pilot`, `supervised`, `live`, `paused`, `archived` — see [Status](#status-a-graduated-trust-ladder)) |
 | Steps | Ordinary `triggers` rows, referenced by the loop's `metadata.trigger_ids` — a step and a trigger are the same thing |
 | Agents | The `target_actor_id` of each step trigger (must be an agent actor) |
 | Member objects | `in_loop` relationship edges — source = loop, target = member object (any type) |
@@ -31,12 +31,24 @@ extensions. Loop membership is the edge, never a back-reference on the member.
 
 ## Status: a graduated trust ladder
 
-`status` is not an on/off toggle — it tracks how much autonomy a loop has earned in this
-workspace: `draft` (set up but not live) → `learning` → `supervised` → `fully_autonomous`, in
-increasing order of trust. `paused` can be reached from any point on that ladder and disables
-every trigger the loop references — nothing fires until it leaves `paused`. That behavior lives
-in `PATCH /api/objects/:id` (`apps/dev/src/routes/objects.ts`), so it applies uniformly whether
-the status change comes from the web UI's pause/resume button or the MCP `update_loop` tool.
+`status` tracks how much autonomy a loop has earned in this workspace, and it decides whether the
+loop runs at all. One ladder of names is used everywhere: the API, the MCP tools, the web and iPhone
+screens, chat routing and next steps.
+
+| Status | What it does |
+|--------|--------------|
+| `draft` | Set up, not running: every trigger the loop references is off. The default for a new loop. |
+| `pilot` | Running, first rung: triggers are on. Marketplace installs and flows drafted from a sentence start here. |
+| `supervised` | Running, second rung: triggers on, for a flow that has earned some trust. |
+| `live` | Running, top rung: triggers on, fully trusted. |
+| `paused` | Stopped on purpose from any rung: every trigger is off until the loop moves to another status. |
+| `archived` | Retired. Terminal: every trigger the loop references is off, and it drops out of the running views. |
+
+`draft`, `paused` and `archived` turn every trigger in the loop's `metadata.trigger_ids` off, and
+moving to a running status (`pilot`, `supervised`, `live`) turns them back on. Moving between two off
+statuses, or between the running rungs, changes nothing. That behavior lives in `PATCH /api/objects/:id` (`apps/dev/src/lib/object-update.ts`),
+so it applies uniformly whether the status change comes from the web UI, the iPhone app or the MCP
+`update_loop` tool. Whether `pilot` also holds back steps that leave the company is not decided yet.
 
 ## Open vs closed loops
 
@@ -60,11 +72,11 @@ agent actors, so human participation always flows through an agent step.
 ## Derived read API
 
 `GET /api/loops` (`apps/dev/src/routes/loops.ts`) returns every loop in the workspace with
-derived stats: a composite `pill` (`draft` / `learning` / `supervised` / `fully_autonomous` /
-`paused` / `waiting_on_you`), in-progress and closed member counts, median time-to-close, the
+derived stats: a composite `pill` (`draft` / `pilot` / `supervised` / `live` /
+`paused` / `archived` / `waiting_on_you`), in-progress and closed member counts, median time-to-close, the
 step trigger ids, and the distinct agent ids those triggers fire. `waiting_on_you` only overrides
-the three "live" statuses (`learning` / `supervised` / `fully_autonomous`) when a member object
-has unread activity — `draft` and `paused` always render as themselves.
+the three running statuses (`pilot` / `supervised` / `live`) when a member object
+has unread activity — `draft`, `paused` and `archived` always render as themselves.
 
 Whether a member counts as **closed** is resolved per loop: the loop's own
 `metadata.closed_statuses` entry for the member's type wins; otherwise the built-in fallback
@@ -91,7 +103,7 @@ The MCP server exposes loops as first-class tools (`packages/mcp`):
   created; if the loop insert fails, just-created step triggers are rolled back. The response
   returns `steps` — each trigger with its resolved agent nested directly under it — rather than a
   flat trigger-id list plus a separate agent-id list. Creating (or updating) a loop with an
-  effective status of `paused` starts its triggers disabled.
+  effective status of `draft`, `paused` or `archived` starts its triggers disabled.
   The call fails, before anything is created, when `driver_id` is missing or is not an
   unpaused agent in the workspace (a human or unknown actor is refused). Pick an agent whose job
   covers the outcome, preferably the owner of the main target; the first target's `ownerActorId`
@@ -103,7 +115,7 @@ The MCP server exposes loops as first-class tools (`packages/mcp`):
 - **`list_loops`** — wraps `GET /api/loops` with deep links to `/{workspace}/loops/{id}`.
 
 Do not author loops through raw `create_objects` — the tools above wire the metadata and edges
-correctly. Marketplace loop *templates* are installed via `get_started` (see
+correctly. Marketplace loop *templates* are installed via `install_loop` (see
 `apps/dev/src/routes/installed-loops.ts`); installing one provisions its items and creates the
 `type = 'loop'` object automatically. A locked install follows the catalog: the hourly version
 pusher brings it to the newest version, and `POST /api/installed-loops/{id}/update` ("update

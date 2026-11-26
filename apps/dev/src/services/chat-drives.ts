@@ -1,6 +1,7 @@
 import type { Database } from '@maskin/db'
 import { conversations, objects, sessions } from '@maskin/db/schema'
 import {
+	LOOP_RUNNING_STATUSES,
 	TERMINAL_STATUSES_BY_TYPE,
 	buildWebAppHref,
 	loopTargetSchema,
@@ -18,9 +19,9 @@ const MAX_OPEN_OBJECTS = 5
 const CLOSE_CONDITION_MAX = 200
 const TITLE_MAX = 80
 
-// A loop that is drafted or paused is not running, so it is not something the
-// agent is driving right now.
-const LIVE_LOOP_STATUSES = ['learning', 'supervised', 'fully_autonomous']
+// A loop that is drafted, paused or archived is not running, so it is not
+// something the agent is driving right now.
+const LIVE_LOOP_STATUSES = [...LOOP_RUNNING_STATUSES]
 const OPEN_OBJECT_TYPES = ['bet', 'task', 'insight'] as const
 
 export interface ChatDrivesSession {

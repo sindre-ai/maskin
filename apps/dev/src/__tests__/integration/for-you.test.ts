@@ -401,14 +401,50 @@ describe('GET /api/for-you', () => {
 			expect(await list()).toHaveLength(2)
 		})
 
-		it('hides a curated card whose source comment has an expired decision', async () => {
-			const past = new Date(Date.now() - 60_000).toISOString()
-			const obj = await insertObject(db, workspaceId, humanId, { type: 'task', status: 'todo' })
-			const source = await decisionComment(obj.id, {
-				decision: { ...DECISION, expires_at: past },
+		describe('a curated card whose source comment has an expired decision', () => {
+			async function expiredCurated() {
+				const past = new Date(Date.now() - 60_000).toISOString()
+				const obj = await insertObject(db, workspaceId, humanId, { type: 'task', status: 'todo' })
+				const source = await decisionComment(obj.id, {
+					decision: { ...DECISION, expires_at: past },
+				})
+				const card = await item(
+					{ objectId: obj.id },
+					{ source_comment_id: source, headline: 'expired ask' },
+				)
+				return { source, card }
+			}
+
+			it('stays on the list, and the expired decision is not repeated as a second card', async () => {
+				await expiredCurated()
+				const items = await list()
+				expect(items).toHaveLength(1)
+				expect(items[0].source).toBe('curated')
+				expect(items[0].headline).toBe('expired ask')
 			})
-			await item({ objectId: obj.id }, { source_comment_id: source, headline: 'expired ask' })
-			expect(await list()).toEqual([])
+
+			it('goes on Dismiss', async () => {
+				const { card } = await expiredCurated()
+				expect(await list()).toHaveLength(1)
+				const res = await post('/api/for-you/dismissals', { notification_id: card.id })
+				expect(res.status).toBe(200)
+				expect(await list()).toEqual([])
+			})
+
+			it('goes on a withdrawal', async () => {
+				const { source } = await expiredCurated()
+				expect(await list()).toHaveLength(1)
+				const res = await appAs(agentId, 'agent').request(
+					jsonRequest(
+						'POST',
+						'/api/for-you/withdrawals',
+						{ comment_id: source, reason: 'The deadline passed' },
+						{ 'X-Workspace-Id': workspaceId },
+					),
+				)
+				expect(res.status).toBe(200)
+				expect(await list()).toEqual([])
+			})
 		})
 
 		it('keeps a card with no stamp and no assumed status when the object moves on', async () => {

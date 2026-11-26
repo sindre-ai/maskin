@@ -148,6 +148,10 @@ export async function probeClaudeSubscription(
 export interface UnusableCredentialInfo {
 	transient: boolean
 	detail: string
+	/** Set when every login in the chain was rejected: the classifier's reason (quota_exhausted, auth_failed). */
+	reason?: string
+	/** Set when that rejection carried a reset time (ISO-8601): when a login may accept requests again. */
+	retryAt?: string
 }
 
 export interface FailoverParams {
@@ -356,6 +360,8 @@ export async function resolveClaudeCredentialsWithFailover(
 			onUnusable?.({
 				transient: false,
 				detail: `the last Claude subscription in the failover chain was also rejected (${decision.reason})`,
+				reason: decision.reason,
+				...(decision.retryAt ? { retryAt: decision.retryAt } : {}),
 			})
 			return null
 		}

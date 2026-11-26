@@ -29,6 +29,12 @@ describe('conversationListQuerySchema', () => {
 		expect(conversationListQuerySchema.parse({}).archived).toBe(false)
 	})
 
+	it('reads later like the other flags and leaves it unset when omitted', () => {
+		expect(conversationListQuerySchema.parse({}).later).toBeUndefined()
+		expect(conversationListQuerySchema.parse({ later: 'true' }).later).toBe(true)
+		expect(conversationListQuerySchema.parse({ later: 'false' }).later).toBe(false)
+	})
+
 	it('reads pinned and unread_only the same way', () => {
 		const parsed = conversationListQuerySchema.parse({ pinned: 'false', unread_only: 'true' })
 		expect(parsed.pinned).toBe(false)

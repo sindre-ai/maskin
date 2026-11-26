@@ -197,6 +197,24 @@ describe('DisplayPanel', () => {
 		expect(props.onColumnVisibilityChange).toHaveBeenCalledWith('status', false)
 	})
 
+	it('Select all turns on every hidden property, Deselect all turns off every shown one', async () => {
+		const user = userEvent.setup()
+		const onColumnVisibilityChange = vi.fn()
+		renderPanel({
+			columnVisibility: { status: true, owner: false, createdAt: true },
+			onColumnVisibilityChange,
+		})
+		await user.click(screen.getByRole('button', { name: /display/i }))
+		await user.click(screen.getByRole('button', { name: 'Select all' }))
+		expect(onColumnVisibilityChange).toHaveBeenCalledTimes(1)
+		expect(onColumnVisibilityChange).toHaveBeenCalledWith('owner', true)
+		onColumnVisibilityChange.mockClear()
+		await user.click(screen.getByRole('button', { name: 'Deselect all' }))
+		expect(onColumnVisibilityChange).toHaveBeenCalledWith('status', false)
+		expect(onColumnVisibilityChange).toHaveBeenCalledWith('createdAt', false)
+		expect(onColumnVisibilityChange).not.toHaveBeenCalledWith('owner', false)
+	})
+
 	it('hides the View section when showView=false', async () => {
 		const user = userEvent.setup()
 		renderPanel({ showView: false })

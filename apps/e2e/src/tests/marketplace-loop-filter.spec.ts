@@ -3,7 +3,7 @@ import { SHIP_GATE_VIEWPORTS, VIEWPORTS } from '../helpers/viewports'
 
 // Covers T2 of the Marketplace polish bet: the free-text marketplace filter
 // input and its empty state. The dev bootstrap seeds two bundle loops
-// (Product Discovery, Market & Competitor Watch) so the marketplace loads a
+// (Product Discovery, Competitor watch) so the marketplace loads a
 // real set of loops on every run.
 
 const FILTER_LABEL = 'Filter marketplace'
@@ -96,17 +96,13 @@ test.describe('Marketplace loop filter', () => {
 		const loopsSection = page.getByRole('region', { name: 'Flows' })
 		await expect(loopsSection).toBeVisible({ timeout: 20000 })
 		await expect(loopsSection.getByRole('heading', { name: /Product Discovery/ })).toBeVisible()
-		await expect(
-			loopsSection.getByRole('heading', { name: /Market & Competitor Watch/ }),
-		).toBeVisible()
+		await expect(loopsSection.getByRole('heading', { name: /Competitor watch/ })).toBeVisible()
 
 		const filter = page.getByRole('searchbox', { name: FILTER_LABEL }).and(page.locator(':visible'))
 		await filter.fill('Product Discovery Flow')
 
 		await expect(loopsSection.getByRole('heading', { name: /Product Discovery/ })).toBeVisible()
-		await expect(
-			loopsSection.getByRole('heading', { name: /Market & Competitor Watch/ }),
-		).toHaveCount(0)
+		await expect(loopsSection.getByRole('heading', { name: /Competitor watch/ })).toHaveCount(0)
 	})
 
 	test('combines text query with a type chip (AND) on mobile', async ({ page, account }) => {

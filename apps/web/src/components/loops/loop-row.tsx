@@ -5,7 +5,7 @@ import type { ActorListItem, LoopSummary } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { formatFigure } from '@/lib/format-number'
 import { Link } from '@tanstack/react-router'
-import { LOOP_PILL_STYLES, UPGRADE_PILL, isLiveLoopPill } from './loop-pill'
+import { UPGRADE_PILL, isLiveLoopPill, loopPillStyle } from './loop-pill'
 import { paceVerdict } from './target-card'
 
 // Plain-language "what happened last" line, derived purely from the loop's live
@@ -54,7 +54,7 @@ export function loopProgress(loop: LoopSummary): {
 function lastActivityText(loop: LoopSummary): string {
 	// Live but idle: name the rung of the autonomy ladder it sits on
 	// rather than a generic "Running", which no longer exists.
-	return loopActivityLine(loop) ?? LOOP_PILL_STYLES[loop.pill].label
+	return loopActivityLine(loop) ?? loopPillStyle(loop.pill).label
 }
 
 export function LoopRow({
@@ -77,7 +77,7 @@ export function LoopRow({
 	 *  the same place the left-nav Upgrade button goes. */
 	onNoCreditsClick?: () => void
 }) {
-	const pill = LOOP_PILL_STYLES[loop.pill]
+	const pill = loopPillStyle(loop.pill)
 	const agentCards = loop.agentIds
 		.map((id) => actors?.find((a) => a.id === id))
 		.filter((a): a is ActorListItem => Boolean(a))

@@ -18,34 +18,19 @@ struct DraftStackView: View {
 	@State private var failedKey: String?
 	@State private var confirmingAll = false
 
-	private func key(_ draft: DecisionDraft, _ index: Int) -> String { draft.id ?? String(index) }
-
-	/// Something to send: a file card or a draft already approved or sent has no Send and Skip.
-	private func offersActions(_ draft: DecisionDraft) -> Bool {
-		draft.file == nil && draft.preview?.delivery != .approved && draft.preview?.delivery != .sent
-	}
-
-	private func name(_ draft: DecisionDraft) -> String {
-		let to = draft.to?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-		return to.isEmpty ? draft.label : to
-	}
-
+	private var rules: DraftStackRules { DraftStackRules(drafts: drafts) }
+	private func key(_ draft: DecisionDraft, _ index: Int) -> String { rules.key(draft, index) }
+	private func offersActions(_ draft: DecisionDraft) -> Bool { rules.offersActions(draft) }
+	private func name(_ draft: DecisionDraft) -> String { rules.name(draft) }
 	/// The messages still open, with their positions: what Send all and Skip all act on.
-	private var pending: [(index: Int, draft: DecisionDraft)] {
-		drafts.enumerated().compactMap { index, draft in
-			offersActions(draft) && done[key(draft, index)] == nil ? (index, draft) : nil
-		}
-	}
+	private var pending: [(index: Int, draft: DecisionDraft)] { rules.pending(done: done) }
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s7) {
 			ForEach(Array(drafts.enumerated()), id: \.offset) { index, draft in
 				let k = key(draft, index)
 				if let outcome = done[k] {
-					Text(
-						outcome == .send
-							? "Told the agent to send \u{00B7} \(name(draft))" : "Skipped \u{00B7} \(name(draft))"
-					)
+					Text(rules.receipt(draft, outcome: outcome))
 					.font(MaskinTypeface.sans(MaskinFontSize.t13))
 					.foregroundStyle(MaskinColor.ink4)
 					.frame(maxWidth: .infinity, alignment: .leading)
@@ -156,6 +141,6 @@ struct DraftStackView: View {
 		}
 		failedKey = nil
 		withAnimation(MaskinMotion.standard) { done[k] = action }
-		if done.count == drafts.filter(offersActions).count { allDone() }
+		if rules.allSettled(done: done) { allDone() }
 	}
 }

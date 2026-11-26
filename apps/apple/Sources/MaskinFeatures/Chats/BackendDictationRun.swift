@@ -44,7 +44,7 @@ final class BackendDictationRun {
 	var previewText: String { previews.text }
 
 	init(
-		service: any SpeechTranscribing, language: String?,
+		service: any SpeechTranscribing,
 		previewRecognizer: SFSpeechRecognizer?,
 		onText: @escaping @MainActor (String) -> Void,
 		onPreview: @escaping @MainActor (String) -> Void,
@@ -54,7 +54,7 @@ final class BackendDictationRun {
 		onAnswer: @escaping @MainActor (_ empty: Bool) -> Void
 	) {
 		queue = PhraseTranscriptionQueue(
-			transcriber: service, language: language, onText: onText, onFailure: { onFailure(.failed($0)) })
+			transcriber: service, onText: onText, onFailure: { onFailure(.failed($0)) })
 		self.onFailure = onFailure
 		self.onInterrupted = onInterrupted
 		self.onLimit = onLimit
@@ -183,7 +183,7 @@ final class BackendDictationRun {
 		private let converter: AVAudioConverter
 		private let outputFormat: AVAudioFormat
 		private let phrases: AsyncStream<Data>.Continuation
-		private var segmenter = PhraseSegmenter()
+		private var segmenter = PhraseSegmenter(options: .server)
 		private var samples: [Float] = []
 		/// Milliseconds of audio seen, so pauses are measured in recorded time, not wall time.
 		private var clockMs = 0.0
@@ -240,7 +240,7 @@ final class BackendDictationRun {
 		func finish() {
 			let heard = preview?.heardWords ?? false
 			lock.lock()
-			let tail = !finished && (segmenter.hasVoice || heard) ? samples : []
+			let tail = !finished && (segmenter.hasSpeech || heard) ? samples : []
 			finished = true
 			samples = []
 			lock.unlock()

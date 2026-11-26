@@ -10,6 +10,7 @@ struct ObjectsDisplaySheet: View {
 	let picking: SelectionModel
 	let intents: ObjectsListIntents
 	@Environment(\.dismiss) private var dismiss
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 
 	var body: some View {
 		DisplaySheet(canReset: store.canResetDisplay, onReset: { run { await store.resetDisplay() } }) {
@@ -86,6 +87,19 @@ struct ObjectsDisplaySheet: View {
 					DisplayChip(title: "Save as view", isOn: false) {
 						dismiss()
 						intents.namingView = true
+					}
+				}
+			}
+			if let runtime, runtime.createViewAgent != nil, store.scope != .files {
+				DisplaySection(title: nil) {
+					DisplayChip(title: CreateViewMessage.label, isOn: false) {
+						dismiss()
+						runtime.startCreateView(
+							.list(
+								type: store.typeFilter,
+								filters: CreateViewMessage.listFilters(
+									status: store.statusFilter, search: store.searchText,
+									needsYouOnly: store.needsYouOnly, starredOnly: store.starredOnly)))
 					}
 				}
 			}

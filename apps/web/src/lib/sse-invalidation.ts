@@ -1,4 +1,5 @@
-import type { InvalidateQueryFilters, QueryClient } from '@tanstack/react-query'
+import type { InfiniteData, InvalidateQueryFilters, QueryClient } from '@tanstack/react-query'
+import type { MessagesListResponse } from './api'
 import { queryKeys } from './query-keys'
 import type { SSEEvent } from './sse'
 
@@ -33,18 +34,24 @@ const SESSIONS_REFETCH_MS = 5_000
 // window. They only feed counts and cost; live status comes from the 100-row list.
 const SESSIONS_STATS_REFETCH_MS = 30_000
 const BILLING_REFETCH_MS = 15_000
+// Lists that follow the open item, not the event: the chat list family (list, reply threads,
+// unread count), the actors list, the events history views, For you and the unread feed. Each
+// is one refetch per window however many events land in it. The open chat, the open session
+// and the open object's own history are not here: they are invalidated per event, immediately.
+const LIST_REFETCH_MS = 5_000
 // A relationship event marks every open object graph stale, and each graph is a dozen database
 // queries on the server. A burst of relationship events (an agent wiring up a loop) used to
 // refetch every open graph once per event, so one trailing refetch per window is enough.
 const GRAPH_REFETCH_MS = 5_000
-// Every comment event used to refetch the unread list and the For You list at once, in every open
-// tab. Both are heavy on the server, and agents comment all day, so a burst of comments now
-// refetches each list once per window. Short, because a new mention should show up promptly.
-const COMMENT_FEED_REFETCH_MS = 3_000
 // The Objects page facets are ~10 count queries on the server, and any object event used to
 // refetch them. Our own edits still refresh them at once (mutation onSuccess hooks invalidate
 // the whole objects prefix); only the SSE-driven path waits for the window to end.
 const FACETS_REFETCH_MS = 5_000
+// The sessions of one chat (?conversation_id=...) feed the transcript's live state, and the
+// chat's delegation strip rides on its messages. A running agent emits a session_updated for
+// every step, so each open chat used to refetch both once per step. Routine updates now trail
+// one window; terminal and brand-new session events still refetch at once.
+const SESSION_CHAT_REFETCH_MS = 5_000
 const trailingRefetchTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 const isTabHidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden'
@@ -104,6 +111,73 @@ function scheduleTrailingRefetch(
 	)
 }
 
+// Actions that can add a session to a chat's delegation strip. A session no cached strip
+// carries yet is only worth a chat refetch when it is new.
+const NEW_SESSION_ACTIONS = new Set(['created', 'session_created', 'session_started'])
+
+// Session events a chat must show at once: a session appearing, ending or changing state.
+// Everything else (the per-step session_updated stream) waits for the trailing window.
+const isUrgentSessionAction = (action: string) =>
+	action === 'session.state_changed' ||
+	NEW_SESSION_ACTIONS.has(action) ||
+	SESSION_COMPLETION_ACTIONS.has(action) ||
+	BILLING_INVALIDATING_ACTIONS.has(action)
+
+// A session event comes as a generic frame, then (for a handed-off sub-session) a
+// `session.state_changed` frame with the same event id. The first one refreshes the chat; the
+// second must not start a second fetch of the same page.
+let lastSessionChatSyncId: string | null = null
+
+// The conversations whose cached messages carry this session in their delegation strip. The
+// events name the session, not the chat, so the owner is read off the cached pages.
+function conversationsCarryingSession(queryClient: QueryClient, sessionId: string): Set<string> {
+	const owners = new Set<string>()
+	const queries = queryClient.getQueryCache().findAll({
+		queryKey: ['conversations', 'detail'],
+		predicate: (query) => query.queryKey[3] === 'messages',
+	})
+	for (const query of queries) {
+		const data = query.state.data as InfiniteData<MessagesListResponse> | undefined
+		const carries = data?.pages?.some(
+			(page) =>
+				page.messages.some((m) => m.spawned_sessions?.some((s) => s.id === sessionId)) ||
+				page.pending_handoffs?.some((s) => s.id === sessionId),
+		)
+		if (carries) owners.add(String(query.queryKey[2]))
+	}
+	return owners
+}
+
+// Refreshes only the chat(s) whose strip shows this session, immediately. Before this every
+// session event in the workspace refetched every open chat's messages.
+function syncChatsForSession(queryClient: QueryClient, event: SSEEvent, sessionId: string) {
+	if (event.id !== undefined && event.id === lastSessionChatSyncId) return
+	lastSessionChatSyncId = event.id ?? null
+	const owners = conversationsCarryingSession(queryClient, sessionId)
+	if (owners.size > 0) {
+		const urgent = isUrgentSessionAction(event.action)
+		for (const conversationId of owners) {
+			const filters = { queryKey: queryKeys.conversations.messagesPrefix(conversationId) }
+			if (urgent) invalidate(queryClient, filters)
+			else
+				scheduleTrailingRefetch(
+					queryClient,
+					`chat-strip:${conversationId}`,
+					filters,
+					SESSION_CHAT_REFETCH_MS,
+				)
+		}
+		return
+	}
+	// Nothing cached carries it. A brand-new handoff can still land in an open chat, so a
+	// new session refreshes the open chats; any other event for an unknown session shows nowhere.
+	if (!NEW_SESSION_ACTIONS.has(event.action)) return
+	invalidate(queryClient, {
+		queryKey: ['conversations', 'detail'],
+		predicate: (query) => query.queryKey[3] === 'messages',
+	})
+}
+
 // Things that live outside the query cache (a custom loop view's frame) listen for the same
 // stream here instead of opening a second one. `null` means events may have been missed
 // (a reconnect), so a listener should treat everything it shows as possibly stale.
@@ -121,6 +195,26 @@ export function notifySSEGap() {
 	for (const listener of sseListeners) listener(null)
 }
 
+function scheduleForYouRefetch(queryClient: QueryClient, workspaceId: string) {
+	scheduleTrailingRefetch(
+		queryClient,
+		`for-you:${workspaceId}`,
+		{ queryKey: queryKeys.forYou.list(workspaceId) },
+		LIST_REFETCH_MS,
+	)
+}
+
+// Each graph is a dozen database queries on the server, so every graph trigger (a relationship,
+// a comment, an object edit) shares one trailing refetch of the mounted graphs per window.
+function scheduleGraphsRefetch(queryClient: QueryClient, workspaceId: string) {
+	scheduleTrailingRefetch(
+		queryClient,
+		`graphs:${workspaceId}`,
+		{ queryKey: ['objects', 'graph'] },
+		GRAPH_REFETCH_MS,
+	)
+}
+
 export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string, event: SSEEvent) {
 	for (const listener of sseListeners) {
 		try {
@@ -136,24 +230,22 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 	// `entity_type`/`entity_id` are absent and the switch below never matches
 	// them. They pair a sub-session's live status with the delegation strip
 	// rendered on `spawned_sessions`, which is embedded in the messages list
-	// response. Invalidate every conversation-messages query in this workspace
-	// so any open thread carrying the affected sub-session refetches; rows
-	// never reorder in the strip so the refetch is invisible unless the pill
-	// itself changed.
+	// response, so the chat that owns the strip is the only one to refetch.
 	if (event.action === 'session.state_changed') {
-		// Every open conversation-messages query in this tab: the SSE payload
-		// carries `session_id`, not the owning conversation id, so a narrower
-		// invalidation would have to walk cached pages to find the strip that
-		// owns the sub-session. The prefix here matches `queryKeys.conversations`
-		// so a future refactor of the key shape keeps the invalidation in step.
-		invalidate(queryClient, { queryKey: ['conversations', 'detail'] })
+		const sessionId = (event as unknown as { session_id?: string }).session_id
+		if (sessionId) syncChatsForSession(queryClient, event, sessionId)
 		return
 	}
 
-	// Always invalidate events history
-	invalidate(queryClient, { queryKey: queryKeys.events.history(workspaceId) })
+	// Events history views are lists of everything that happens: a mounted one refetches once
+	// per window, an unmounted one is only marked stale for its next mount.
+	scheduleTrailingRefetch(
+		queryClient,
+		`events-history:${workspaceId}`,
+		{ queryKey: queryKeys.events.history(workspaceId) },
+		LIST_REFETCH_MS,
+	)
 	invalidate(queryClient, { queryKey: queryKeys.events.byEntity(event.entity_id) })
-
 	// Live-refresh the knowledge doc-header reference-count chip. The DoD
 	// tolerates a 5-minute lag (matches the hook's staleTime), but when a
 	// fresh cite lands over SSE we already know a downstream agent read this
@@ -176,21 +268,16 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			queryClient,
 			`unread:${workspaceId}`,
 			{ queryKey: ['subscriptions', 'unread', workspaceId] },
-			COMMENT_FEED_REFETCH_MS,
+			LIST_REFETCH_MS,
 		)
 		// A reply on a thread can settle a curated For You item.
-		scheduleTrailingRefetch(
-			queryClient,
-			`for-you:${workspaceId}`,
-			{ queryKey: queryKeys.forYou.list(workspaceId) },
-			COMMENT_FEED_REFETCH_MS,
-		)
+		scheduleForYouRefetch(queryClient, workspaceId)
 		invalidate(queryClient, {
 			queryKey: queryKeys.subscriptions.subscribers(event.entity_type, event.entity_id),
 		})
 		// Also refresh the detail/graph so unread_count + subscriber_count update.
 		invalidate(queryClient, { queryKey: queryKeys.objects.detail(event.entity_id) })
-		invalidate(queryClient, { queryKey: queryKeys.objects.graph(event.entity_id) })
+		scheduleGraphsRefetch(queryClient, workspaceId)
 	}
 
 	// Invalidate based on entity type
@@ -212,7 +299,7 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 				FACETS_REFETCH_MS,
 			)
 			invalidate(queryClient, { queryKey: queryKeys.objects.detail(event.entity_id) })
-			invalidate(queryClient, { queryKey: queryKeys.objects.graph(event.entity_id) })
+			scheduleGraphsRefetch(queryClient, workspaceId)
 			if (event.entity_type === 'bet') {
 				invalidate(queryClient, { queryKey: queryKeys.bets.all(workspaceId) })
 			}
@@ -222,12 +309,7 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			break
 		case 'relationship':
 			invalidate(queryClient, { queryKey: queryKeys.relationships.all(workspaceId) })
-			scheduleTrailingRefetch(
-				queryClient,
-				`graphs:${workspaceId}`,
-				{ queryKey: ['objects', 'graph'] },
-				GRAPH_REFETCH_MS,
-			)
+			scheduleGraphsRefetch(queryClient, workspaceId)
 			break
 		case 'trigger':
 			invalidate(queryClient, { queryKey: queryKeys.triggers.all(workspaceId) })
@@ -241,10 +323,7 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 		case 'session': {
 			// A handoff exists from the moment `create_sub_chat` runs, before any message
 			// carries it; the messages list returns it as `pending_handoffs`.
-			invalidate(queryClient, {
-				queryKey: ['conversations', 'detail'],
-				predicate: (query) => query.queryKey[3] === 'messages',
-			})
+			syncChatsForSession(queryClient, event, event.entity_id)
 			// Broad prefix invalidation covers all session queries including byActor,
 			// detail and logs — except the workspace list (exactly ['sessions', ws]),
 			// which is coalesced below, and the per-agent stats
@@ -253,6 +332,7 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			// A per-session query (detail, logs) is only stale when the event is about that
 			// session — otherwise every mounted `useSession` refetches on every event for
 			// every other session in the workspace.
+			const urgent = isUrgentSessionAction(event.action)
 			invalidate(queryClient, {
 				queryKey: ['sessions'],
 				predicate: (query) => {
@@ -260,9 +340,19 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 					if (key[1] === 'detail') return key[2] === event.entity_id
 					if (key[2] === 'logs') return key[1] === event.entity_id
 					if (key[1] !== workspaceId) return true
+					// The per-chat session lists trail below on routine updates.
+					if (!urgent && key[2] === 'conversation') return false
 					return !(key.length === 2 || (key.length === 3 && key[2] === 'stats'))
 				},
 			})
+			if (!urgent) {
+				scheduleTrailingRefetch(
+					queryClient,
+					`sessions-chats:${workspaceId}`,
+					{ queryKey: [...queryKeys.sessions.all(workspaceId), 'conversation'] },
+					SESSION_CHAT_REFETCH_MS,
+				)
+			}
 			scheduleTrailingRefetch(
 				queryClient,
 				`sessions:${workspaceId}`,
@@ -309,15 +399,20 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			break
 		case 'notification':
 			invalidate(queryClient, { queryKey: queryKeys.notifications.all(workspaceId) })
-			invalidate(queryClient, { queryKey: queryKeys.forYou.list(workspaceId) })
+			scheduleForYouRefetch(queryClient, workspaceId)
 			break
 		case 'actor':
-			invalidate(queryClient, { queryKey: queryKeys.actors.all(workspaceId) })
-			break
+		// A loop version update rewrites the loop's agents (name, description, tools) in place
+		// and emits only an `installed_loop` event, never an `actor` one — so the agent list kept
+		// the old name.
 		case 'installed_loop':
-			// A loop version update rewrites the loop's agents (name, description, tools) in place
-			// and emits only this event, never an `actor` one — so the agent list kept the old name.
-			invalidate(queryClient, { queryKey: queryKeys.actors.all(workspaceId) })
+			// Agents PATCH their own row as they work, so a busy minute is a burst of actor events.
+			scheduleTrailingRefetch(
+				queryClient,
+				`actors:${workspaceId}`,
+				{ queryKey: queryKeys.actors.all(workspaceId) },
+				LIST_REFETCH_MS,
+			)
 			break
 		case 'workspace':
 			invalidate(queryClient, { queryKey: queryKeys.workspaces.all() })
@@ -339,9 +434,16 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			// Message posts also carry entity_type 'conversation' (entity_id is the
 			// conversation, not the message) — detail(id) is a prefix of
 			// messages(id, ...) so this one invalidation covers the thread's
-			// detail, participants, and message pages too.
-			invalidate(queryClient, { queryKey: queryKeys.conversations.all(workspaceId) })
+			// detail, participants, and message pages too. It only touches that one
+			// conversation, and only its mounted queries refetch, so it stays immediate.
 			invalidate(queryClient, { queryKey: queryKeys.conversations.detail(event.entity_id) })
+			// The chat list, reply threads and unread count sit under all(): one refetch per window.
+			scheduleTrailingRefetch(
+				queryClient,
+				`chat-list:${workspaceId}`,
+				{ queryKey: queryKeys.conversations.all(workspaceId) },
+				LIST_REFETCH_MS,
+			)
 			break
 		default:
 			// Object types are workspace-defined, so an object event can carry any type name

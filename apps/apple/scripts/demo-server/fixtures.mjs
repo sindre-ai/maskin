@@ -1,3 +1,4 @@
+import { CONTOSO_ROOM, keyConnected, mustKeepMore } from './must-keep-fixtures.mjs'
 import { addPerfRoom, perfOverrides } from './perf-fixtures.mjs'
 
 // Demo data for the design review: the Northwind workspace from the Watch, iPad and TV prototypes.
@@ -131,8 +132,11 @@ const decisions = [
 ]
 
 function unreadFeed(item) {
+	// A decision the reader answered (a comment posted to it) is no longer waiting, so a refetch drops it
+	// from the open list, as the real server does once the thread is marked read. MK-12 relies on this.
+	const waiting = decisions.filter((d) => !postedComments.has(d.obj.id))
 	return {
-		items: decisions.map((d, i) => ({
+		items: waiting.map((d, i) => ({
 			...item,
 			entity_type: 'object',
 			entity_id: d.obj.id,
@@ -263,6 +267,7 @@ const rooms = [
 		by: 'Chief of Staff',
 		at: DAY,
 	},
+	CONTOSO_ROOM,
 ]
 
 const PERF = process.env.DEMO_PERF === '1'
@@ -282,6 +287,10 @@ const participantRow = (id) => {
 // Comments posted to an object, kept for the life of the server so a refetch still shows them.
 const postedComments = new Map()
 let nextEventId = 9000
+// Messages sent from the app, per conversation id, so the chat shows them again after a refetch.
+const postedMessages = new Map()
+let nextMessageId = 1000
+let nextFileId = 8000
 
 export function overrides({ method, path, params, query, body, base, item }) {
 	if (PERF) {
@@ -294,6 +303,20 @@ export function overrides({ method, path, params, query, body, base, item }) {
 			ctx: { uuid, ago, ME, actors, WORKSPACE_ID, CHIEF, PRIYA },
 		})
 		if (hit) return hit
+	}
+	const more = mustKeepMore({ method, path, query, body, item })
+	if (more) return more
+	// A comment edited from the app (MK-18): new words and the edit time on the stored comment.
+	const editMatch = path.match(/^\/api\/events\/(\d+)$/)
+	if (method === 'patch' && editMatch && typeof body?.content === 'string') {
+		for (const [objectId, list] of postedComments) {
+			const event = list.find((e) => e.id === Number(editMatch[1]))
+			if (!event) continue
+			event.data = { ...event.data, content: body.content, editedAt: new Date().toISOString() }
+			postedComments.set(objectId, [...list])
+			return { body: event }
+		}
+		return { status: 404, body: { error: { code: 'NOT_FOUND', message: 'Comment not found' } } }
 	}
 	if (method !== 'get' && method !== 'post') return null
 	if (method === 'post' && path === '/api/events' && typeof body?.entity_id === 'string') {
@@ -316,6 +339,55 @@ export function overrides({ method, path, params, query, body, base, item }) {
 		}
 		postedComments.set(body.entity_id, [...(postedComments.get(body.entity_id) ?? []), event])
 		return { status: 201, body: event }
+	}
+	// A message sent from the app: echo what was sent, as the real API does, so the chat shows the
+	// words typed (an empty sample would replace them). MK-08 and MK-09 depend on this.
+	const sendMatch = path.match(/^\/api\/conversations\/([^/]+)\/messages$/)
+	if (method === 'post' && sendMatch && typeof body?.content === 'string') {
+		const message = {
+			...base,
+			id: nextMessageId++,
+			conversationId: sendMatch[1],
+			actorId: ME.id,
+			actorName: ME.name,
+			actorType: 'human',
+			kind: 'message',
+			content: body.content,
+			metadata: body.metadata ?? null,
+			sessionId: null,
+			createdAt: new Date().toISOString(),
+			editedAt: null,
+			deletedAt: null,
+			threadRootId: body.thread_root_id ?? null,
+			threadAlsoInChannel: false,
+			thread: null,
+			spawned_sessions: [],
+			reactions: [],
+		}
+		postedMessages.set(sendMatch[1], [...(postedMessages.get(sendMatch[1]) ?? []), message])
+		return { status: 201, body: message }
+	}
+	// A file uploaded from the app: echo its name, type and size.
+	if (method === 'post' && path === '/api/files' && typeof body?.name === 'string') {
+		const size = Buffer.from(
+			body.content ?? '',
+			body.encoding === 'base64' ? 'base64' : 'utf8',
+		).length
+		return {
+			status: 201,
+			body: {
+				...base,
+				id: uuid(nextFileId++),
+				workspaceId: WORKSPACE_ID,
+				name: body.name,
+				description: null,
+				mimeType: body.mime_type ?? 'application/octet-stream',
+				sizeBytes: size,
+				createdBy: ME.id,
+				createdAt: new Date().toISOString(),
+				updatedAt: new Date().toISOString(),
+			},
+		}
 	}
 	// Any email and password signs in as the first human, with a key and the demo workspace, so the
 	// app has a workspace to load instead of the schema-sample's empty one.
@@ -350,10 +422,22 @@ export function overrides({ method, path, params, query, body, base, item }) {
 				{
 					id: WORKSPACE_ID,
 					name: 'Northwind',
+					// Every field the app's generated client requires: without them the list does not decode,
+					// no workspace is selected and the profile sheet cannot name it.
+					settings: null,
+					llm_configured: { anthropic: true, openai: false, custom_llm: false },
+					onboardingEnabled: false,
+					enterprise: false,
+					billingOwnerId: null,
+					createdBy: null,
+					createdAt: ago(90 * DAY),
+					updatedAt: ago(90 * DAY),
 					role: 'owner',
-					member_count: 4,
 					memberCount: 4,
-					created_at: ago(90 * DAY),
+					isDefault: true,
+					isTeam: true,
+					internal: false,
+					paying: false,
 				},
 			],
 		}
@@ -531,6 +615,7 @@ export function overrides({ method, path, params, query, body, base, item }) {
 				provider('google-calendar', 'Google Calendar', 'oauth2'),
 				provider('linear', 'Linear', 'oauth2'),
 				provider('google-drive', 'Google Drive', 'oauth2'),
+				provider('posthog', 'PostHog', 'api_key'),
 			],
 		}
 	}
@@ -559,16 +644,21 @@ export function overrides({ method, path, params, query, body, base, item }) {
 					needsReconnect: true,
 					missingScopes: ['workflow'],
 				}),
+				// Connected with a pasted key during this run (MK-17).
+				...keyConnected().map((provider, i) => row(960 + i, provider, 'northwind')),
 			],
 		}
 	}
 	// A trial a few days from its end, with a credit meter, so Billing shows its banner and bar.
+	// trial_state is set because the schema sample's first value is awaiting_card, which puts the
+	// "Your trial has not started" banner over the top bar (it covers the Live briefing button).
 	if (method === 'get' && path === '/api/billing/usage') {
 		return {
 			body: {
 				...base,
 				plan: 'trial',
 				status: 'active',
+				trial_state: 'started',
 				usd_cents_used: 4120,
 				hard_cap_usd_cents: 10000,
 				period_start: Date.now() - 9 * DAY * 60_000,
@@ -690,6 +780,47 @@ export function overrides({ method, path, params, query, body, base, item }) {
 		}
 		return null
 	}
+	// The one search the web and the phone share: every typed word must match (AND), and the rows come
+	// back best match first, so a name hit sits above a hit only in a message. Chats only here.
+	if (method === 'get' && path === '/api/search') {
+		const words = (query.get('q') ?? '').toLowerCase().split(/\s+/).filter(Boolean)
+		const results = rooms
+			.map((r) => {
+				const names = r.with
+					.map((id) => actors.find((a) => a.id === id)?.name ?? '')
+					.concat(ME.name)
+				const nameText = [r.title, ...names].join(' ').toLowerCase()
+				const hitsName = words.every((w) => nameText.includes(w))
+				const hitsMessage = words.every((w) => `${nameText} ${r.snippet}`.toLowerCase().includes(w))
+				return { r, names, hitsName, hitsMessage }
+			})
+			.filter((m) => m.hitsMessage)
+			.sort((a, b) => Number(b.hitsName) - Number(a.hitsName) || a.r.at - b.r.at)
+			.map(({ r, names }) => ({
+				id: uuid(r.n),
+				group: 'chats',
+				type: 'chat',
+				title: r.title,
+				sub: names.join(', '),
+				snippet: r.snippet,
+				status: r.unread > 0 ? 'unread' : 'read',
+				statusGroup: r.unread > 0 ? 'needs_you' : 'done',
+				updatedAt: ago(r.at),
+			}))
+		return {
+			body: {
+				results,
+				total: results.length,
+				capped: false,
+				facets: {
+					types: { chat: results.length },
+					statuses: { needs_you: 0, in_progress: 0, new: 0, done: results.length, archived: 0 },
+				},
+				relaxed: { withoutFilters: 0, withoutStatuses: 0 },
+				partial: [],
+			},
+		}
+	}
 	if (method === 'get' && path === '/api/conversations') {
 		return {
 			body: {
@@ -764,6 +895,7 @@ export function overrides({ method, path, params, query, body, base, item }) {
 	if (method === 'get' && msgMatch) {
 		const r = rooms.find((x) => uuid(x.n) === msgMatch[1])
 		if (!r) return null
+		const sent = postedMessages.get(uuid(r.n)) ?? []
 		const m = (id, actor, text, at) => ({
 			...item,
 			id,
@@ -793,6 +925,7 @@ export function overrides({ method, path, params, query, body, base, item }) {
 						m(1, first, 'Seven follow-ups to Northwind are ready.', 30),
 						m(2, ME, 'Why not all 47 contacts?', 20),
 						m(3, first, 'Only 7 have Sales approval. The other 40 still need review.', 10),
+						...sent,
 					],
 					has_more: false,
 				},
@@ -846,6 +979,7 @@ export function overrides({ method, path, params, query, body, base, item }) {
 							},
 							60,
 						),
+						...sent,
 					],
 					has_more: false,
 				},
@@ -887,6 +1021,7 @@ export function overrides({ method, path, params, query, body, base, item }) {
 									`Not sent yet. Here is the draft:\n\nhttps://maskin.io/${WORKSPACE_ID}/objects/${uuid(7001)}\n\nReply "send" and it goes out.`,
 									1,
 								),
+								...sent,
 							],
 					has_more: false,
 				},
@@ -897,6 +1032,7 @@ export function overrides({ method, path, params, query, body, base, item }) {
 				messages: [
 					m(1, ME, 'Where are we on the Northwind follow-ups?', r.at + 12),
 					m(2, first, r.snippet, r.at),
+					...sent,
 				],
 				has_more: false,
 			},

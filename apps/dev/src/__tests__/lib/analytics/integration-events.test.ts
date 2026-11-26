@@ -8,10 +8,12 @@ vi.mock('../../../lib/analytics/posthog', () => ({
 }))
 
 import {
+	CONNECT_CHECKLIST_STARTED,
 	INTEGRATION_CONNECTED,
 	INTEGRATION_CONNECT_STARTED,
 	INTEGRATION_SYNC_COMPLETED,
 	INTEGRATION_TOOL_CALLED,
+	trackConnectChecklistStarted,
 	trackIntegrationConnectStarted,
 	trackIntegrationConnected,
 	trackIntegrationSyncCompleted,
@@ -191,5 +193,18 @@ describe('trackIntegrationToolCalled', () => {
 			workspace_id: 'ws-1',
 		})
 		expect(INTEGRATION_TOOL_CALLED).toBe('integration_tool_called')
+	})
+})
+
+describe('trackConnectChecklistStarted', () => {
+	it('sends provider and workspace_id only, keyed on the workspace', async () => {
+		await trackConnectChecklistStarted({ provider: 'posthog', workspaceId: 'ws-1' })
+
+		expect(CONNECT_CHECKLIST_STARTED).toBe('connect_checklist_started')
+		expect(capturePosthogEventMock).toHaveBeenCalledOnce()
+		expect(capturePosthogEventMock).toHaveBeenCalledWith(CONNECT_CHECKLIST_STARTED, 'ws-1', {
+			provider: 'posthog',
+			workspace_id: 'ws-1',
+		})
 	})
 })

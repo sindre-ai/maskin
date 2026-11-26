@@ -1,0 +1,28 @@
+{
+	"name": "maskin",
+	"version": "0.1.0",
+	"description": "Work in Maskin from Gemini CLI. Create and update bets, tasks and insights, read your workspace, and put agents to work.",
+	"settings": [
+		{
+			"name": "Maskin API key",
+			"description": "Your Maskin API key (starts with ank_). Find it in Maskin under Settings, MCP.",
+			"envVar": "MASKIN_API_KEY",
+			"sensitive": true
+		},
+		{
+			"name": "Maskin workspace ID",
+			"description": "The ID of the Maskin workspace Gemini should work in.",
+			"envVar": "MASKIN_WORKSPACE_ID"
+		}
+	],
+	"mcpServers": {
+		"maskin": {
+			"url": "https://maskin.io/mcp",
+			"type": "http",
+			"headers": {
+				"Authorization": "Bearer ${MASKIN_API_KEY}",
+				"X-Workspace-Id": "${MASKIN_WORKSPACE_ID}"
+			}
+		}
+	}
+}

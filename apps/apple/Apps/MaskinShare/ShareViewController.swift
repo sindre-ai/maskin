@@ -1,3 +1,4 @@
+import Intents
 import MaskinCore
 import MaskinDesign
 import SwiftUI
@@ -26,6 +27,10 @@ final class ShareViewController: UIViewController {
 			loadContent: { await ShareExtractor().extract(from: sources, context: context) },
 			makeRemote: { ShareSession.remote(baseURL: baseURL, credentials: $0) },
 			queue: ShareQueue.shared(), drafts: ShareDraftStore(), memory: ShareAgentMemory.shared())
+		// Opened from an agent in the system sheet's top row: start with that agent chosen.
+		if let intent = extensionContext?.intent as? INSendMessageIntent {
+			model.suggestion = ShareSuggestion(conversationIdentifier: intent.conversationIdentifier)
+		}
 		self.model = model
 
 		let host = UIHostingController(

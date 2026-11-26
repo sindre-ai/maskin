@@ -31,9 +31,11 @@ export const config: ProviderConfig = {
 			pkce: true,
 			// access_type=offline + prompt=consent are the documented way to force Google
 			// to issue a refresh_token. Without them, only the first connection gets one.
+			// select_account makes Google show the account chooser even when only one
+			// Google session is open, so "Connect another account" can reach a second inbox.
 			extraAuthParams: {
 				access_type: 'offline',
-				prompt: 'consent',
+				prompt: 'select_account consent',
 				include_granted_scopes: 'true',
 			},
 			clientIdEnv: 'GMAIL_CLIENT_ID',

@@ -8,8 +8,9 @@ public enum FileUploadLimits {
 	public static let maxJSONBytes = 10 * 1024 * 1024
 	/// `MAX_VIDEO_FILE_SIZE_BYTES`.
 	public static let maxJSONVideoBytes = 50 * 1024 * 1024
-	/// `MAX_LARGE_FILE_SIZE_BYTES` (1 GiB): the ceiling for a direct upload.
-	public static let maxLargeFileBytes = 1024 * 1024 * 1024
+	/// `MAX_LARGE_FILE_SIZE_BYTES` (5 GiB): the ceiling for a direct upload. Built from an `Int64` and
+	/// clamped because `Int` is 32 bits in the watchOS device build (arm64_32), where 5 GiB overflows.
+	public static let maxLargeFileBytes = Int(clamping: Int64(5) * 1024 * 1024 * 1024)
 	/// `MAX_INLINE_FILE_SIZE_BYTES`: above this a file is read back as a download URL, not inline bytes.
 	public static let maxInlineBytes = maxJSONVideoBytes
 
@@ -43,7 +44,7 @@ public struct LargeFileUploadTransport: Sendable {
 	}
 }
 
-/// Sends a file of up to 1 GiB straight to object storage over presigned multipart URLs, the way the
+/// Sends a file of up to 5 GiB straight to object storage over presigned multipart URLs, the way the
 /// web does (`apps/web/src/lib/large-file-upload.ts`, `docs/runbooks/large-file-uploads.md`):
 /// start, PUT each part and keep its ETag, complete. Parts are read from disk one at a time, so the
 /// file is never held in memory whole. Abandoning the upload (failure or cancel) tells the API to
@@ -98,7 +99,7 @@ public struct LargeFileUploader: Sendable {
 		name: String, mimeType: String, fileURL: URL, sizeBytes: Int
 	) async throws -> ChatAttachmentRef {
 		guard sizeBytes > 0, sizeBytes <= FileUploadLimits.maxLargeFileBytes else {
-			throw ChatsError("That file is over the 1 GB limit.")
+			throw ChatsError("That file is over the 5 GB limit.")
 		}
 		let started = try await start(name: name, mimeType: mimeType, sizeBytes: sizeBytes)
 		let stored: [StoredPart]

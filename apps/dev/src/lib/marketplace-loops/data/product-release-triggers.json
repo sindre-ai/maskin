@@ -1,0 +1,43 @@
+{
+	"93d92ad7-349b-410c-956e-99748b2e3885": {
+		"id": "93d92ad7-349b-410c-956e-99748b2e3885",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Release check, store step (weekdays 08:00 UTC)",
+		"type": "cron",
+		"config": {
+			"expression": "0 8 * * 1-5"
+		},
+		"actionPrompt": "Run the store step of the flow named Product release (find it with list_loops). Load the skill release-bundling and follow it. Outcome: for each mobile version in flight, the state is read from the connected store or from the build and release runs on the code host, the next step and who does it is clear, and one comment sits on that version's release task only when the state changed since the last comment. No version in flight: stop quietly and write nothing.\n\nFirst: if no store is connected to this workspace, post one comment on the flow saying the store step is off until a store is connected (check get_comments first so you never post it twice), then disable this trigger with update_trigger and stop.\n\nMake sure every release task you touch is a member of the flow. Call update_loop with add_object_ids (it is idempotent).\n\nState to read for each version: not yet built, built and uploaded for testing, submitted for review, in review, rejected, approved, live. A transient store error is retried once. A second failure becomes a fix task for the owner of the code, not a person. A rejection, or a question from the store that only a person can answer, needs one ask to a person with the version and the one thing to do. Add no second.\n\nWhen the store shows the version live, move its release task to in_review. That status change starts the confirm step. Then comment that the store step is done and @mention the Release Manager. Leave alone: merging, version numbers, bundling, release notes and announcements (the Release Manager owns them).",
+		"targetActorId": "82a9887c-b172-40d6-ac88-3a70424e0cb3",
+		"enabled": true
+	},
+	"016c275d-8396-4be7-944e-6791f9c71e14": {
+		"id": "016c275d-8396-4be7-944e-6791f9c71e14",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Bundle and announce releases (Mon, Thu 08:00 UTC)",
+		"type": "cron",
+		"config": {
+			"expression": "0 8 * * 1,4"
+		},
+		"actionPrompt": "You drive the flow named Product release (find it with list_loops). Load the skill release-bundling and follow it in full. Outcome: every user-facing change merged since the last release sits in a release bundle with a semantic version and a tier, and the right notes exist for that tier. Nothing changed since your last run: stop quietly and write nothing.\n\nFirst: if no code host is connected to this workspace, post one comment on the flow saying releases cannot be bundled until a code host is connected (check get_comments first so you never post it twice) and stop.\n\nMake sure every release task you touch is linked into the flow. Call update_loop with add_object_ids (idempotent). This is what surfaces it in the flow's counters and view.\n\nEach run:\n1. Read the merged pull requests since the last release task on the code host the workspace has connected. If more than one repository is connected and the flow's description or the person who installed it does not name which to read, ask once on the flow and wait for the answer.\n2. Put each user-facing change into the open bundle or start a new one. List the customer-facing items the release carries in an \"Items in this release\" section of the task body, each as a link with the surfaces it touches.\n3. Propose the version and tier on the task. The first version continues from the latest release or tag on the code host. With none, propose 1.0.0 and say it is a proposal.\n4. When a bundle is worth announcing, write the notes the tier needs, claiming only what has shipped and was checked.\n5. Check where each release is live. The Store Release Manager, if there is one, comments on the release task for mobile versions. Read that comment.\n6. When a version is live, read each announcement the tier needs back, then set the task to done.\n\nLeave alone: merging, the store mechanics, and publishing to a website (hand a public entry to the agent that publishes the website, found by role with list_actors). A person is needed only for a positioning shift or when you cannot tell whether a change is notable: one short question with your recommendation. Say the date of your next scheduled run in your one line on the task.",
+		"targetActorId": "d0c68509-2eee-42a6-8a21-31003b7cba76",
+		"enabled": true
+	},
+	"79f57e19-9c97-4748-8379-13f17c2a3188": {
+		"id": "79f57e19-9c97-4748-8379-13f17c2a3188",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Confirm notes live when a release is in review",
+		"type": "event",
+		"config": {
+			"action": "status_changed",
+			"filter": {
+				"status": "in_review",
+				"metadata.kind": "release"
+			},
+			"entity_type": "task"
+		},
+		"actionPrompt": "A release task of the flow named Product release (find it with list_loops) just moved to in_review, meaning the version is live. If the task has no metadata kind of release, do nothing and end the run. Load the skill release-bundling.\n\nOutcome: the announcements its tier needs are confirmed live by reading them, and the task is set to done, or one comment names what is still missing. Notable: read the update text for the store or the app, the in-app note and the public log entry, for the ones this product has. Patch: read the one change log line. Then set the task to done and record the live date and the note date on the task.\n\nThe task body has an \"Items in this release\" list. Once per listed item, if it has no such comment yet, comment: \"Customers had this on [date] on [surfaces]. Announced [date or not announced].\" The customer date is the date customers could use it in production: web is the date the release went live on web, a mobile app is the date the store shows the version live (read the Store Release Manager's comment on the task, if there is one). The announced date is when the note or log entry went live, or \"not announced\" for patches.\n\nIf something is missing, comment once with the owner and the date you will look again (your next scheduled bundle run). Stop when the task is done or the one comment is posted. Leave alone: store mechanics, merging, and publishing to a website.",
+		"targetActorId": "d0c68509-2eee-42a6-8a21-31003b7cba76",
+		"enabled": true
+	}
+}

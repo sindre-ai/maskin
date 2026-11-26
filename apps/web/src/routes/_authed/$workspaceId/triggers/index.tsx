@@ -15,6 +15,7 @@ import { useTriggers, useUpdateTrigger } from '@/hooks/use-triggers'
 import type { TriggerResponse } from '@/lib/api'
 import { splitTriggersByFlow } from '@/lib/triggers'
 import { useWorkspace } from '@/lib/workspace-context'
+import { usesItemDriverTarget } from '@maskin/shared'
 import { createFileRoute } from '@tanstack/react-router'
 import { Plus } from 'lucide-react'
 import { useMemo, useState } from 'react'
@@ -46,7 +47,10 @@ function TriggersRoute() {
 	)
 
 	const renderRow = (trigger: TriggerResponse) => {
-		const agent = actors?.find((a) => a.id === trigger.targetActorId)
+		// The column only holds a placeholder when the trigger starts the item's driver.
+		const agent = usesItemDriverTarget(trigger.config)
+			? undefined
+			: actors?.find((a) => a.id === trigger.targetActorId)
 		return (
 			<TriggerRow
 				key={trigger.id}
@@ -54,7 +58,9 @@ function TriggersRoute() {
 				workspaceId={workspaceId}
 				agentId={agent?.id}
 				agentType={agent?.type}
-				agentName={agent?.name ?? 'Unknown'}
+				agentName={
+					agent?.name ?? (usesItemDriverTarget(trigger.config) ? "The item's driver" : 'Unknown')
+				}
 				isToggling={updateTrigger.isPending}
 				onToggleEnabled={(next) => {
 					if (!canWrite) return
@@ -71,6 +77,7 @@ function TriggersRoute() {
 		<div className="mx-auto w-full max-w-190">
 			<PageHeader
 				title="Triggers"
+				subtitle="Schedule times are in Copenhagen time."
 				crumb={{
 					parentLabel: 'Settings',
 					parentTo: '/$workspaceId/settings',

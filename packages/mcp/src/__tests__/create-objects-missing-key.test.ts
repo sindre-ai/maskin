@@ -46,12 +46,12 @@ describe('create_objects missing-key errors', () => {
 		vi.restoreAllMocks()
 	})
 
-	it('names workspace_id and nodes, and shows a correct call, when both are missing', async () => {
+	it('names nodes, and shows a correct call, when it is missing', async () => {
 		const { isError, text: raw } = await callCreateObjects({})
 		const text = isError ? issueMessages(raw) : raw
 		expect(isError).toBe(true)
-		expect(text).toContain('Missing required key "workspace_id"')
 		expect(text).toContain('Missing required key "nodes"')
+		expect(text).not.toContain('Missing required key "workspace_id"')
 		expect(text).toContain(CREATE_OBJECTS_EXAMPLE_CALL)
 	})
 
@@ -88,7 +88,7 @@ describe('create_objects missing-key errors', () => {
 	})
 
 	it('the example call is itself accepted by the schema', () => {
-		const example = JSON.parse(CREATE_OBJECTS_EXAMPLE_CALL.replace('<workspace uuid>', WS_ID))
+		const example = JSON.parse(CREATE_OBJECTS_EXAMPLE_CALL)
 		expect(tools.create_objects.inputSchema.safeParse(example).success).toBe(true)
 	})
 

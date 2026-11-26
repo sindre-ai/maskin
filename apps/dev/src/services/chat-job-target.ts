@@ -1,7 +1,12 @@
 import type { Database } from '@maskin/db'
 import { actors, conversations, objects, relationships, sessions } from '@maskin/db/schema'
 import { TARGET_OF_RELATIONSHIP_TYPE, TARGET_TYPE } from '@maskin/ext-targets/shared'
-import { buildWebAppHref, loopTargetSchema, stripTrailingSlash } from '@maskin/shared'
+import {
+	LOOP_RUNNING_STATUSES,
+	buildWebAppHref,
+	loopTargetSchema,
+	stripTrailingSlash,
+} from '@maskin/shared'
 import { and, asc, desc, eq, inArray, notInArray, sql } from 'drizzle-orm'
 
 /** Hard cap on the block, in characters. It rides in every chat, so it stays small. */
@@ -12,8 +17,8 @@ const MAX_FLOWS = 3
 const MAX_COMPANY_TARGETS = 3
 const TITLE_MAX = 80
 
-// Same as chat-drives: a drafted or paused flow is not running.
-const LIVE_LOOP_STATUSES = ['learning', 'supervised', 'fully_autonomous']
+// Same as chat-drives: a drafted, paused or archived flow is not running.
+const LIVE_LOOP_STATUSES = [...LOOP_RUNNING_STATUSES]
 // Target objects in these statuses are not shown (same as the flows list).
 const HIDDEN_TARGET_STATUSES = ['dropped', 'archived']
 const IN_LOOP = 'in_loop'

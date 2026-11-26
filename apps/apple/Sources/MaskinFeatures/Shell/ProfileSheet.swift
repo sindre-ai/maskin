@@ -16,7 +16,9 @@ import SwiftUI
 struct ProfileSheet: View {
 	let environment: AppEnvironment
 	@Bindable var runtime: AppRuntime
-	@State private var path: [Route] = []
+	/// A `NavigationPath`, not `[Route]`: the Settings page pushes `SettingsRoute` values with
+	/// `NavigationLink(value:)`, which a path typed to `Route` cannot take (the row highlights and nothing opens).
+	@State private var path = NavigationPath()
 	@State private var showWorkspaces = false
 	@State private var confirmSignOut = false
 	/// Flows and agents for the stat tiles, the workspace line and the Members page. Built once per
@@ -61,6 +63,7 @@ struct ProfileSheet: View {
 			ScrollView {
 				VStack(spacing: MaskinSpace.s7) {
 					titleBar
+					if ShellIdiom.isPad { switchWorkspaceRow }
 					profileCard
 					workspaceCard
 					statTiles
@@ -74,7 +77,7 @@ struct ProfileSheet: View {
 									AnyView(
 										ProfileRow(
 											title: item.title, symbol: item.symbol, value: value(for: item)
-										) { path.append(.item(item)) })
+										) { path.append(Route.item(item)) })
 								})
 						}
 					}
@@ -156,7 +159,7 @@ struct ProfileSheet: View {
 	@ViewBuilder private var profileCard: some View {
 		if let session = environment.auth.session {
 			Button {
-				path.append(.item(.account))
+				path.append(Route.item(.account))
 			} label: {
 				HStack(spacing: MaskinSpace.s8) {
 					ActorAvatar(
@@ -182,6 +185,41 @@ struct ProfileSheet: View {
 			.accessibilityLabel("Account, \(session.name)")
 			.filledCard(radius: MaskinRadius.tile)
 		}
+	}
+
+	/// "Switch workspace" with the current workspace's name, on the iPad only: in portrait there is no
+	/// sidebar to hold the switcher. iPhone and Mac keep their layout. Opens the same picker as Switch below.
+	private var switchWorkspaceRow: some View {
+		Button {
+			showWorkspaces = true
+		} label: {
+			HStack(spacing: MaskinSpace.s8) {
+				Text("Switch workspace")
+					.font(MaskinTypeface.sans(MaskinFontSize.t17, weight: .semibold, relativeTo: .body))
+					.foregroundStyle(MaskinColor.ink)
+				Spacer(minLength: MaskinSpace.s4)
+				if let name = environment.workspaces.selected?.name {
+					Text(name).maskinText(.subhead).foregroundStyle(MaskinColor.ink4).lineLimit(1)
+				}
+				Image(systemName: "chevron.right")
+					.maskinSymbol(MaskinSpace.s7, weight: .semibold)
+					.foregroundStyle(MaskinColor.ink5)
+					.accessibilityHidden(true)
+			}
+			.padding(.horizontal, MaskinSpace.s9)
+			.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin + MaskinSpace.s5, alignment: .leading)
+			.contentShape(Rectangle())
+		}
+		.buttonStyle(.maskinPressed)
+		.accessibilityIdentifier("switch-workspace-row")
+		.accessibilityLabel(switchWorkspaceLabel)
+		.filledCard(radius: MaskinRadius.tile)
+	}
+
+	/// The name rides in the label, not a separate value: a label is always read back, a value on a button is not.
+	private var switchWorkspaceLabel: String {
+		guard let name = environment.workspaces.selected?.name else { return "Switch workspace" }
+		return "Switch workspace, \(name)"
 	}
 
 	/// "Workspace name · Owner", else the email when no workspace is selected.
@@ -234,7 +272,7 @@ struct ProfileSheet: View {
 				runtime.selectedTab = .loops
 			}
 			ProfileStatTile(value: agents?.workingCount ?? 0, label: "agents working", destination: "Members") {
-				path.append(.item(.members))
+				path.append(Route.item(.members))
 			}
 		}
 	}
@@ -359,8 +397,10 @@ struct ProfileSheet: View {
 		case .members:
 			MembersView(
 				store: services.membersStore(), agents: agents, invitations: services.invitationsStore(),
-				onOpenAgent: { path.append(.agent($0)) },
-				onHire: { path.append(.item(.marketplace)) })
+				onOpenAgent: { path.append(Route.agent($0)) },
+				onHire: { path.append(Route.item(.marketplace)) },
+				onMessage: { runtime.startChat(with: $0, entryPoint: $1) },
+				canMessage: environment.workspaces.selected?.role != "viewer")
 		default:
 			if let route = item.settingsRoute { SettingsRouteView(route: route, environment: environment) }
 		}

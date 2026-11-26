@@ -6,7 +6,7 @@
  * → validated (CTO validates end-to-end) → done (Development Driver advances the
  * next task). Plus meta-observation by Workspace Observer + Insight Curator.
  *
- * System prompts reference `{{self_id}}` for the agent's own UUID; get_started
+ * System prompts reference `{{self_id}}` for the agent's own UUID; list_marketplace
  * substitutes these after creating the actor, in a second PATCH call.
  */
 

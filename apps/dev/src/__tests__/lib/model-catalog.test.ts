@@ -10,6 +10,7 @@ import {
 	listRoutableModels,
 	routeKindFor,
 	tierModel,
+	withContextWindow,
 } from '../../lib/model-catalog'
 
 describe('model catalog', () => {
@@ -95,5 +96,28 @@ describe('modelRefusal', () => {
 		expect(
 			modelRefusal({ model: 'anything-the-key-serves', enterprise: true, honouredAsTyped: true }),
 		).toBeNull()
+	})
+})
+
+describe('withContextWindow', () => {
+	it('marks DeepSeek V4 ids, with or without a provider prefix, as 1M', () => {
+		expect(withContextWindow('deepseek/deepseek-v4.1-flash')).toBe(
+			'deepseek/deepseek-v4.1-flash[1m]',
+		)
+		expect(withContextWindow('deepseek-v4-pro')).toBe('deepseek-v4-pro[1m]')
+		expect(withContextWindow('DeepSeek/DeepSeek-V4-Flash')).toBe('DeepSeek/DeepSeek-V4-Flash[1m]')
+	})
+
+	it('leaves ids with no known window alone', () => {
+		expect(withContextWindow('claude-sonnet-5-5')).toBe('claude-sonnet-5-5')
+		expect(withContextWindow('llama3.1:8b')).toBe('llama3.1:8b')
+	})
+
+	it('does not add the marker twice', () => {
+		expect(withContextWindow('deepseek-v4-flash[1m]')).toBe('deepseek-v4-flash[1m]')
+	})
+
+	it('marks the funded default model', () => {
+		expect(withContextWindow(FUNDED_DEFAULT_MODEL)).toBe(`${FUNDED_DEFAULT_MODEL}[1m]`)
 	})
 })

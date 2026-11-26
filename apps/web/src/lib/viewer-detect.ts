@@ -33,6 +33,18 @@ export function detectViewerVariantFromDom(html: string): ViewerVariant {
 	return 'single'
 }
 
+// A document that pages itself (shows a slide through its own `.slide.active`
+// class and carries its own pager) must not get the viewer's paging on top:
+// the viewer sets `display` per slide, the deck keeps the others at opacity 0,
+// so slide 2+ render blank and two pagers show. Signals, first 8KB only:
+// `<meta name="maskin:paging" content="self">` or a `.slide.active` CSS rule.
+export function isSelfPagingDocument(html: string): boolean {
+	const head = html.length > HEURISTIC_BYTE_LIMIT ? html.slice(0, HEURISTIC_BYTE_LIMIT) : html
+	if (/<meta[^>]*\bname=["']maskin:paging["'][^>]*\bcontent=["']self["']/i.test(head)) return true
+	if (/<meta[^>]*\bcontent=["']self["'][^>]*\bname=["']maskin:paging["']/i.test(head)) return true
+	return /\.slide\.active\s*[{,]/.test(head)
+}
+
 export interface ResolveViewerVariantArgs {
 	filename: string
 	html: string
@@ -41,12 +53,14 @@ export interface ResolveViewerVariantArgs {
 
 // Order of resolution (per spec §Deck vs mockup detection):
 // (3) manual override wins if set,
+// a self-paging document is `single` (the viewer must not page it again),
 // (1) filename suffix wins next,
 // (2) 8KB DOM heuristic fallback last.
 // The override sits on top so a user's ⋯ › View as… never gets clobbered by
 // auto-detect on the next open.
 export function resolveViewerVariant(args: ResolveViewerVariantArgs): ViewerVariant {
 	if (args.override !== null) return args.override
+	if (isSelfPagingDocument(args.html)) return 'single'
 	const fromName = detectViewerVariantFromFilename(args.filename)
 	if (fromName !== null) return fromName
 	return detectViewerVariantFromDom(args.html)

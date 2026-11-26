@@ -69,7 +69,7 @@ export const publishPostInputShape = {
 		.max(9)
 		.optional()
 		.describe(
-			'Optional images for the post: workspace file ids of PNG or JPEG files (max 10 MB each, up to 9, shown as a carousel). The server reads the files; never send file bytes. Example: ["0d3c5b7e-2f4a-4c1e-9a67-1b2c3d4e5f60"]. A file that is not in this workspace, not a PNG or JPEG, or over 10 MB fails with nothing posted. Video and documents are not supported.',
+			'Optional media for the post: workspace file ids of either up to 9 PNG or JPEG images (max 10 MB each, shown as a carousel) or exactly one MP4 or MOV video (max 64 MB), never both. The server reads the files; never send file bytes. Example: ["0d3c5b7e-2f4a-4c1e-9a67-1b2c3d4e5f60"]. A file that is not in this workspace, not a PNG, JPEG, MP4 or MOV, or over its size limit fails with nothing posted. Documents are not supported.',
 		),
 } as const
 

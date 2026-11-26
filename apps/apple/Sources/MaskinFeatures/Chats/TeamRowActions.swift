@@ -28,6 +28,29 @@ struct TeamRowActions {
 	var pinMenuLabel: String { isPinned ? "Unpin" : "Pin to top" }
 	var readLabel: String { isUnread ? "Read" : "Unread" }
 	var readMenuLabel: String { isUnread ? "Mark as read" : "Mark as unread" }
+
+	/// One button a row can offer, on a swipe or in the menu.
+	enum Item: Hashable {
+		case pin, toggleRead, moveEarlier, moveLater, archive, select, delete, more
+	}
+
+	/// Swipe right: Read/Unread, for rows that have an unread state.
+	var leadingSwipeItems: [Item] { canToggleRead ? [.toggleRead] : [] }
+
+	/// Swipe left, in the order shown: Archive, More, Pin.
+	var trailingSwipeItems: [Item] { (canArchive ? [.archive] : []) + [.more, .pin] }
+
+	/// The long-press menu and the "More" dialog, in the order shown. Delete is always last.
+	var menuItems: [Item] {
+		var items: [Item] = [.pin]
+		if canToggleRead { items.append(.toggleRead) }
+		if moveEarlier != nil { items.append(.moveEarlier) }
+		if moveLater != nil { items.append(.moveLater) }
+		if canArchive { items.append(.archive) }
+		if select != nil { items.append(.select) }
+		if canDelete { items.append(.delete) }
+		return items
+	}
 }
 
 extension View {
@@ -47,45 +70,55 @@ private struct TeamRowActionsModifier: ViewModifier {
 	func body(content: Content) -> some View {
 		content
 			.swipeActions(edge: .leading, allowsFullSwipe: true) {
-				if enabled, actions.canToggleRead {
-					Button {
-						MaskinHaptics.play(.selection)
-						actions.toggleRead()
-					} label: {
-						Label(actions.readLabel, systemImage: actions.isUnread ? "envelope.open" : "envelope.badge")
-					}
-					.tint(MaskinColor.sig)
+				if enabled {
+					ForEach(actions.leadingSwipeItems, id: \.self) { swipeButton($0) }
 				}
 			}
 			.swipeActions(edge: .trailing, allowsFullSwipe: false) {
-				if !enabled {
-					EmptyView()
-				} else {
-				if actions.canArchive {
-					Button {
-						MaskinHaptics.play(.selection)
-						actions.archive()
-					} label: {
-						Label("Archive", systemImage: "archivebox")
-					}
-					.tint(MaskinSurface.inverse)
-				}
-				Button(action: actions.more) {
-					Label("More", systemImage: "ellipsis")
-				}
-				// Spec says `line3`; a swipe button's label is always white, so the grey is one step
-				// darker to stay legible.
-				.tint(MaskinColor.ink3)
-				Button {
-					MaskinHaptics.play(.selection)
-					actions.pin()
-				} label: {
-					Label(actions.pinLabel, systemImage: actions.isPinned ? "pin.slash" : "pin")
-				}
-				.tint(MaskinColor.ink4)
+				if enabled {
+					ForEach(actions.trailingSwipeItems, id: \.self) { swipeButton($0) }
 				}
 			}
 			.contextMenu { if enabled { TeamRowMenuItems(actions: actions) } }
+	}
+
+	@ViewBuilder
+	private func swipeButton(_ item: TeamRowActions.Item) -> some View {
+		switch item {
+		case .toggleRead:
+			Button {
+				MaskinHaptics.play(.selection)
+				actions.toggleRead()
+			} label: {
+				Label(actions.readLabel, systemImage: actions.isUnread ? "envelope.open" : "envelope.badge")
+			}
+			.tint(MaskinColor.sig)
+		case .archive:
+			Button {
+				MaskinHaptics.play(.selection)
+				actions.archive()
+			} label: {
+				Label("Archive", systemImage: "archivebox")
+			}
+			.tint(MaskinSurface.inverse)
+		case .more:
+			Button(action: actions.more) {
+				Label("More", systemImage: "ellipsis")
+			}
+			// Spec says `line3`; a swipe button's label is always white, so the grey is one step
+			// darker to stay legible.
+			.tint(MaskinColor.ink3)
+		case .pin:
+			Button {
+				MaskinHaptics.play(.selection)
+				actions.pin()
+			} label: {
+				Label(actions.pinLabel, systemImage: actions.isPinned ? "pin.slash" : "pin")
+			}
+			.tint(MaskinColor.ink4)
+		case .moveEarlier, .moveLater, .select, .delete:
+			EmptyView()
+		}
 	}
 }
 
@@ -94,26 +127,33 @@ struct TeamRowMenuItems: View {
 	let actions: TeamRowActions
 
 	var body: some View {
-		Button(actions.pinMenuLabel, systemImage: actions.isPinned ? "pin.slash" : "pin", action: actions.pin)
-		if actions.canToggleRead {
-			Button(
-				actions.readMenuLabel, systemImage: actions.isUnread ? "envelope.open" : "envelope.badge",
-				action: actions.toggleRead)
-		}
-		if let earlier = actions.moveEarlier {
-			Button("Move earlier", systemImage: "arrow.up", action: earlier)
-		}
-		if let later = actions.moveLater {
-			Button("Move later", systemImage: "arrow.down", action: later)
-		}
-		if actions.canArchive {
-			Button("Archive", systemImage: "archivebox", action: actions.archive)
-		}
-		if let select = actions.select {
-			Button("Select", systemImage: "checkmark.circle", action: select)
-		}
-		if actions.canDelete {
-			Button("Delete", systemImage: "trash", role: .destructive, action: actions.delete)
+		ForEach(actions.menuItems, id: \.self) { item in
+			switch item {
+			case .pin:
+				Button(actions.pinMenuLabel, systemImage: actions.isPinned ? "pin.slash" : "pin", action: actions.pin)
+			case .toggleRead:
+				Button(
+					actions.readMenuLabel, systemImage: actions.isUnread ? "envelope.open" : "envelope.badge",
+					action: actions.toggleRead)
+			case .moveEarlier:
+				if let earlier = actions.moveEarlier {
+					Button("Move earlier", systemImage: "arrow.up", action: earlier)
+				}
+			case .moveLater:
+				if let later = actions.moveLater {
+					Button("Move later", systemImage: "arrow.down", action: later)
+				}
+			case .archive:
+				Button("Archive", systemImage: "archivebox", action: actions.archive)
+			case .select:
+				if let select = actions.select {
+					Button("Select", systemImage: "checkmark.circle", action: select)
+				}
+			case .delete:
+				Button("Delete", systemImage: "trash", role: .destructive, action: actions.delete)
+			case .more:
+				EmptyView()
+			}
 		}
 	}
 }

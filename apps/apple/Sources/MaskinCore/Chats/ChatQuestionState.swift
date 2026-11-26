@@ -20,6 +20,22 @@ public struct ChatQuestionState: Sendable, Equatable {
 	/// The picks for each answered question. A question closed by typing or dismissed maps to an
 	/// empty list (nothing to summarise). When a pick and a typed close both exist, the pick wins.
 	public private(set) var answers: [Int: [ChatQuestionAnswer.Answer]] = [:]
+	/// For each answered question: who answered, when, and the words that stand in for a pick (the
+	/// typed reply, or "Dismissed"). The summary row under the question reads it.
+	public private(set) var notes: [Int: Note] = [:]
+
+	public struct Note: Sendable, Equatable {
+		public var actorName: String
+		public var date: Date?
+		/// The typed reply, or `ChatQuestionAnswer.dismissedPick`; nil when the answer is a pick.
+		public var text: String?
+
+		public init(actorName: String, date: Date?, text: String?) {
+			self.actorName = actorName
+			self.date = date
+			self.text = text
+		}
+	}
 
 	public init(messages: [ChatMessage], viewerID: String) {
 		for message in messages {
@@ -27,16 +43,19 @@ public struct ChatQuestionState: Sendable, Equatable {
 			answered.insert(id)
 			if answers[id] == nil || answers[id]?.isEmpty == true {
 				answers[id] = message.dismissedQuestion ? [] : message.questionAnswers
+				notes[id] = Note(
+					actorName: message.actorName, date: message.createdAt,
+					text: message.dismissedQuestion ? ChatQuestionAnswer.dismissedPick : nil)
 			}
 		}
-		var replies: [(id: Int, place: Int?)] = []
+		var replies: [(id: Int, place: Int?, message: ChatMessage)] = []
 		var questions: [(id: Int, place: Int?)] = []
 		for message in messages {
 			guard let id = message.serverID else { continue }
 			if !message.questions.isEmpty {
 				if !message.isHelperQuestion { questions.append((id, message.threadRootID)) }
 			} else if Self.isTypedReply(message, by: viewerID) {
-				replies.append((id, message.threadRootID))
+				replies.append((id, message.threadRootID, message))
 			}
 		}
 		// Oldest reply first, each closing the newest question in its place that is still open.
@@ -47,7 +66,11 @@ public struct ChatQuestionState: Sendable, Equatable {
 				.map(\.id).max()
 			guard let target else { continue }
 			answered.insert(target)
-			if answers[target] == nil { answers[target] = [] }
+			if answers[target] == nil {
+				answers[target] = []
+				notes[target] = Note(
+					actorName: reply.message.actorName, date: reply.message.createdAt, text: reply.message.content)
+			}
 		}
 	}
 

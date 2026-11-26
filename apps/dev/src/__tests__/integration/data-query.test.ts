@@ -94,7 +94,7 @@ describe('Data query integration', () => {
 	}
 
 	async function insertLoop(ws = workspaceId, by = actorId) {
-		return insertObject(db, ws, by, { type: 'loop', status: 'learning' })
+		return insertObject(db, ws, by, { type: 'loop', status: 'pilot' })
 	}
 
 	async function link(loopId: string, taskId: string) {

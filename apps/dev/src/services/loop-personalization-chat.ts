@@ -27,7 +27,9 @@ export function buildLoopPersonalizationPrompt(loop: {
 		'',
 		'Do you have recommendations for tailoring it to my workspace? Look at what it set up (its agents, skills and triggers) against what you know about me and this workspace: my knowledge, my integrations, my existing agents and flows.',
 		'',
-		'Reply with suggestions only. Do not change anything yet — no edits to agents, skills, triggers or settings. I will tell you which suggestions to go ahead with.',
+		"Check integrations in particular. List the external tools the flow's agents, skills and triggers assume (for example a specific note-taking, CRM or email tool). Compare them with my connected integrations (list_integrations) and the providers I could connect (list_integration_providers). Where I use or could connect a different tool that does the same job, suggest connecting it and adapting the flow to it, for example Granola or Google Meet transcripts in place of Fireflies. Where the flow needs a tool I have not connected and no provider covers it, say so.",
+		'',
+		'Reply with suggestions only. Do not change anything yet — no edits to agents, skills, triggers, settings or integrations, and do not connect anything. I will tell you which suggestions to go ahead with.',
 	].join('\n')
 }
 

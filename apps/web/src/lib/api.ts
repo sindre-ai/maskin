@@ -50,7 +50,7 @@ export type {
 }
 import { DATA_QUERY_MAX_PAGE_SIZE, parseRelativeBound } from '@maskin/shared'
 import { getApiKey } from './auth'
-import { API_BASE } from './constants'
+import { API_BASE, SAME_ORIGIN_API_BASE } from './constants'
 import { readEveryPage } from './data-query-pages'
 import { reportApiFailure } from './faro'
 import { limitConcurrency } from './limit-concurrency'
@@ -61,6 +61,8 @@ import type {
 	DailyBudgetResponse,
 	NotificationPreferencesResponse,
 	ObjectPreview,
+	SendPermissionKind,
+	SendPermissionMode,
 	SessionStatsRow,
 	TeachRequest,
 	TeachResponse,
@@ -123,12 +125,16 @@ type RequestOptions = {
 	workspaceId?: string
 	/** Send/receive cookies cross-origin. Only the OAuth connect call needs
 	 *  this: the server sets an HttpOnly nonce cookie there, and the callback
-	 *  requires it back to prove the same browser started the flow. */
+	 *  requires it back to prove the same browser started the flow. The cookie
+	 *  is host-only and the callback lands on the page's own host, so a call
+	 *  that sets this always goes to the page's host, never API_ORIGIN. */
 	credentials?: RequestCredentials
 	/** Lets the caller cancel the request (TanStack Query passes its abort signal here). */
 	signal?: AbortSignal
 	/** Keep the message of a structured 502/503/504 from our own API instead of the generic service text. */
 	keepServerErrorMessage?: boolean
+	/** Lets the request finish after the page is gone (tab closed, app backgrounded). */
+	keepalive?: boolean
 }
 
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
@@ -140,6 +146,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		credentials,
 		signal,
 		keepServerErrorMessage,
+		keepalive,
 	} = opts
 	const apiKey = getApiKey()
 
@@ -165,12 +172,13 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 
 	let res: Response
 	try {
-		res = await fetch(`${API_BASE}${path}`, {
+		res = await fetch(`${credentials ? SAME_ORIGIN_API_BASE : API_BASE}${path}`, {
 			method,
 			headers: reqHeaders,
 			body: body !== undefined ? JSON.stringify(body) : undefined,
 			...(credentials ? { credentials } : {}),
 			...(signal ? { signal } : {}),
+			...(keepalive ? { keepalive } : {}),
 		})
 	} catch (err) {
 		// No status to report — offline, DNS, CORS or a dropped connection — but
@@ -540,6 +548,24 @@ const limitedNextChange = limitConcurrency(
 	},
 )
 
+/** How an Accounting flow takes receipts besides chat uploads (routes/receipt-intake.ts). */
+export interface ReceiptIntakeStatus {
+	email: {
+		available: boolean
+		enabled: boolean
+		address: string | null
+		allowed_senders: string[]
+		default_sender: string | null
+		accepted: number
+		held: number
+	}
+	command: {
+		upload_url: string
+		keys: { id: string; last4: string; created_at: string; last_used_at: string | null }[]
+	}
+	limits: { daily_cap: number; max_file_bytes: number; file_types: string[] }
+}
+
 export const api = {
 	// The unified search endpoint: all five sources, true counts, AND matching.
 	search: {
@@ -551,6 +577,14 @@ export const api = {
 			const qs = Object.keys(params).length > 0 ? `?${new URLSearchParams(params)}` : ''
 			return request<SearchResponse>(`/search${qs}`, { workspaceId, signal: opts?.signal })
 		},
+		/** Records that the caller opened a result from a search; it feeds their own ranking. */
+		recordOpen: (workspaceId: string, entityId: string) =>
+			request<void>('/search/opens', {
+				method: 'POST',
+				body: { entity_id: entityId },
+				workspaceId,
+				keepalive: true,
+			}),
 	},
 	objects: {
 		list: (workspaceId: string, params?: Record<string, string>) => {
@@ -870,6 +904,69 @@ export const api = {
 				workspaceId,
 			}),
 	},
+	dineroReview: {
+		log: (workspaceId: string, from: string, to: string) =>
+			request<DineroReviewLog>(`/dinero-review?from=${from}&to=${to}`, { workspaceId }),
+		reverse: (workspaceId: string, eventId: number) =>
+			request<DineroReverseResult>('/dinero-review/reverse', {
+				method: 'POST',
+				body: { event_id: eventId },
+				workspaceId,
+			}),
+		approve: (workspaceId: string, body: { from: string; to: string; figures_hash: string }) =>
+			request<DineroReviewLog>('/dinero-review/approve', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
+		filingHandoff: (workspaceId: string, body: { from: string; to: string }) =>
+			request<DineroFilingHandoff>('/dinero-review/filing-handoff', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
+		vatReport: (workspaceId: string, from: string, to: string) =>
+			request<DineroVatReport>(`/dinero-review/vat-report?from=${from}&to=${to}`, { workspaceId }),
+		vatCheckNote: (workspaceId: string, from: string, to: string) =>
+			request<DineroVatCheckNote>(`/dinero-review/vat-check-note?from=${from}&to=${to}`, {
+				workspaceId,
+			}),
+		vatReportCsv: async (workspaceId: string, from: string, to: string): Promise<Blob> => {
+			const apiKey = getApiKey()
+			const res = await fetch(`${API_BASE}/dinero-review/vat-report/csv?from=${from}&to=${to}`, {
+				headers: {
+					...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+					'X-Workspace-Id': workspaceId,
+				},
+			})
+			if (!res.ok) {
+				const data = await res.json().catch(() => ({ error: res.statusText }))
+				const message =
+					typeof data.error === 'object' ? data.error.message : data.error || res.statusText
+				throw new ApiError(res.status, message)
+			}
+			return res.blob()
+		},
+	},
+	dineroBooking: {
+		get: (workspaceId: string) => request<DineroBookingState>('/dinero-booking', { workspaceId }),
+		set: (workspaceId: string, body: { enabled: boolean; acknowledged?: boolean }) =>
+			request<DineroBookingState>('/dinero-booking', { method: 'PUT', body, workspaceId }),
+	},
+	sendPermissions: {
+		get: (workspaceId: string) =>
+			request<SendPermissionsView>('/send-permissions', { workspaceId }),
+		/** `agentId` null is the workspace default; `mode` null removes an agent's own setting. */
+		set: (
+			workspaceId: string,
+			body: { agent_id: string | null; kind: SendPermissionKind; mode: SendPermissionMode | null },
+		) =>
+			request<{ agent_id: string | null; kind: string; mode: string | null }>('/send-permissions', {
+				method: 'PUT',
+				body,
+				workspaceId,
+			}),
+	},
 	integrations: {
 		list: (workspaceId: string) => request<IntegrationResponse[]>('/integrations', { workspaceId }),
 		chatCapture: (workspaceId: string, body: ChatCaptureInput) =>
@@ -939,19 +1036,32 @@ export const api = {
 				`/integrations/${id}/allow-from-chat`,
 				{ method: 'POST', body: { sessionId, scope }, workspaceId },
 			),
+		/** Record that a person pressed Not now on an access card. Grants nothing, restarts nothing. */
+		declineFromChat: (id: string, workspaceId: string, sessionId: string) =>
+			request<{ actorId: string }>(`/integrations/${id}/decline-from-chat`, {
+				method: 'POST',
+				body: { sessionId },
+				workspaceId,
+			}),
 		/** Allow the agent whose session asked in a chat to use a connected integration, and restart it. */
 		allowAccess: (
 			id: string,
 			workspaceId: string,
 			sessionId: string,
 			level: 'read' | 'read_write',
+			scope: 'chat' | 'always' = 'always',
 		) =>
 			request<{ actorId: string; changed: boolean; relaunch: 'stopped' | 'failed' }>(
 				`/integrations/${id}/allow-access`,
-				{ method: 'POST', body: { sessionId, level }, workspaceId },
+				{ method: 'POST', body: { sessionId, level, scope }, workspaceId },
 			),
 		removeGrant: (id: string, workspaceId: string, actorId: string) =>
 			request<{ actorId: string }>(`/integrations/${id}/grants/${actorId}`, {
+				method: 'DELETE',
+				workspaceId,
+			}),
+		removeChatGrant: (id: string, workspaceId: string, grantId: string) =>
+			request<{ grantId: string }>(`/integrations/${id}/chat-grants/${grantId}`, {
 				method: 'DELETE',
 				workspaceId,
 			}),
@@ -977,17 +1087,38 @@ export const api = {
 				workspaceId,
 			}),
 		providers: () => request<ProviderInfo[]>('/integrations/providers'),
+		/** The workspace's own sign-in app for a tool: its app id and whether one is saved, never the secret. */
+		oauthApp: (workspaceId: string, provider: string) =>
+			request<OAuthAppStatus>(`/integrations/${provider}/app`, { workspaceId }),
+		saveOAuthApp: (
+			workspaceId: string,
+			provider: string,
+			body: { clientId: string; clientSecret?: string; value?: string },
+		) =>
+			request<OAuthAppStatus>(`/integrations/${provider}/app`, {
+				method: 'PUT',
+				body,
+				workspaceId,
+			}),
+		/** Removes the saved app. The server refuses while the tool is still connected. */
+		deleteOAuthApp: (workspaceId: string, provider: string) =>
+			request<void>(`/integrations/${provider}/app`, { method: 'DELETE', workspaceId }),
 		connect: (
 			workspaceId: string,
 			provider: string,
 			body?: {
 				api_key?: string
+				project_id?: string
 				receive_subdomain?: string
 				install_new_org?: boolean
 				origin?: string
 				// Deepdots signs in with these (the connect route stores nothing if they fail).
 				email?: string
 				password?: string
+				// A self-hosted WordPress site signs in with these (nothing is stored if they fail).
+				site_url?: string
+				username?: string
+				application_password?: string
 			},
 		) =>
 			request<{
@@ -1214,6 +1345,13 @@ export const api = {
 				workspaceId,
 				headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
 			}),
+		/** `PATCH /events/:id`: change the text of a comment you wrote. */
+		update: (workspaceId: string, eventId: number, content: string) =>
+			request<EventResponse>(`/events/${eventId}`, {
+				method: 'PATCH',
+				body: { content },
+				workspaceId,
+			}),
 	},
 
 	imports: {
@@ -1408,6 +1546,31 @@ export const api = {
 			request<{ deleted: boolean }>(`/installed-loops/${installedLoopId}`, {
 				method: 'DELETE',
 				body: { keepProvisionedItems },
+				workspaceId,
+			}),
+	},
+
+	receiptIntake: {
+		get: (workspaceId: string, loopId: string) =>
+			request<ReceiptIntakeStatus>(`/receipt-intake/${loopId}`, { workspaceId }),
+		updateEmail: (
+			workspaceId: string,
+			loopId: string,
+			body: { enabled?: boolean; allowed_senders?: string[]; new_address?: boolean },
+		) =>
+			request<ReceiptIntakeStatus>(`/receipt-intake/${loopId}/email`, {
+				method: 'PUT',
+				body,
+				workspaceId,
+			}),
+		createKey: (workspaceId: string, loopId: string) =>
+			request<{ id: string; key: string; last4: string }>(`/receipt-intake/${loopId}/keys`, {
+				method: 'POST',
+				workspaceId,
+			}),
+		revokeKey: (workspaceId: string, loopId: string, keyId: string) =>
+			request<ReceiptIntakeStatus>(`/receipt-intake/${loopId}/keys/${keyId}`, {
+				method: 'DELETE',
 				workspaceId,
 			}),
 	},
@@ -1755,11 +1918,12 @@ export const api = {
 		},
 		get: (id: string, workspaceId: string) =>
 			request<ConversationDetailResponse>(`/conversations/${id}`, { workspaceId }),
-		create: (workspaceId: string, data: CreateConversationInput) =>
+		create: (workspaceId: string, data: CreateConversationInput, opts?: { keepalive?: boolean }) =>
 			request<ConversationDetailResponse>('/conversations', {
 				method: 'POST',
 				body: data,
 				workspaceId,
+				...opts,
 			}),
 		update: (id: string, workspaceId: string, data: UpdateConversationInput) =>
 			request<ConversationDetailResponse>(`/conversations/${id}`, {
@@ -1782,11 +1946,17 @@ export const api = {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<MessagesListResponse>(`/conversations/${id}/messages${qs}`, { workspaceId })
 		},
-		postMessage: (id: string, workspaceId: string, data: PostMessageInput) =>
+		postMessage: (
+			id: string,
+			workspaceId: string,
+			data: PostMessageInput,
+			opts?: { keepalive?: boolean },
+		) =>
 			request<MessageResponse>(`/conversations/${id}/messages`, {
 				method: 'POST',
 				body: data,
 				workspaceId,
+				...opts,
 			}),
 		editMessage: (id: string, workspaceId: string, messageId: number, data: EditMessageInput) =>
 			request<MessageResponse>(`/conversations/${id}/messages/${messageId}`, {
@@ -2657,7 +2827,7 @@ export interface CreateTriggerInput {
 	type: 'cron' | 'event' | 'reminder'
 	config: Record<string, unknown>
 	action_prompt: string
-	target_actor_id: string
+	target_actor_id?: string
 	enabled?: boolean
 }
 
@@ -2717,7 +2887,32 @@ export interface IntegrationResponse {
 	/** Explicit per-agent grants. For a Keychain credential these are the only agents with access. */
 	agentGrants?: AgentGrant[]
 	/** Saved credentials shared with an agent for one chat only. */
-	chatGrants?: Array<{ actorId: string; conversationId: string }>
+	chatGrants?: Array<{
+		id: string
+		actorId: string
+		conversationId: string
+		expiresAt: string | null
+	}>
+}
+
+/** Where a send setting came from: the agent's own, the workspace default, or the starting table. */
+export type SendPermissionSource = 'agent' | 'workspace' | 'starting'
+
+export interface SendPermissionSetting {
+	mode: SendPermissionMode
+	source: SendPermissionSource
+}
+
+/** GET /api/send-permissions: the workspace default and each agent's resulting mode per kind. */
+export interface SendPermissionsView {
+	kinds: SendPermissionKind[]
+	modes: SendPermissionMode[]
+	workspace_default: Record<SendPermissionKind, SendPermissionSetting>
+	agents: Array<{
+		agent_id: string
+		name: string
+		settings: Record<SendPermissionKind, SendPermissionSetting>
+	}>
 }
 
 /** 'none' is an explicit no that beats a read default. A saved credential only uses read_write. */
@@ -2824,12 +3019,28 @@ export interface ProviderEventDefinition {
 	label: string
 }
 
+export interface OAuthAppStatus {
+	configured: boolean
+	clientId?: string
+	/** The customer's own address or tenant, for a tool that has one. Not secret. */
+	value?: string
+	updatedAt?: string
+	/** The URL the vendor's app must list as its callback. */
+	callbackUrl: string
+}
+
 export interface ProviderInfo {
 	name: string
 	displayName: string
 	authType: 'oauth2' | 'oauth2_custom' | 'api_key' | 'manual'
 	events: ProviderEventDefinition[]
 	externalIdDisplay?: 'email' | 'installation'
+	/** The vendor wants the workspace's own sign-in app: ask for its id and secret before Connect. */
+	customerApp?: boolean
+	/** With customerApp: the app has no secret (a public client), so the form does not ask for one. */
+	customerAppPublic?: boolean
+	/** With customerApp: the tool lives at an address that differs per customer, asked for in the form. */
+	customerValue?: { label: string; placeholder: string; help?: string }
 	mcp?: {
 		envKey: string
 		autoInject: boolean
@@ -3048,6 +3259,8 @@ export interface ConversationListItemResponse {
 	workspaceId: string
 	title: string
 	createdBy: string
+	/** Labels for grouping chats, for example a team name. Shared by every participant. */
+	tags?: string[]
 	/** Set on the direct message (DM) of a pair, null on every topical chat. The list tells the two apart by this alone. */
 	directPairKey?: string | null
 	lastMessageAt: string | null
@@ -3063,6 +3276,28 @@ export interface ConversationListItemResponse {
 	participants: ConversationParticipantResponse[]
 	/** Agents with an open turn in this chat right now — a chat session stays running between turns. */
 	working_actor_ids: string[]
+	/** An agent in this chat waits on the person (a session of this chat is waiting for input).
+	 *  Absent from a server that predates the new chat list. */
+	needs_you?: boolean
+	/** Agents working in this chat, each with the session to open. Absent on an older server. */
+	working?: ChatListWorking[]
+	/** The caller's own Later flag. Cleared by the server when a new message arrives. */
+	later?: boolean
+	/** The last turn failed. `last_person_message_id` is the person's last message, the one Retry re-runs. */
+	error?: ChatListError | null
+}
+
+export interface ChatListWorking {
+	agent_id: string
+	session_id: string
+}
+
+export type ChatListErrorReason = 'usage_limit' | 'other' | 'connection'
+
+export interface ChatListError {
+	reason: ChatListErrorReason
+	/** Null when the person never wrote in the chat: there is nothing to retry. */
+	last_person_message_id: number | null
 }
 
 export interface ConversationListResponse {
@@ -3131,6 +3366,8 @@ export interface MessageFinalOutput {
 	 * Mirrors messageFinalOutputSchema in packages/shared.
 	 */
 	error_kind?: 'transient' | 'permanent'
+	/** The provider's own error text for a permanent failure; the message body stays plain. */
+	error_detail?: string
 	/** Replays spent before giving up on a transient failure. */
 	retries?: number
 	/**
@@ -3251,6 +3488,8 @@ export interface MessageIntegrationAccessRequest {
 	display_name: string
 	level: 'read' | 'read_write'
 	reason?: string
+	/** Set by the server: the card can also allow write for a few hours in this chat only. */
+	chat_lift?: { hours: number; text: string; tool?: string }
 }
 
 /** An agent asking the person to add a tool (MCP) server, surfaced as a card. Holds no secret. */
@@ -3477,6 +3716,8 @@ export interface UpdateConversationInput {
 export interface UpdateConversationParticipantStateInput {
 	pinned?: boolean
 	archived?: boolean
+	/** The caller's own Later flag: hides the chat until a new message arrives. */
+	later?: boolean
 	last_read_message_id?: number
 	mark_unread?: boolean
 }
@@ -3794,4 +4035,109 @@ interface InstalledLoopForkResponse {
 	installedAt: string | null
 	updatedAt: string | null
 	detached: { actors: number; triggers: number; skills: number; integrations: number }
+}
+
+export interface DineroBookingState {
+	enabled: boolean
+	statement: string
+	set_by: string | null
+	set_at: string | null
+}
+
+export interface DineroReviewLine {
+	description: string | null
+	amount: number | null
+	account: number | null
+	counter_account: number | null
+	vat_code: string | null
+}
+
+export interface DineroReceipt {
+	file_name: string | null
+	file_guid: string | null
+	reference: string | null
+}
+
+export interface DineroVatEntry {
+	event_id: number
+	voucher_date: string | null
+	description: string | null
+	account: number | null
+	amount_incl_vat: number
+	vat_amount: number | null
+	net_amount: number | null
+	receipt: DineroReceipt | null
+}
+
+export interface DineroVatLine {
+	vat_code: string | null
+	direction: 'input' | 'output' | 'none' | 'unknown'
+	rate: number | null
+	lines: number
+	amount_incl_vat: number
+	vat_amount: number | null
+	net_amount: number | null
+	entries: DineroVatEntry[]
+}
+
+export interface DineroVatCheckNote {
+	note: { id: string; title: string; created_at: string | null } | null
+}
+
+export interface DineroVatReport {
+	from: string
+	to: string
+	lines: DineroVatLine[]
+	totals: {
+		input_vat: number
+		output_vat: number
+		complete: boolean
+		uncalculated_lines: number
+	}
+	figures_hash: string
+	notice: string
+}
+
+export interface DineroReviewItem {
+	event_id: number
+	at: string | null
+	tool: string
+	outcome: string
+	booked: boolean
+	voucher_date: string | null
+	lines: DineroReviewLine[]
+	receipt: DineroReceipt | null
+	result: string | null
+	reverses_event_id: number | null
+	reversed_by_event_id: number | null
+	can_reverse: boolean
+	cannot_reverse_because: string | null
+}
+
+export interface DineroReviewLog {
+	from: string
+	to: string
+	items: DineroReviewItem[]
+	figures_hash: string
+	approval: { approved_by: string; approved_at: string; figures_hash: string } | null
+	truncated: boolean
+}
+
+export interface DineroFilingHandoff {
+	from: string
+	to: string
+	approved_by: string
+	approved_at: string
+	figures_hash: string
+	figures: DineroVatLine[]
+	figures_note: string
+	steps: string[]
+	year_end_steps: string[]
+	notice: string
+}
+
+export interface DineroReverseResult {
+	outcome: 'success' | 'error'
+	message: string | null
+	reversal_event_id: number
 }

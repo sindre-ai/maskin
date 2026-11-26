@@ -19,22 +19,27 @@ export async function resolveGoogleEmail(accessToken: string): Promise<string> {
 }
 
 /**
- * Fetch the caller's Google People id via `people.get(me)`. `openid` alone
- * grants this read. The id is the first entry of `metadata.sources[]` — a
- * numeric string that is stable for the life of the Google account.
+ * Resolve the caller's stable Google account id (the "People id") from the
+ * OAuth2 v2 userinfo endpoint's `id` (the OIDC `sub`). It is the same numeric
+ * string `people/me` reports in `metadata.sources[].id`, and it is stable for
+ * the life of the Google account.
+ *
+ * We do NOT call the People API: it is a separate Cloud API that can answer
+ * 403 for a fresh account (Meet hit this, Sentry MASKIN-DEV-11), and no scope
+ * fixes that. Userinfo needs nothing beyond the `openid` + `userinfo.email`
+ * scopes already granted.
  */
 export async function resolveGooglePeopleId(accessToken: string): Promise<string> {
-	const res = await fetch('https://people.googleapis.com/v1/people/me?personFields=metadata', {
+	const res = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
 		headers: { Authorization: `Bearer ${accessToken}` },
 	})
 	if (!res.ok) {
 		const text = await res.text()
 		throw new Error(`Failed to resolve Google People id: HTTP ${res.status} ${text}`)
 	}
-	const data = (await res.json()) as { metadata?: { sources?: Array<{ id?: string }> } }
-	const peopleId = data.metadata?.sources?.[0]?.id
-	if (!peopleId) {
-		throw new Error('Google People response missing metadata.sources[0].id')
+	const data = (await res.json()) as { id?: string }
+	if (!data.id) {
+		throw new Error('Google userinfo response missing id field')
 	}
-	return peopleId
+	return data.id
 }

@@ -16,11 +16,16 @@ import {
 	type McpEra,
 	type McpProtocolVersionLabel,
 	type ObjectPreview,
+	PILOT_REFUSAL,
 	type WebAppTarget,
 	applyLoopView,
 	buildWebAppHref,
+	formatCopenhagenStamp,
+	isPilotHeldMaskinTool,
+	loopStatusTurnsTriggersOff,
 	normalizeLoopViewName,
 	readLoopViews,
+	resolveToolKind,
 	resolveWebAppBaseUrl,
 	slimForYouItems,
 	stripTrailingSlash,
@@ -36,7 +41,20 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Cron } from 'croner'
 import type { z } from 'zod'
 import { needsNormalise, normaliseArgs, wrapInputSchema } from './alias-layer.js'
-import { READ_ONLY_TOOLS, TOOL_ANNOTATIONS } from './annotations.js'
+import {
+	EXTENSION_TOOL_ANNOTATIONS,
+	READ_ONLY_TOOLS,
+	TOOL_ANNOTATIONS,
+	extensionToolTitle,
+} from './annotations.js'
+import {
+	isBulkReply,
+	slimCreatedEdges,
+	slimCreatedNodes,
+	slimLoopRow,
+	slimResults,
+} from './bulk-reply.js'
+import { addCopenhagenTimesToResponse } from './copenhagen-times.js'
 import {
 	CURSOR_MAX_OFFSET,
 	type CursorState,
@@ -61,6 +79,7 @@ import {
 } from './list-contract.js'
 import { inSnapshot, matchesText, normalizeStatusFilter } from './list-filters.js'
 import { buildListPayload, listPageText, listText } from './list-response.js'
+import { DEFAULT_TIMEZONE, withLocalTimes } from './local-time.js'
 import {
 	READ_TOOL_NAMES,
 	buildReadErrorBody,
@@ -95,7 +114,7 @@ import {
 } from './telemetry.js'
 import { TOOL_ALIAS_ARG_RENAMES, TOOL_NAME_ALIASES, type ToolNameAlias } from './tool-aliases.js'
 import { legacyListTools, parseListActorsInclude, tools } from './tools.js'
-import { compactTrigger } from './trigger-rows.js'
+import { compactTrigger, triggerSchedule } from './trigger-rows.js'
 import { type OtherTrigger, type WarningChecks, detectTriggerWarnings } from './trigger-warnings.js'
 
 export interface McpConfig {
@@ -138,6 +157,14 @@ export interface McpConfig {
 	 */
 	forwardMarker?: string
 	/**
+	 * Leave the hero card out of `structuredContent`. The card is a widget-only copy of data the
+	 * response already carries in full, so a caller that draws no widgets (a Maskin agent session)
+	 * only pays for it. Set by `routes/mcp.ts` for agent sessions; the HTTP server is built per
+	 * POST and never sees the client's `initialize`, so widget support cannot be read from the
+	 * client's capabilities. Unset keeps the card, which is what a widget host needs.
+	 */
+	omitHeroCard?: boolean
+	/**
 	 * Protocol era and allowlisted version label for telemetry, next to
 	 * `transport`. Set by `routes/mcp.ts` from `classifyMcpEra` on HTTP; stdio
 	 * sets the fallback (legacy, none) because the SDK does not expose the
@@ -159,6 +186,12 @@ export interface McpConfig {
 	 * on stdio and on external callers.
 	 */
 	triggeringEventId?: number
+	/**
+	 * The IANA zone to show times in for this caller: the person calling, or the person in the
+	 * calling agent's chat. Set by `routes/mcp.ts` on HTTP and looked up only when a tool asks.
+	 * Unset (stdio) reads as Europe/Copenhagen, the zone the agent containers run in.
+	 */
+	personTimezone?: () => Promise<string>
 	/**
 	 * The caller's own session id, as sent in X-Maskin-Session-Id by the agent
 	 * container. Over HTTP the MCP server runs inside apps/dev, so
@@ -196,6 +229,18 @@ function uiMeta(
 	resourceUri: string,
 ): Record<string, unknown> {
 	return { ...meta(toolName, config, workspaceId), ui: { resourceUri, csp: CSP } }
+}
+
+/**
+ * The `heroCard` key for a response's `structuredContent`, or nothing when the caller draws no
+ * widgets (`config.omitHeroCard`). Only for tools whose full record also sits in
+ * `structuredContent`: where the card is the only carrier of the rows, dropping it drops the data.
+ */
+function heroCardBlock(
+	config: McpConfig,
+	heroCard: HeroCardPayload,
+): { heroCard?: HeroCardPayload } {
+	return config.omitHeroCard ? {} : { heroCard }
 }
 
 function addUrl(
@@ -418,6 +463,17 @@ async function fetchEventHistoryPage(
 	return { page, nextCursor }
 }
 
+/** A file record with its `content` and `content_text` starting at character `offset`, plus the offset. */
+function sliceFileFrom(file: unknown, offset: number): unknown {
+	if (!file || typeof file !== 'object') return file
+	const out: Record<string, unknown> = { ...(file as Record<string, unknown>), offset }
+	for (const key of ['content', 'content_text']) {
+		const value = out[key]
+		if (typeof value === 'string') out[key] = value.slice(offset)
+	}
+	return out
+}
+
 /** Read `.url` off an enriched row without paying the TS cost each time. */
 function pickUrl(row: unknown): string | undefined {
 	if (!row || typeof row !== 'object') return undefined
@@ -608,6 +664,24 @@ async function apiFetch(
 	return response
 }
 
+/** The zone times are shown in for this caller; the default when none is known or the lookup fails. */
+async function callerTimezone(config: McpConfig): Promise<string> {
+	try {
+		return (await config.personTimezone?.()) ?? DEFAULT_TIMEZONE
+	} catch {
+		return DEFAULT_TIMEZONE
+	}
+}
+
+/** A next step with its due time also in the caller's zone. */
+function withLocalDue(step: unknown, timezone: string): unknown {
+	return isPlainObject(step) ? withLocalTimes(step, ['due_at'], timezone) : step
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 async function apiCall(
 	config: McpConfig,
 	method: string,
@@ -652,8 +726,7 @@ function countNonMaskinMcpServers(tools: unknown): number {
 }
 
 /**
- * The stored status of every loop in the workspace, keyed by loop id. `/api/loops` reports a
- * folded status (stored pilot, live and archived all come back as draft), so a status filter
+ * The stored status of every loop in the workspace, keyed by loop id. A status filter
  * reads the objects route, which returns the status as stored. Walks the route's own keyset to
  * the end, archived loops included.
  */
@@ -920,7 +993,7 @@ interface LoopStepInput {
 /**
  * Map an inline loop step to a `POST /api/triggers` request body. `enabled`
  * defaults to true; callers creating steps on a loop whose effective status
- * is `paused` pass `false` so a newly-authored step doesn't start firing on
+ * is `draft` or `paused` pass `false` so a newly-authored step doesn't start firing on
  * a loop that isn't supposed to be running anything yet.
  */
 function buildStepTriggerBody(step: LoopStepInput, enabled = true): Record<string, unknown> {
@@ -2216,7 +2289,7 @@ function registerObjectResources(server: McpServer, config: McpConfig) {
 }
 
 const UPDATE_ENTRY_FIELDS =
-	'title, content, status, metadata, driver, attach_file_ids, detach_file_ids'
+	'title, content, append, replace, status, metadata, driver, attach_file_ids, detach_file_ids'
 
 /**
  * True when an update_objects entry asks for at least one write: a field change,
@@ -2276,6 +2349,46 @@ function assertWriteStaysInSessionWorkspace(
 	throw new Error(
 		`${toolName} was called with workspace_id ${requested}, but this session runs in workspace ${sessionWorkspaceId}. Agents can only write to the workspace they run in. Omit workspace_id or pass ${sessionWorkspaceId}.`,
 	)
+}
+
+/**
+ * Pilot flows hold the Maskin tools that leave the company or cannot be undone (delete_object,
+ * delete_file, delete_loop, delete_trigger, create_notification) and any tool nobody classified,
+ * such as an extension's. For those, with a session, the API is asked first: a session under a
+ * flow in pilot is refused and a card goes to a person; after they approve that exact call, the
+ * repeated call goes through once. A call with no session (a person's own chat) is not asked.
+ * If the question cannot be asked the call is held: not being able to ask never lets it through.
+ */
+async function assertNotHeldByPilot(
+	config: McpConfig,
+	toolName: string,
+	args: unknown,
+	/** An extension tool whose name says it only reads: classified, so not held. */
+	extensionRead: boolean,
+): Promise<void> {
+	if (!isPilotHeldMaskinTool(toolName, toolName in TOOL_ANNOTATIONS || extensionRead)) return
+	const sessionId =
+		config.transport === 'http'
+			? config.maskinSessionId
+			: (config.maskinSessionId ?? process.env.SESSION_ID)
+	if (!sessionId) return
+	let held: { held?: boolean; message?: string }
+	try {
+		const response = await apiFetch(
+			config,
+			'POST',
+			'/api/pilot-gate/check',
+			{ tool: toolName, arguments: args },
+			// The answer changes with every call (a card, then an approval), so it is never replayed.
+			{ idempotencyKey: randomUUID() },
+		)
+		held = (await response.json()) as { held?: boolean; message?: string }
+	} catch {
+		throw new Error(
+			`${PILOT_REFUSAL}. This flow could not be checked just now, so ${toolName} was held. Nothing was done. Try again shortly.`,
+		)
+	}
+	if (held.held) throw new Error(held.message ?? `${PILOT_REFUSAL}. Nothing was done.`)
 }
 
 /**
@@ -3015,6 +3128,9 @@ function oneTimeOrScheduledBody<T extends { type?: string; config?: Record<strin
  * enabled triggers are read after the save; if that read fails the similar
  * check is skipped and the rest still ships.
  */
+/** The compact trigger fields that hold a UTC time; each gets a local twin. */
+const TRIGGER_TIME_KEYS = ['next_run', 'last_run'] as const
+
 async function triggerWriteResult(
 	config: McpConfig,
 	workspaceId: string | undefined,
@@ -3041,7 +3157,11 @@ async function triggerWriteResult(
 	}
 	const warnings = detectTriggerWarnings({ id: saved.id, trigger: saved, others, checks })
 	const wsId = saved.workspaceId ?? workspaceId ?? config.defaultWorkspaceId
-	const row: Record<string, unknown> = { ...compactTrigger(saved, triggerAgent(saved, actors)) }
+	const row: Record<string, unknown> = withLocalTimes(
+		compactTrigger(saved, triggerAgent(saved, actors)),
+		TRIGGER_TIME_KEYS,
+		await callerTimezone(config),
+	)
 	return {
 		trigger: wsId ? addUrl(row, config, wsId, { kind: 'trigger', id: saved.id }) : row,
 		warnings,
@@ -3073,9 +3193,8 @@ function buildTriggerContextLine(trigger: RawTrigger, nowMs = Date.now()): strin
 		case 'cron': {
 			const expression = typeof config.expression === 'string' ? config.expression : null
 			if (!expression) return `cron · ${enabledLabel}`
-			// Cron triggers fire in UTC (see `scheduleCron` in apps/dev/src/services/trigger-runner.ts).
-			// Workspaces don't carry a timezone yet, so we surface UTC inline to keep the
-			// label honest against the runtime; drop the suffix once timezone is plumbed through.
+			// Cron triggers fire in UTC (see `scheduleCron` in apps/dev/src/services/trigger-runner.ts)
+			// and are shown to people in Copenhagen time.
 			let nextLabel: string | null = null
 			if (trigger.enabled) {
 				try {
@@ -3086,7 +3205,7 @@ function buildTriggerContextLine(trigger: RawTrigger, nowMs = Date.now()): strin
 					// Invalid expression — skip next-run, keep the schedule line.
 				}
 			}
-			const schedule = `${expression} (UTC)`
+			const schedule = triggerSchedule(trigger, new Date(nowMs))
 			return nextLabel
 				? `${enabledLabel} · ${schedule} · ${nextLabel}`
 				: `${enabledLabel} · ${schedule}`
@@ -3096,7 +3215,7 @@ function buildTriggerContextLine(trigger: RawTrigger, nowMs = Date.now()): strin
 			if (!scheduledAt) return `reminder · ${enabledLabel}`
 			const targetMs = Date.parse(scheduledAt)
 			if (!Number.isFinite(targetMs)) return `reminder · ${enabledLabel}`
-			return `${enabledLabel} · at ${scheduledAt} · ${formatRelativeFuture(targetMs, nowMs)}`
+			return `${enabledLabel} · at ${formatCopenhagenStamp(scheduledAt) ?? scheduledAt} · ${formatRelativeFuture(targetMs, nowMs)}`
 		}
 		case 'event': {
 			const action = typeof config.action === 'string' ? config.action : null
@@ -3487,7 +3606,7 @@ async function listObjectsPage(
 			},
 		],
 		structuredContent: {
-			heroCard,
+			...heroCardBlock(config, heroCard),
 			objects: rows,
 			page: {
 				limit: pagination.limit,
@@ -3553,6 +3672,8 @@ const UNKNOWN_KEY_HINTS: Record<string, Record<string, string>> = {
 		types: 'edge_type_allow_list',
 	},
 	get_objects: {
+		object_id: 'ids: ["<uuid>"]',
+		object_ids: 'ids',
 		include_content: 'include: ["content"]',
 		include_body: 'include: ["content"]',
 		include_metadata: 'include: ["metadata"]',
@@ -3579,6 +3700,10 @@ export function createMcpServer(config: McpConfig) {
 	// Attached to the server via `serverHandlers` so `getServerHandlers`
 	// (and `createInvokeTool` in ./invoke.ts) can dispatch tools directly.
 	const handlers = new Map<string, McpToolHandler>()
+
+	// Extension tools whose names say they only read. Every other tool without a row in
+	// annotations.ts counts as outbound in a pilot flow.
+	const extensionReadTools = new Set<string>()
 
 	// The rollback switch for the list contract: off registers the pre-contract list_objects and
 	// search_objects (definition and handler). Read once at server creation, from the process
@@ -3675,6 +3800,7 @@ export function createMcpServer(config: McpConfig) {
 			let response: unknown
 			try {
 				assertWriteStaysInSessionWorkspace(config, name, args)
+				await assertNotHeldByPilot(config, name, args, extensionReadTools.has(name))
 				response = await handler(args, extra)
 			} catch (err) {
 				recordToolCall(telemetrySink, telemetryTarget, {
@@ -3741,8 +3867,9 @@ export function createMcpServer(config: McpConfig) {
 
 			// Token-cap guardrail. Enforces `MAX_RESPONSE_TOKENS` before the
 			// telemetry event measures the shipped payload — the size event and
-			// the wire response see the same, capped shape.
-			const capped = applyResponseTokenCap(name, response)
+			// the wire response see the same, capped shape. The Copenhagen times go on
+			// first, so they count toward the cap like any other field.
+			const capped = applyResponseTokenCap(name, addCopenhagenTimesToResponse(response))
 			const finalResponse = capped.response
 
 			// Response-size baseline for response-size telemetry. Measures the
@@ -3792,8 +3919,9 @@ export function createMcpServer(config: McpConfig) {
 		handlers.set(name, wrappedHandler)
 
 		// Title and annotations come from the table in annotations.ts, so every
-		// tool gets them here and nowhere else. Extension tools have no row and
-		// pass through unannotated.
+		// platform tool gets them here. Extension tools have no row: they carry
+		// their own title and annotations from the loop that registers them, and
+		// pass through here untouched.
 		const annotation = TOOL_ANNOTATIONS[name]
 		const annotatedDefinition = annotation
 			? {
@@ -3839,7 +3967,9 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
 		},
 		async (args) => {
-			const { workspace_id, nodes, edges } = args
+			const { nodes, edges } = args
+			// Left out, the call runs in the caller's own workspace (the session's, or the default).
+			const workspace_id = args.workspace_id ?? config.defaultWorkspaceId
 			const wsOpts = { workspaceId: workspace_id }
 
 			// /api/graph doesn't understand file_ids — strip them from the body
@@ -3931,9 +4061,22 @@ export function createMcpServer(config: McpConfig) {
 						return addUrl(rest, config, workspace_id, { kind: 'object', id: node.id })
 					})
 				: graphResult.nodes
-			const enrichedResult = { ...graphResult, nodes: enrichedNodes }
+			// A big batch echoes ids and titles only, so the reply stays under the tool cap.
+			const bulkReply = isBulkReply(Math.max(nodes.length, edges?.length ?? 0))
+			const enrichedResult = bulkReply
+				? {
+						...graphResult,
+						nodes: Array.isArray(enrichedNodes) ? slimCreatedNodes(enrichedNodes) : enrichedNodes,
+						edges: Array.isArray(graphResult.edges)
+							? slimCreatedEdges(graphResult.edges)
+							: graphResult.edges,
+					}
+				: { ...graphResult, nodes: enrichedNodes }
 			const baseBody = fileAttachments.length
-				? { ...enrichedResult, file_attachments: fileAttachments }
+				? {
+						...enrichedResult,
+						file_attachments: bulkReply ? slimResults(fileAttachments) : fileAttachments,
+					}
 				: enrichedResult
 
 			// No setup block on create — matches create_actor/create_loop: creates
@@ -4141,7 +4284,7 @@ export function createMcpServer(config: McpConfig) {
 					...(wait ? [{ type: 'text' as const, text: JSON.stringify({ wait }) }] : []),
 				],
 				structuredContent: {
-					heroCard,
+					...heroCardBlock(config, heroCard),
 					results: slimResults,
 					objects: canonicalObjects,
 					...(wait ? { wait } : {}),
@@ -4459,7 +4602,9 @@ export function createMcpServer(config: McpConfig) {
 				}),
 			)
 			const setup = mergeBetSetupBlocks(perObjectSetup)
-			const responseBody = { results, setup }
+			// A big batch reports each item's id, success and error, not its full row.
+			const bulkReply = isBulkReply(Math.max(args.updates?.length ?? 0, args.edges?.length ?? 0))
+			const responseBody = { results: bulkReply ? slimResults(results) : results, setup }
 
 			return {
 				_meta: meta('update_objects', config, (args as { workspace_id?: string }).workspace_id),
@@ -4481,9 +4626,10 @@ export function createMcpServer(config: McpConfig) {
 			const result = await apiCall(config, 'POST', `/api/objects/${object_id}/next-step`, body, {
 				workspaceId: workspace_id,
 			})
+			const timezone = await callerTimezone(config)
 			return {
 				_meta: meta('set_next_step', config, workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(withLocalDue(result, timezone)) }],
 			}
 		},
 	)
@@ -4505,9 +4651,19 @@ export function createMcpServer(config: McpConfig) {
 				body,
 				{ workspaceId: workspace_id },
 			)
+			const timezone = await callerTimezone(config)
+			const scheduled = isPlainObject(result)
+				? {
+						...result,
+						next_step: withLocalDue(result.next_step, timezone),
+						wake_up: isPlainObject(result.wake_up)
+							? withLocalTimes(result.wake_up, ['at'], timezone)
+							: result.wake_up,
+					}
+				: result
 			return {
 				_meta: meta('schedule_next_step', config, workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(scheduled) }],
 			}
 		},
 	)
@@ -4525,9 +4681,10 @@ export function createMcpServer(config: McpConfig) {
 			const result = await apiCall(config, 'PATCH', `/api/objects/${object_id}/next-step`, body, {
 				workspaceId: workspace_id,
 			})
+			const timezone = await callerTimezone(config)
 			return {
 				_meta: meta('update_next_step', config, workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(withLocalDue(result, timezone)) }],
 			}
 		},
 	)
@@ -4736,7 +4893,7 @@ export function createMcpServer(config: McpConfig) {
 					},
 				],
 				structuredContent: {
-					heroCard,
+					...heroCardBlock(config, heroCard),
 					objects: enriched,
 					page: {
 						limit: pagination.limit,
@@ -4840,7 +4997,7 @@ export function createMcpServer(config: McpConfig) {
 					},
 				],
 				structuredContent: {
-					heroCard,
+					...heroCardBlock(config, heroCard),
 					objects: enriched,
 					page: {
 						limit: result.length,
@@ -5377,6 +5534,20 @@ export function createMcpServer(config: McpConfig) {
 				// never serializes onto the wire.
 				[TELEMETRY_VIEW]: view,
 				_meta: uiMeta('list_actors', config, scopeWorkspaceId, pickCollectionResourceUri(heroCard)),
+				// The rows live in the heroCard only, so the text carries them too: a client that
+				// reads text (a live voice call) gets the same rows the card holds.
+				content: [
+					{
+						type: 'text' as const,
+						text: listPageText({
+							key: 'actors',
+							rows: heroObjects,
+							limit: pagination.limit,
+							nextCursor,
+							total: totalCount,
+						}),
+					},
+				],
 				structuredContent: {
 					heroCard,
 					...(nextCursor
@@ -5391,16 +5562,7 @@ export function createMcpServer(config: McpConfig) {
 							}
 						: {}),
 				},
-				// The SDK's CallToolResult type requires `content` because Zod's
-				// `Infer` treats a `ZodDefault` field as required on the output side,
-				// even though nothing in the SDK's tool-dispatch path (`mcp.js`'s
-				// `Promise.resolve(cb(args, extra))`) actually validates the return
-				// value against that schema — this handler genuinely omits `content`
-				// at runtime (see the `list_actors: flag ... never emits a content
-				// channel` tests); this is a static-type artifact only, not a real
-				// contract violation.
-				// biome-ignore lint/suspicious/noExplicitAny: see comment above.
-			} as any
+			}
 		},
 	)
 
@@ -5499,7 +5661,7 @@ export function createMcpServer(config: McpConfig) {
 			return {
 				_meta: uiMeta('get_actor', config, workspaceId, UI_RESOURCES.heroCard),
 				content: [{ type: 'text' as const, text: JSON.stringify(withUrl) }],
-				structuredContent: { heroCard, actor: withUrl },
+				structuredContent: { ...heroCardBlock(config, heroCard), actor: withUrl },
 			}
 		},
 	)
@@ -6477,9 +6639,12 @@ export function createMcpServer(config: McpConfig) {
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
 			const fileQuery = args.format === 'text' ? '?format=text' : ''
-			const result = await apiCall(config, 'GET', `/api/files/${args.id}${fileQuery}`, undefined, {
+			const fetched = await apiCall(config, 'GET', `/api/files/${args.id}${fileQuery}`, undefined, {
 				workspaceId: wsId,
 			})
+			// A read past the first characters starts where the caller left off, so a file the
+			// response cap cut can still be read to the end.
+			const result = args.offset ? sliceFileFrom(fetched, args.offset) : fetched
 			const file = result as { mimeType?: string | null; encoding?: string; content?: unknown }
 			// Images go back as a real image block so the model can see them; the
 			// base64 bytes would otherwise arrive as ~50k chars of opaque text.
@@ -6676,23 +6841,35 @@ export function createMcpServer(config: McpConfig) {
 				pagination,
 				args.workspace_id,
 			)
+			// One payload on both channels, so the text and the structured copy cannot drift.
+			const payload = buildListPayload({
+				key: 'comments',
+				rows: pagedRows,
+				limit: pagination.limit,
+				nextCursor,
+				total: null,
+			})
 			return {
 				_meta: meta('get_comments', config, (args as { workspace_id?: string }).workspace_id),
-				content: [
-					{
-						type: 'text' as const,
-						text: listPageText({
-							key: 'comments',
-							rows: pagedRows,
-							limit: pagination.limit,
-							nextCursor,
-							total: null,
-						}),
-					},
-				],
-				structuredContent: {
-					comments: pagedRows,
-					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				content: [{ type: 'text' as const, text: listText(payload) }],
+				structuredContent: payload,
+				// If the token cap trims this page, the walk resumes right after the last comment
+				// that ships. The history walk pages by offset, so the cursor carries the new offset.
+				[RESUME_CURSOR]: (lastShipped: unknown) => {
+					const index = pagedRows.findIndex(
+						(row) =>
+							String((row as { id?: unknown }).id) === String((lastShipped as { id?: unknown }).id),
+					)
+					const row = pagedRows[index] as
+						| { id: number | string; createdAt?: string | null }
+						| undefined
+					if (!row?.createdAt) return null
+					return encodeCursor({
+						s: pagination.snapshotAt,
+						o: pagination.order,
+						k: { sortValue: row.createdAt, id: String(row.id) },
+						n: (pagination.cursor?.n ?? 0) + index + 1,
+					})
 				},
 			}
 		},
@@ -7334,6 +7511,11 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const { workspace_id, run_at, ...fields } = args
+			if (!fields.target_actor_id && fields.config?.target !== 'item_driver') {
+				throw new Error(
+					'Missing required key "target_actor_id": the agent to start (find one with list_actors), or set config.target to "item_driver" to start the item\'s driver.',
+				)
+			}
 			const body = oneTimeOrScheduledBody(fields, run_at)
 			const saved = (await apiCall(config, 'POST', '/api/triggers', body, {
 				workspaceId: workspace_id,
@@ -7430,9 +7612,14 @@ export function createMcpServer(config: McpConfig) {
 			const actors = await resolveActors(config, ownerIds, args.workspace_id)
 			const wsId = args.workspace_id ?? config.defaultWorkspaceId
 			const now = new Date()
+			const timezone = await callerTimezone(config)
 			const shapeRow = (t: RawTrigger): Record<string, unknown> => {
 				const row: Record<string, unknown> = compact
-					? { ...compactTrigger(t, triggerAgent(t, actors), now) }
+					? withLocalTimes(
+							compactTrigger(t, triggerAgent(t, actors), now),
+							TRIGGER_TIME_KEYS,
+							timezone,
+						)
 					: { ...t }
 				return wsId
 					? addUrl(row, config, t.workspaceId ?? wsId, { kind: 'trigger', id: t.id })
@@ -7536,7 +7723,11 @@ export function createMcpServer(config: McpConfig) {
 				trigger.targetActorId ? [trigger.targetActorId] : [],
 				workspace_id,
 			)
-			const summary = compactTrigger(trigger, triggerAgent(trigger, actors))
+			const summary = withLocalTimes(
+				compactTrigger(trigger, triggerAgent(trigger, actors)),
+				TRIGGER_TIME_KEYS,
+				await callerTimezone(config),
+			)
 			// The short fields lead, then the full prompt and config, so a cut text still
 			// carries what the trigger is and when it runs.
 			const full = {
@@ -7644,8 +7835,8 @@ export function createMcpServer(config: McpConfig) {
 			const existingTriggerIds = args.trigger_ids ?? []
 			const memberObjectIds = args.object_ids ?? []
 			// `status` always has a value here — the schema defaults it to
-			// 'draft'. Only `paused` starts a loop's triggers disabled.
-			const startEnabled = status !== 'paused'
+			// 'draft'. Draft, paused and archived start a loop's triggers disabled.
+			const startEnabled = !loopStatusTurnsTriggersOff(status)
 
 			// Validate everything up-front so nothing is created on a bad request.
 			await Promise.all([
@@ -7734,8 +7925,8 @@ export function createMcpServer(config: McpConfig) {
 			const allTriggerIds = [...new Set([...existingTriggerIds, ...stepTriggerIds])]
 
 			// Pre-existing triggers attached via `trigger_ids` were created by an
-			// earlier call and default to enabled — if this loop starts paused,
-			// disable them too so "paused" is true of every step, not just the
+			// earlier call and default to enabled — if this loop starts as draft or
+			// paused, disable them too so "off" is true of every step, not just the
 			// ones authored inline in this call. Best-effort: a failure here
 			// surfaces as a warning rather than rolling back an already-created,
 			// otherwise-successful loop.
@@ -7761,7 +7952,7 @@ export function createMcpServer(config: McpConfig) {
 			}
 			if (stepTriggerIds.length > 0) responseBody.created_step_trigger_ids = stepTriggerIds
 			if (disableFailures.length > 0) {
-				responseBody.trigger_pause_warnings = `Loop created as paused, but these pre-existing triggers could not be disabled — pause them manually: ${disableFailures.join(', ')}`
+				responseBody.trigger_pause_warnings = `Loop created with its triggers off (draft, paused or archived), but these pre-existing triggers could not be disabled — switch them off manually: ${disableFailures.join(', ')}`
 			}
 
 			// Same setup block update_loop/get_loop return. graphResult.edges.length
@@ -7835,14 +8026,14 @@ export function createMcpServer(config: McpConfig) {
 				}
 
 				// The loop's status after this call — its own PATCH if `status` was
-				// passed, else whatever it already was. Only `paused` means new
+				// passed, else whatever it already was. Draft, paused and archived mean new
 				// steps should start disabled; an explicit status transition
-				// to/from `paused` is handled centrally by the PATCH /api/objects/:id
+				// into or out of those is handled centrally by the PATCH /api/objects/:id
 				// hook (apps/dev/src/routes/objects.ts), which also covers the
 				// frontend's pause/resume button — this only needs to handle steps
-				// being *added* to an already-paused loop in the same or a later call.
+				// being *added* to an already-off loop in the same or a later call.
 				const effectiveStatus = status ?? (existing.status as string | undefined)
-				const stepsStartEnabled = effectiveStatus !== 'paused'
+				const stepsStartEnabled = !loopStatusTurnsTriggersOff(effectiveStatus)
 
 				await Promise.all([
 					driver_id !== undefined ? assertLoopDriver(config, driver_id, workspace_id) : undefined,
@@ -7936,8 +8127,8 @@ export function createMcpServer(config: McpConfig) {
 				}
 
 				// Pre-existing triggers attached via `add_trigger_ids` default to
-				// enabled — if the loop's effective status is `paused`, disable them
-				// too so pausing stays true of every step, not just ones just
+				// enabled — if the loop's effective status is `draft` or `paused`,
+				// disable them too so it stays true of every step, not just ones just
 				// authored inline. Best-effort: a failure surfaces as a warning
 				// rather than undoing an otherwise-successful update.
 				const disableFailures =
@@ -8022,16 +8213,26 @@ export function createMcpServer(config: McpConfig) {
 							: []
 				const memberCount = addedObjectIds.length > 0 ? addedObjectIds.length : 1
 
-				const responseBody: Record<string, unknown> = {
-					loop: loopWithUrl,
-					steps: await fetchLoopStepsView(config, workspace_id, effectiveTriggerIds),
+				// A big membership change reports counts and ids, not the loop row and its steps.
+				const bulkReply = isBulkReply(
+					Math.max(add_object_ids?.length ?? 0, remove_object_ids?.length ?? 0),
+				)
+				const responseBody: Record<string, unknown> = bulkReply
+					? { loop: slimLoopRow(loopWithUrl) }
+					: {
+							loop: loopWithUrl,
+							steps: await fetchLoopStepsView(config, workspace_id, effectiveTriggerIds),
+						}
+				if (bulkReply) {
+					responseBody.added_count = addedObjectIds.length
+					responseBody.removed_count = removedObjectIds.length
 				}
 				if (stepTriggerIds.length > 0) responseBody.created_step_trigger_ids = stepTriggerIds
 				if (addedObjectIds.length > 0) responseBody.added_object_ids = addedObjectIds
 				if (removedObjectIds.length > 0) responseBody.removed_object_ids = removedObjectIds
 				if (notMembers.length > 0) responseBody.not_members_skipped = notMembers
 				if (disableFailures.length > 0) {
-					responseBody.trigger_pause_warnings = `Loop is paused, but these newly-attached triggers could not be disabled — pause them manually: ${disableFailures.join(', ')}`
+					responseBody.trigger_pause_warnings = `Loop has its triggers off (draft, paused or archived), but these newly-attached triggers could not be disabled — switch them off manually: ${disableFailures.join(', ')}`
 				}
 
 				responseBody.setup = await buildLoopSetupBlockFromApi(
@@ -8245,6 +8446,84 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'fork_loop',
+		{
+			description: tools.fork_loop.description,
+			inputSchema: tools.fork_loop.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, id } = args
+			const wsId = workspace_id ?? config.defaultWorkspaceId
+			if (!wsId) {
+				throw new Error('fork_loop needs a workspace. Pass workspace_id or configure a default.')
+			}
+			const reply = (body: Record<string, unknown>) => ({
+				_meta: meta('fork_loop', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(body, null, 2) }],
+			})
+
+			const { installs } = (await apiCall(
+				config,
+				'GET',
+				`/api/installed-loops?workspaceId=${encodeURIComponent(wsId)}`,
+				undefined,
+				{ workspaceId: wsId },
+			)) as {
+				installs: Array<{
+					id: string
+					objectId: string | null
+					isLocked: boolean
+					forkedAt: string | null
+					loopName: string
+				}>
+			}
+			const install = installs.find((i) => i.objectId === id || i.id === id)
+			if (!install) {
+				return reply({
+					forked: false,
+					reason:
+						'This loop was not installed from the marketplace, so it is already owned by the workspace and there is nothing to fork. Edit its agents, triggers and skills directly. Use list_loops to find loop ids.',
+				})
+			}
+			if (!install.isLocked) {
+				return reply({
+					forked: false,
+					already_forked: true,
+					forked_at: install.forkedAt,
+					loop: install.loopName,
+					reason: 'This loop is already forked, so the workspace owns it. Nothing changed.',
+				})
+			}
+
+			const result = (await apiCall(
+				config,
+				'POST',
+				`/api/installed-loops/${install.id}/fork`,
+				undefined,
+				{ workspaceId: wsId },
+			)) as {
+				id: string
+				objectId: string | null
+				installedVersion: string
+				forkedAt: string | null
+				detached: { actors: number; triggers: number; skills: number; integrations: number }
+			}
+
+			return reply({
+				forked: true,
+				loop: install.loopName,
+				loop_object_id: result.objectId,
+				installed_loop_id: result.id,
+				forked_from_version: result.installedVersion,
+				forked_at: result.forkedAt,
+				detached: result.detached,
+			})
+		},
+	)
+
+	registerAppTool(
+		server,
 		'set_loop_view',
 		{
 			description: tools.set_loop_view.description,
@@ -8403,7 +8682,8 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const params = new URLSearchParams({ for_actor_id: args.actor_id })
+			// Without for_actor_id the route reads the caller's own list.
+			const params = new URLSearchParams(args.actor_id ? { for_actor_id: args.actor_id } : {})
 			const result = (await apiCall(config, 'GET', `/api/for-you?${params}`, undefined, {
 				workspaceId: args.workspace_id,
 			})) as { items?: ForYouItemLike[] }
@@ -8728,6 +9008,7 @@ export function createMcpServer(config: McpConfig) {
 					'POST',
 					'/api/integrations/gmail/send',
 					{
+						account: args.account,
 						to: args.to,
 						cc: args.cc,
 						subject: args.subject,
@@ -8776,6 +9057,7 @@ export function createMcpServer(config: McpConfig) {
 					'POST',
 					'/api/integrations/gmail/save-attachment',
 					{
+						account: args.account,
 						message_id: args.message_id,
 						attachment_id: args.attachment_id,
 						part_id: args.part_id,
@@ -10489,107 +10771,142 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
-	// ─── Get Started (Onboarding) ────────────────────────────
+	// ─── Marketplace (list + install) ────────────────────────
+	type MarketplaceWorkspaceResolution =
+		| { done: true; text: string }
+		| {
+				done: false
+				workspace: { id: string; name: string }
+				workspaces: Array<{ id: string; name: string }>
+				explicitWorkspace: boolean
+		  }
+
+	// Resolve the workspace for list_marketplace / install_loop. Only the API call sits in the
+	// try: a bad id thrown below must reach the caller as an error, not be mistaken for a
+	// connection problem.
+	async function resolveMarketplaceWorkspace(
+		toolName: string,
+		workspaceId: string | undefined,
+	): Promise<MarketplaceWorkspaceResolution> {
+		let workspaces: Array<{ id: string; name: string }>
+		try {
+			workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
+				skipWorkspace: true,
+			})) as Array<{ id: string; name: string }>
+		} catch {
+			const setupSteps =
+				config.transport === 'http'
+					? `  1. Sign in at https://maskin.io and create a workspace\n  2. Copy your Maskin API key from Settings → API keys and your Workspace ID from Settings → Workspace\n  3. Reconnect Claude with \`claude mcp add maskin --transport http --url https://maskin.io/mcp --header 'Authorization: Bearer <YOUR_MASKIN_API_KEY>' --header 'X-Workspace-Id: <YOUR_WORKSPACE_ID>'\`\n  4. Run /reload-plugins, then call ${toolName} again`
+					: `  1. Call create_actor to get an API key\n  2. Restart with API_KEY set\n  3. Call ${toolName} again`
+			return {
+				done: true,
+				text: `👋 Welcome to Maskin!\n\nI can't reach your workspace yet. To finish setup:\n${setupSteps}\n\nOr pass a workspace_id directly if you have one.`,
+			}
+		}
+
+		const effectiveWsId = workspaceId ?? config.defaultWorkspaceId
+		const workspace = effectiveWsId ? workspaces.find((w) => w.id === effectiveWsId) : workspaces[0]
+		if (effectiveWsId && !workspace) {
+			throw new Error(
+				`Workspace ${effectiveWsId} not found. Call list_workspaces to see the workspaces this key can access.`,
+			)
+		}
+		if (!workspace) {
+			return {
+				done: true,
+				text: `👋 Welcome to Maskin!\n\nNo workspace found on this account. Call create_workspace first with a name, then run ${toolName} again.`,
+			}
+		}
+		return { done: false, workspace, workspaces, explicitWorkspace: Boolean(effectiveWsId) }
+	}
+
 	registerAppTool(
 		server,
-		'get_started',
+		'list_marketplace',
 		{
-			description: tools.get_started.description,
-			inputSchema: tools.get_started.inputSchema.shape,
+			description: tools.list_marketplace.description,
+			inputSchema: tools.list_marketplace.inputSchema.shape,
 			_meta: {},
 		},
 		async (args) => {
 			const textResponse = (text: string) => ({
-				_meta: meta('get_started', config, (args as { workspace_id?: string }).workspace_id),
+				_meta: meta('list_marketplace', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text }],
 			})
 
-			// Resolve workspace. Only the API call sits in the try: a bad id thrown below
-			// must reach the caller as an error, not be mistaken for a connection problem.
-			let workspaces: Array<{ id: string; name: string }>
+			const resolved = await resolveMarketplaceWorkspace('list_marketplace', args.workspace_id)
+			if (resolved.done) return textResponse(resolved.text)
+			const { workspace } = resolved
+
+			let loops: Array<{
+				id: string
+				name: string
+				description: string
+				use_case: string | null
+				item_types: string[]
+			}> = []
 			try {
-				workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
+				const result = (await apiCall(config, 'GET', '/api/marketplace/loops', undefined, {
 					skipWorkspace: true,
-				})) as Array<{ id: string; name: string }>
-			} catch {
-				const setupSteps =
-					config.transport === 'http'
-						? "  1. Sign in at https://maskin.io and create a workspace\n  2. Copy your Maskin API key from Settings → API keys and your Workspace ID from Settings → Workspace\n  3. Reconnect Claude with `claude mcp add maskin --transport http --url https://maskin.io/mcp --header 'Authorization: Bearer <YOUR_MASKIN_API_KEY>' --header 'X-Workspace-Id: <YOUR_WORKSPACE_ID>'`\n  4. Run /reload-plugins, then call get_started again"
-						: '  1. Call create_actor to get an API key\n  2. Restart with API_KEY set\n  3. Call get_started again'
+				})) as {
+					loops: Array<{
+						id: string
+						name: string
+						description: string
+						use_case: string | null
+						item_types: string[]
+					}>
+				}
+				loops = result.loops ?? []
+			} catch (err) {
+				return textResponse(`❌ Failed to fetch marketplace loops: ${String(err)}`)
+			}
+
+			if (loops.length === 0) {
 				return textResponse(
-					`👋 Welcome to Maskin!\n\nI can't reach your workspace yet. To finish setup:\n${setupSteps}\n\nOr pass a workspace_id directly if you have one.`,
+					`👋 Welcome to Maskin!\n\nThe marketplace has no loops yet. Once loops are published you'll be able to install them here.\n\nIn the meantime, use the marketplace UI in the app to browse and install loops as they become available.`,
 				)
 			}
 
-			const effectiveWsId = args.workspace_id ?? config.defaultWorkspaceId
-			const workspace = effectiveWsId
-				? workspaces.find((w) => w.id === effectiveWsId)
-				: workspaces[0]
-			if (effectiveWsId && !workspace) {
-				throw new Error(
-					`Workspace ${effectiveWsId} not found. Call list_workspaces to see the workspaces this key can access.`,
-				)
-			}
+			const loopLines = loops.map((l) => {
+				const types = l.item_types.length > 0 ? ` [${l.item_types.join(', ')}]` : ''
+				const useCase = l.use_case ? ` · ${l.use_case}` : ''
+				return `  • ${l.name}${useCase}${types}\n    ${l.description}\n    id: ${l.id}`
+			})
 
-			if (!workspace) {
-				return textResponse(
-					'👋 Welcome to Maskin!\n\nNo workspace found on this account. Call create_workspace first with a name, then run get_started again.',
-				)
-			}
+			return textResponse(
+				`👋 Welcome to Maskin! Let's set up "${workspace.name}".\n\nAvailable loops:\n\n${loopLines.join('\n\n')}\n\nAsk the user:\n  1. Which loop would they like to install?\n  2. What should the workspace be named? (currently "${workspace.name}")\n\nThen call install_loop with:\n  loop_id: "<id from above>"\n  workspace_name: "<name if they want to rename>"`,
+			)
+		},
+	)
 
-			// INSTALL with no workspace chosen on a multi-workspace account: the install
-			// writes to a workspace, so do not guess. The preview below only reads.
-			if (args.loop_id && args.confirm && !effectiveWsId && workspaces.length > 1) {
+	registerAppTool(
+		server,
+		'install_loop',
+		{
+			description: tools.install_loop.description,
+			inputSchema: tools.install_loop.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const textResponse = (text: string) => ({
+				_meta: meta('install_loop', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text }],
+			})
+
+			const resolved = await resolveMarketplaceWorkspace('install_loop', args.workspace_id)
+			if (resolved.done) return textResponse(resolved.text)
+			const { workspace, workspaces, explicitWorkspace } = resolved
+
+			// The install writes to a workspace, so on a multi-workspace account do not guess.
+			if (!explicitWorkspace && workspaces.length > 1) {
 				const workspaceLines = workspaces.map((w) => `  • ${w.name} (id: ${w.id})`)
 				return textResponse(
 					`This account has more than one workspace, so nothing was installed.\n\n${workspaceLines.join('\n')}\n\nPass workspace_id to choose where to install.`,
 				)
 			}
 
-			// PREVIEW: list marketplace loops so the user can pick one.
-			if (!args.loop_id || !args.confirm) {
-				let loops: Array<{
-					id: string
-					name: string
-					description: string
-					use_case: string | null
-					item_types: string[]
-				}> = []
-				try {
-					const result = (await apiCall(config, 'GET', '/api/marketplace/loops', undefined, {
-						skipWorkspace: true,
-					})) as {
-						loops: Array<{
-							id: string
-							name: string
-							description: string
-							use_case: string | null
-							item_types: string[]
-						}>
-					}
-					loops = result.loops ?? []
-				} catch (err) {
-					return textResponse(`❌ Failed to fetch marketplace loops: ${String(err)}`)
-				}
-
-				if (loops.length === 0) {
-					return textResponse(
-						`👋 Welcome to Maskin!\n\nThe marketplace has no loops yet. Once loops are published you'll be able to install them here.\n\nIn the meantime, use the marketplace UI in the app to browse and install loops as they become available.`,
-					)
-				}
-
-				const loopLines = loops.map((l) => {
-					const types = l.item_types.length > 0 ? ` [${l.item_types.join(', ')}]` : ''
-					const useCase = l.use_case ? ` · ${l.use_case}` : ''
-					return `  • ${l.name}${useCase}${types}\n    ${l.description}\n    id: ${l.id}`
-				})
-
-				return textResponse(
-					`👋 Welcome to Maskin! Let's set up "${workspace.name}".\n\nAvailable loops:\n\n${loopLines.join('\n\n')}\n\nAsk the user:\n  1. Which loop would they like to install?\n  2. What should the workspace be named? (currently "${workspace.name}")\n\nThen call get_started again with:\n  loop_id: "<id from above>"\n  confirm: true\n  workspace_name: "<name if they want to rename>"`,
-				)
-			}
-
-			// INSTALL: rename workspace (if requested), then install the loop.
+			// Rename the workspace (if requested), then install the loop.
 			if (args.workspace_name && args.workspace_name.trim() !== workspace.name) {
 				try {
 					await apiCall(
@@ -10716,13 +11033,18 @@ ${claudeCredsBlock}`,
 	// Register extension MCP tools (namespaced with extensionId prefix)
 	for (const ext of getAllModules()) {
 		for (const tool of ext.mcpTools ?? []) {
+			if (resolveToolKind({ name: tool.name }) === 'read') {
+				extensionReadTools.add(`${ext.id}_${tool.name}`)
+			}
 			try {
 				registerAppTool(
 					server,
 					`${ext.id}_${tool.name}`,
 					{
+						title: extensionToolTitle(tool.name),
 						description: `[${ext.name}] ${tool.description}`,
 						inputSchema: tool.inputSchema.shape,
+						annotations: { ...EXTENSION_TOOL_ANNOTATIONS },
 						_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
 					},
 					async (args) => {
@@ -10866,6 +11188,30 @@ ${claudeCredsBlock}`,
 			)
 			return {
 				_meta: meta('desktop_put_file', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'desktop_attach_file',
+		{
+			description: tools.desktop_attach_file.description,
+			inputSchema: tools.desktop_attach_file.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, agent_id, ...input } = args
+			const result = await apiCall(
+				config,
+				'POST',
+				desktopPath('/api/desktop/input', agent_id),
+				{ action: 'attach_file', ...input },
+				{ workspaceId: workspace_id },
+			)
+			return {
+				_meta: meta('desktop_attach_file', config, workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},

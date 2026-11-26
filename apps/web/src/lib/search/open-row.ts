@@ -25,12 +25,7 @@ export function navigateToSearchRow(
 			navigate({ to: '/$workspaceId/agents/$agentId', params: { workspaceId, agentId: row.id } })
 			return
 		case 'people':
-			// The members page opens the person's dialog from ?member=.
-			navigate({
-				to: '/$workspaceId/settings/members',
-				params: { workspaceId },
-				search: { member: row.id },
-			})
+			navigate({ to: '/$workspaceId/people/$actorId', params: { workspaceId, actorId: row.id } })
 			return
 		case 'automations':
 			navigate({

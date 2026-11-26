@@ -10,7 +10,7 @@ struct LoopTargetsTests {
 	}
 
 	private func loop(
-		_ id: String, targets: [LoopTarget]?, status: LoopPill = .learning, waiting: Int = 0
+		_ id: String, targets: [LoopTarget]?, status: LoopPill = .pilot, waiting: Int = 0
 	) -> LoopSummary {
 		LoopSummary(
 			id: id, name: "Loop \(id)", status: status,

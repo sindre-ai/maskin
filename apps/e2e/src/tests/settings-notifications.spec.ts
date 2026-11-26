@@ -211,6 +211,10 @@ test('A new sign-up starts with Tips off for push and the browser, the rest on',
 	await expect(
 		page.getByRole('switch', { name: 'Tips and updates in the browser', exact: true }),
 	).not.toBeChecked()
+	// No Email switch per notification: the summary email covers it.
+	for (const name of ['Needs you', 'Chat replies', 'Tips and updates']) {
+		await expect(page.getByRole('switch', { name: `${name} by email`, exact: true })).toHaveCount(0)
+	}
 })
 
 for (const vp of SHIP_GATE_VIEWPORTS) {

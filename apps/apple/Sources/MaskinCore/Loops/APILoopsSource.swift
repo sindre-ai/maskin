@@ -126,9 +126,16 @@ public struct APILoopsSource: LoopsAPI {
 	/// Read from the loop object itself: the app's object model keeps scalar metadata only, and the
 	/// views are a list.
 	public func views(loopID: String) async throws -> [LoopView] {
-		let output = try await client.get_sol_api_sol_objects_sol__lcub_id_rcub_(.init(path: .init(id: loopID)))
-		guard case .ok(let ok) = output else { throw AutomationError("Couldn't load this flow's views.") }
-		return LoopViews.read(metadata: try Self.decode(ObjectMetadataWire.self, from: ok.body.json).metadata)
+		do {
+			let output = try await client.get_sol_api_sol_objects_sol__lcub_id_rcub_(.init(path: .init(id: loopID)))
+			guard case .ok(let ok) = output else { throw AutomationError("Couldn't load this flow's views.") }
+			return LoopViews.read(metadata: try Self.decode(ObjectMetadataWire.self, from: ok.body.json).metadata)
+		} catch {
+			// A reply that cannot be read leaves no tabs on the phone, so it must reach Sentry
+			// (a network failure and a 5xx were already reported by the client's middleware).
+			ErrorReporter.shared.reportThrown(error)
+			throw error
+		}
 	}
 
 	public func actors() async throws -> [AutomationActor] {
@@ -170,7 +177,7 @@ public struct APILoopsSource: LoopsAPI {
 					body: .json(
 						.init(
 							_type: "loop", title: name, content: content.isEmpty ? nil : content,
-							status: LoopPill.learning.rawValue))))
+							status: LoopPill.pilot.rawValue))))
 		}
 		guard case .created(let created) = output else {
 			throw AutomationError("Couldn't create the flow.")

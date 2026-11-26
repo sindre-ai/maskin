@@ -18,6 +18,7 @@ import { selfHealLinkedInMcpCredential } from '../lib/integrations/providers/lin
 import { createLinkedInMcpServer } from '../lib/integrations/providers/linkedin-unipile/mcp-server'
 import { toolGateFor } from '../lib/integrations/tool-gate'
 import { logger } from '../lib/logger'
+import { callingSessionId } from '../lib/session-flow'
 import { isWorkspaceWriter } from '../lib/workspace-auth'
 
 /**
@@ -89,6 +90,8 @@ type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		/** The session a session key was minted for; null for any other key. Set by auth. */
+		apiKeySessionId?: string | null
 		/** Set by the global X-Maskin-Session-Id middleware in app-factory.ts. */
 		maskinSessionId?: string
 		storageProvider: StorageProvider
@@ -243,7 +246,7 @@ app.post('/:instanceSlug', async (c) => {
 			actorId,
 			workspaceId,
 			storage: c.get('storageProvider'),
-			sessionId: c.get('maskinSessionId'),
+			sessionId: callingSessionId(c.get('apiKeySessionId'), c.get('maskinSessionId')),
 		},
 		scoped,
 		gate,

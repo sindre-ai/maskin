@@ -26,6 +26,9 @@ public final class ShareSheetModel {
 	public var title = ""
 	public var note = ""
 	public var destination: ShareDestination = .newChat(agentID: "")
+	/// The agent the person tapped in the system share sheet's top row. Set before `start()`; it
+	/// starts the chat with that agent when it belongs to the workspace the share goes to.
+	public var suggestion: ShareSuggestion?
 	/// Every workspace the person is in, for the picker. Empty until loaded (or when offline).
 	public private(set) var workspaces: [ShareWorkspace] = []
 	/// Conversations of the chosen workspace, for the Chat destination. Empty until loaded.
@@ -201,7 +204,8 @@ public final class ShareSheetModel {
 			if !saved.title.isEmpty { title = saved.title }
 			note = saved.note
 		}
-		destination = .newChat(agentID: "")
+		let suggested = suggestion.flatMap { $0.workspaceId == credentials.workspaceId ? $0.agentID : nil }
+		destination = .newChat(agentID: suggested ?? "")
 		isLoadingSchema = true
 		isLoadingAgents = true
 		phase = .ready

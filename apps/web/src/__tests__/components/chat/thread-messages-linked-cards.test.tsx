@@ -22,7 +22,8 @@ vi.mock('@/lib/api', () => ({
 }))
 
 // One line of text per card the bubble draws, so the test reads which messages get one.
-vi.mock('@/components/chat/linked-object-preview', () => ({
+vi.mock('@/components/chat/linked-object-preview', async () => ({
+	DraftNotesContext: (await import('react')).createContext(new Map()),
 	renderLinkedCard: (
 		target: { kind: string; id: string },
 		_fallback: ReactNode,

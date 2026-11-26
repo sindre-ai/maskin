@@ -2,7 +2,12 @@ import { cn } from '@/lib/cn'
 import { TYPE_LABELS, statusLabel } from '@/lib/constants'
 import { highlightText } from '@/lib/search-highlight'
 import { rowSub, rowTitle } from '@/lib/search/row-display'
-import type { SearchResultRow, SearchSourceGroup } from '@maskin/shared'
+import {
+	DIRECT_MESSAGE_ROW_TYPE,
+	START_CHAT_ROW_TYPE,
+	type SearchResultRow,
+	type SearchSourceGroup,
+} from '@maskin/shared'
 import { ChevronRight } from 'lucide-react'
 
 export const GROUP_LABEL: Record<SearchSourceGroup, string> = {
@@ -48,6 +53,25 @@ export function orderRows(
 ): SearchResultRow[] {
 	if (sort !== 'rel') return rows
 	return GROUP_ORDER.flatMap((group) => rows.filter((row) => row.group === group))
+}
+
+/** A row the launcher leads with: a teammate's direct message, or a teammate with no chat yet. */
+export function isLeadRow(row: Pick<SearchResultRow, 'type'>): boolean {
+	return row.type === DIRECT_MESSAGE_ROW_TYPE || row.type === START_CHAT_ROW_TYPE
+}
+
+/** A CRM contact: an object of type contact. The launcher lists these last, under Contacts. */
+export function isContactRow(row: Pick<SearchResultRow, 'group' | 'type'>): boolean {
+	return row.group === 'objects' && row.type === 'contact'
+}
+
+/**
+ * The launcher's rows in the order they are drawn: a teammate's direct message first, then the
+ * groups as the page draws them, then CRM contacts.
+ */
+export function orderLauncherRows(rows: SearchResultRow[]): SearchResultRow[] {
+	const rest = rows.filter((row) => !isLeadRow(row) && !isContactRow(row))
+	return [...rows.filter(isLeadRow), ...orderRows(rest, 'rel'), ...rows.filter(isContactRow)]
 }
 
 interface RowProps {

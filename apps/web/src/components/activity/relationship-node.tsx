@@ -1,6 +1,7 @@
 import { useCanWrite } from '@/hooks/use-can-write'
 import type { ObjectResponse, RelationshipResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { relationshipTypeLabel } from '@/lib/constants'
 import { Link } from '@tanstack/react-router'
 import { Link2, Trash2 } from 'lucide-react'
 import { RelativeTime } from '../shared/relative-time'
@@ -32,8 +33,8 @@ const INBOUND_VERB: Record<string, string> = {
 }
 
 function relationshipVerb(type: string, direction: 'outbound' | 'inbound'): string {
-	if (direction === 'outbound') return type.replace(/_/g, ' ')
-	return INBOUND_VERB[type] ?? `← ${type.replace(/_/g, ' ')}`
+	if (direction === 'outbound') return relationshipTypeLabel(type)
+	return INBOUND_VERB[type] ?? `← ${relationshipTypeLabel(type)}`
 }
 
 /**

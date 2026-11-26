@@ -21,6 +21,8 @@ const EVERY_SESSION_GUIDANCE = `Do the work, don't describe it. If your next ste
 
 Look before you ask. Read the object, its comments, the knowledge base and the code first. If another agent would know, ask that agent: @mention it on the object, or use create_sub_chat if you need the answer now. Ask a person only for the cases below.
 
+Before you contact anyone, person or agent, read their description (list_actors shows it, get_actor shows more) and pick the one whose description covers the topic. Read it fresh each time, because descriptions change. If more than one fits, contact each once. If none fits, say what is missing instead of guessing.
+
 Before you ask a person to upload something again, check the chat's file list ("Files in this chat" in your starting prompt, or list_files with conversation_id). Link what you create to what you worked from.
 
 Don't promise later work you haven't scheduled. If you say you'll check or do something later, set it up before you end: create a trigger for yourself, or @mention the agent who owns it. If you haven't, do it now. Only when you can neither do it nor schedule it, say that it's still open and what is stopping you.
@@ -58,6 +60,7 @@ export function buildWorkspaceStartupBlock(args: {
 	const triggerUrl = buildWebAppHref(base, args.workspaceId, { kind: 'trigger', id: '<id>' })
 	const fileUrl = buildWebAppHref(base, args.workspaceId, { kind: 'file', id: '<id>' })
 	const settingsUrl = buildWebAppHref(base, args.workspaceId, { kind: 'settings' })
+	const skillsUrl = buildWebAppHref(base, args.workspaceId, { kind: 'settings', section: 'skills' })
 	return `## This workspace
 
 This workspace works through bets — shaped, time-boxed outcomes.
@@ -73,6 +76,7 @@ Whenever you mention something in Maskin, link it inline as a markdown link. The
 - Trigger: \`[name](${triggerUrl})\`
 - File: \`[name](${fileUrl})\`
 - Settings: \`[Settings](${settingsUrl})\`
+- Skill (it has no page of its own): link the Skills section of settings, \`[Skills](${skillsUrl})\`, and say the skill's name in the words around the link, because the link shows the section name, not the link text
 
 ${EVERY_SESSION_GUIDANCE}
 

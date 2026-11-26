@@ -24,6 +24,15 @@ function gatewayUpstreamUrls(): Map<string, string> {
 	}
 	return out
 }
+
+/** A provider's MCP settings, or undefined for one this build does not register. */
+function safeProviderMcp(provider: string) {
+	try {
+		return getProvider(provider)?.config.mcp
+	} catch {
+		return undefined
+	}
+}
 import { issueApiKey, revokeSessionKeys } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
@@ -34,6 +43,7 @@ import {
 	messages,
 	objects,
 	relationships,
+	sessionDispatchAttempts,
 	sessionLogs,
 	sessions,
 	workspaces,
@@ -74,6 +84,8 @@ import {
 	trackSessionLaunchModel,
 	trackSessionSkillLoadFailed,
 } from '../lib/analytics/agent-session-events'
+import { trackChatSessionRotated } from '../lib/analytics/chat-session-events'
+import { FirstCallObserver, type FirstTurnResult } from '../lib/analytics/first-call-size'
 import { claimLoopActiveDay, trackLoopActiveDay, utcDayString } from '../lib/analytics/loop-events'
 import { trackPlanLimitReached } from '../lib/analytics/plan-limit-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
@@ -102,7 +114,6 @@ import {
 import { readEmptyTurnFallbackModel } from '../lib/empty-turn-fallback'
 import { isEnterprise } from '../lib/enterprise'
 import { recordEvent, writeSpawnedEdge } from '../lib/events/record-event'
-import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { frontendBaseUrl } from '../lib/file-urls'
 import { buildAgentGitIdentity } from '../lib/git-identity'
 import {
@@ -146,8 +157,17 @@ import {
 	stripSessionLevelMcps,
 } from '../lib/integrations/keychain-mcp-guard'
 import { getCredential } from '../lib/integrations/lookup'
-import { dropAlreadyConfigured, linkedInIdentityServer } from '../lib/integrations/mcp-attach'
-import { GATEWAY_PROVIDERS, rewriteMcpServersForGateway } from '../lib/integrations/mcp-gateway'
+import {
+	dropAlreadyConfigured,
+	linkedInIdentityServer,
+	withSessionHeader,
+} from '../lib/integrations/mcp-attach'
+import {
+	GATEWAY_PROVIDERS,
+	accountSlug,
+	gatewayServerSpec,
+	rewriteMcpServersForGateway,
+} from '../lib/integrations/mcp-gateway'
 import {
 	mcpServersReferenceEnvKey,
 	serverSpecReferencesEnvKey,
@@ -166,7 +186,9 @@ import {
 	type TokenMetadata,
 	stampTokenMetadata,
 } from '../lib/integrations/providers/github/token-metadata'
+import { withPostHogProjectPin } from '../lib/integrations/providers/posthog/project-pin'
 import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
+import { sweepYoutubeSessionLogs } from '../lib/integrations/providers/youtube/purge'
 import { getProvider } from '../lib/integrations/registry'
 import {
 	CredentialResolutionTimeoutError,
@@ -179,6 +201,7 @@ import {
 	type ModelSource,
 	type PinnedModel,
 	PlanCapExceededError,
+	SubscriptionStillLimitedError,
 	canUseCreditBalance,
 	ceilCents,
 	checkPlanCap,
@@ -209,8 +232,11 @@ import {
 	stampMaskinSessionHeader,
 } from '../lib/mcp-session-header'
 import { resolveAgentSendModes } from '../lib/send-permissions'
-import { pickRetryAt } from '../lib/subscription-limit-reset'
+import { forgetSessionContextSize, recordSessionContextSize } from '../lib/session-context-size'
+import { sessionLogRedactor } from '../lib/session-log-redactor'
+import { RETRY_SUBSCRIPTION_ONLY_CONFIG_KEY, pickRetryAt } from '../lib/subscription-limit-reset'
 import { thinkingRowThrottle } from '../lib/thinking-row-throttle'
+import { TurnSizeObserver } from '../lib/turn-size'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import { SecretUnreadableError, openSecret } from '../lib/workspace-secrets'
 import {
@@ -222,12 +248,19 @@ import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-sto
 import { buildChatDrivesBlock, saveChatDrives } from './chat-drives'
 import { buildChatJobTargetBlock, saveChatJobTarget } from './chat-job-target'
 import {
+	ChatRotation,
+	type RotationRecord,
+	buildHandoffPrompt,
+	chatRotationEnabled,
+} from './chat-rotation'
+import {
 	ContainerManager,
 	type LogChunk,
 	type StreamJsonUserMessage,
 	type TurnImage,
 	userTurnWithImages,
 } from './container-manager'
+import { heldNotReleased } from './daily-budget-hold'
 import { applyExtensionGuards } from './extension-guard-launch'
 import { buildGoAheadBlock } from './go-ahead-block'
 import { InteractiveTurnFinalizer } from './interactive-turn-finalizer'
@@ -256,6 +289,7 @@ import {
 	type SessionUsage,
 	parseUsageFromLogChunks,
 	readSessionStdoutChunks,
+	resolveRecordedCostUsd,
 	resolveSessionCostUsd,
 	sumAssistantUsage,
 	sumUncountedResultUsage,
@@ -299,6 +333,12 @@ const MAX_BUFFERED_MCP_HEALTH_BYTES = 256 * 1024
  * life (MCP tool use). At the cap it is labelled slow-unknown, never failed.
  */
 const MCP_HEALTH_RESAMPLE_CAP_MS = 120_000
+
+/** A launch's session-start event, held until its first turn shows the first-call size. */
+interface PendingLaunchStart {
+	props: Parameters<typeof trackAgentSessionStartedWithPrompt>[0]
+	observer: FirstCallObserver
+}
 
 /** Per-session MCP health record: what has been said about each server. */
 interface McpHealthSession {
@@ -714,6 +754,33 @@ export class SessionManager extends EventEmitter {
 	 */
 	private readonly mcpHealth = new Map<string, McpHealthSession>()
 
+	/**
+	 * Per-launch `agent_session_started_with_prompt` waiting for the first turn.
+	 * Taking the entry out of the map is what makes the event go out once per
+	 * launch, whichever of the first `result` and the teardown gets there first.
+	 * In memory only: a backend restart mid-launch drops the entry and the event.
+	 */
+	private readonly pendingLaunchStarts = new Map<string, PendingLaunchStart>()
+
+	/**
+	 * Per-session reader of the window size at the end of each turn. It runs with chat rotation
+	 * off too: the size and end-cause records start at the first deploy, so a baseline exists
+	 * before anything is switched on. In memory only, dropped in clearActiveSession.
+	 */
+	private readonly turnSizeObservers = new Map<string, TurnSizeObserver>()
+
+	/** Sessions already checked for a compaction loop, so the row is read and the stop sent once. */
+	private readonly compactionLoopStopped = new Set<string>()
+
+	/**
+	 * A background session (no chat, no turns) that compacts this many times is stopped, when
+	 * chat rotation is on. A judgment number: each compaction is a full window spent.
+	 */
+	private static readonly BACKGROUND_COMPACTION_STOP = 3
+
+	/** Restarts big chats with a handoff note. See chat-rotation.ts. */
+	private readonly chatRotation: ChatRotation
+
 	constructor(
 		private db: Database,
 		private storage: StorageProvider,
@@ -784,10 +851,43 @@ export class SessionManager extends EventEmitter {
 			onTurnFinished: (sessionId, outcome) =>
 				this.emit('turn', { sessionId, phase: 'finished', outcome } satisfies SessionTurnEvent),
 			onHelperResult: (sessionId, outcome) => this.finishHelperSession(sessionId, outcome),
+			isHandoffResult: (sessionId, result) =>
+				this.chatRotation.claimHandoffResult(sessionId, result),
 			// An interactive CLI stays alive after printing a limit banner as its
 			// final error, so no exit settles the row. Same teardown as a helper.
 			onLimitResult: (sessionId, outcome) =>
 				this.finishHelperSession(sessionId, outcome, { retry: false }),
+		})
+		this.chatRotation = this.buildChatRotation()
+	}
+
+	private buildChatRotation(): ChatRotation {
+		return new ChatRotation({
+			loadSession: async (sessionId) => {
+				const [row] = await this.db
+					.select()
+					.from(sessions)
+					.where(eq(sessions.id, sessionId))
+					.limit(1)
+				return row ?? null
+			},
+			// Tagged on the persisted envelope only, so the transcript shows what the turn was.
+			writeHandoffTurn: (sessionId) =>
+				this.writeInput(
+					sessionId,
+					{ type: 'user', message: { role: 'user', content: buildHandoffPrompt() } },
+					undefined,
+					undefined,
+					{ maskin_handoff: true },
+				),
+			hasUnansweredTurn: (session) => this.hasUnansweredConversationTurn(session),
+			closeForRotation: (session, record) => this.closeSessionForRotation(session, record),
+			handoffTurnClosed: (sessionId) =>
+				this.emit('turn', {
+					sessionId,
+					phase: 'finished',
+					outcome: 'done',
+				} satisfies SessionTurnEvent),
 		})
 	}
 
@@ -1389,6 +1489,8 @@ export class SessionManager extends EventEmitter {
 			// internal message. Everything else keeps today's shape.
 			const launchFailureReason =
 				err instanceof LlmCredentialsUnavailableError ? err.toFailureReason() : null
+			const launchFailureRetryAt =
+				err instanceof SubscriptionStillLimitedError ? pickRetryAt(launchFailureReason) : null
 			// settleSession is the only writer of terminal sessions.status. The
 			// container never came up, so there's nothing to stop and no /agent
 			// workspace to push — startup_stalled is the classification the
@@ -1406,6 +1508,8 @@ export class SessionManager extends EventEmitter {
 						reason: launchFailureReason?.human_message ?? message,
 						exitCode: 0,
 						...(launchFailureReason ? { failureReason: launchFailureReason } : {}),
+						// A retry that found every login still limited goes back in the queue for the reset.
+						...(launchFailureRetryAt ? { retryAt: launchFailureRetryAt } : {}),
 					},
 					this.buildSettleDeps({ skipStop: true, skipPush: true }),
 				)
@@ -2492,7 +2596,72 @@ export class SessionManager extends EventEmitter {
 		}
 	}
 
+	/**
+	 * Park a session that was just created (status 'pending', `config.held` already set) because the
+	 * workspace's daily target is used up. The row goes to 'starting' / 'waiting_for_machine', the
+	 * state of a session waiting for a machine, with a dispatch-queue row that is not due until
+	 * `until`: the reconciler, boot-stall, queued-rescue and the retry scheduler leave that state
+	 * alone, and nothing is dispatched. The release pass makes the queue row due again.
+	 *
+	 * Returns false, and changes nothing that matters, when there is no dispatch queue (local
+	 * Docker) or the queue write fails: the caller then starts the session as it always did.
+	 */
+	async holdSession(sessionId: string, until: Date): Promise<boolean> {
+		if (!this.dispatchQueue) return false
+		try {
+			await this.dispatchQueue.enqueue(sessionId, { runAt: until })
+			const [parked] = await this.db
+				.update(sessions)
+				.set({
+					status: 'starting',
+					sessionState: 'waiting_for_machine',
+					stateEnteredAt: new Date(),
+					updatedAt: new Date(),
+				})
+				.where(and(eq(sessions.id, sessionId), eq(sessions.status, 'pending')))
+				.returning({ id: sessions.id })
+			if (!parked) {
+				await this.dropHeldQueueRow(sessionId)
+				return false
+			}
+			await this.insertSystemLog(
+				sessionId,
+				'Waiting: the workspace has used its daily budget. This starts again when there is room, most important first.',
+			)
+			logger.info(`Session held at the daily limit: ${sessionId}`, { until: until.toISOString() })
+			return true
+		} catch (err) {
+			logger.warn('Failed to hold session, starting it instead', {
+				sessionId,
+				error: String(err),
+			})
+			await this.dropHeldQueueRow(sessionId)
+			return false
+		}
+	}
+
+	/** A queue row that is not due would keep the session from starting normally, so it goes. */
+	private async dropHeldQueueRow(sessionId: string): Promise<void> {
+		await this.db
+			.delete(sessionDispatchAttempts)
+			.where(eq(sessionDispatchAttempts.sessionId, sessionId))
+			.catch((err) =>
+				logger.warn('Failed to drop the queue row of a session that was not held', {
+					sessionId,
+					error: String(err),
+				}),
+			)
+	}
+
 	private async hasCapacity(workspaceId: string): Promise<boolean> {
+		return (await this.freeStartSlots(workspaceId)) > 0
+	}
+
+	/**
+	 * How many more non-chat sessions the workspace may start before it hits its limit
+	 * (`max_concurrent_sessions`, default 10). Sessions held at the daily limit do not count.
+	 */
+	async freeStartSlots(workspaceId: string): Promise<number> {
 		const [workspace] = await this.db
 			.select()
 			.from(workspaces)
@@ -2512,10 +2681,13 @@ export class SessionManager extends EventEmitter {
 					// Chat sessions don't count against the workspace's session budget —
 					// see the isChatSession bypass in startSession().
 					isNull(sessions.conversationId),
+					// A session held at the daily limit sits in 'starting' but runs nothing and
+					// holds no slot: counted, ten held sessions would block every start behind them.
+					sql`NOT ${heldNotReleased}`,
 				),
 			)
 
-		return !result || result.count < maxConcurrent
+		return maxConcurrent - Number(result?.count ?? 0)
 	}
 
 	/**
@@ -2678,17 +2850,11 @@ export class SessionManager extends EventEmitter {
 	/**
 	 * The "Go-ahead on the job" block, the one place a session is shown a person's stored go-ahead:
 	 * built at every launch for an unattended run (next to its goal) and for a chat (next to what it
-	 * drives). Behind the go-ahead flag (workspace-scoped, or per driver actor), so with the flag off
-	 * nothing is read or added. Never saved on the session: a go-ahead taken back between two
+	 * drives). Never saved on the session: a go-ahead taken back between two
 	 * launches must not be shown again from a saved copy. A failure here only costs the block, never
 	 * the launch.
 	 */
 	private async resolveGoAheadBlock(session: typeof sessions.$inferSelect): Promise<string> {
-		if (
-			!isFlagEnabledForWorkspace(session.workspaceId, FLAGS.GO_AHEAD, { actorId: session.actorId })
-		) {
-			return ''
-		}
 		try {
 			return await buildGoAheadBlock(
 				this.db,
@@ -2708,21 +2874,13 @@ export class SessionManager extends EventEmitter {
 
 	/**
 	 * The "Jobs you are handed" block for a chat session: how to treat a job a person hands the
-	 * agent, and the flow and company targets it can serve. Behind the job-target-in-chat flag
-	 * (workspace-scoped), so with the flag off nothing is built or saved. Built on the first launch
-	 * and saved on `sessions.config.chat_job_target`; a resume reuses the saved text. A failure here
+	 * agent, and the flow and company targets it can serve. Built on the first launch and saved
+	 * on `sessions.config.chat_job_target`; a resume reuses the saved text. A failure here
 	 * only costs the block, never the launch.
 	 */
 	private async resolveChatJobTargetBlock(session: typeof sessions.$inferSelect): Promise<string> {
 		const { conversationId } = session
 		if (!conversationId) return ''
-		if (
-			!isFlagEnabledForWorkspace(session.workspaceId, FLAGS.JOB_TARGET_IN_CHAT, {
-				actorId: session.actorId,
-			})
-		) {
-			return ''
-		}
 		const config = (session.config as Record<string, unknown>) ?? {}
 		if (typeof config.chat_job_target === 'string') return config.chat_job_target
 		try {
@@ -2822,15 +2980,16 @@ export class SessionManager extends EventEmitter {
 		// The end-of-turn output is posted automatically by
 		// interactive-turn-finalizer.ts, so this no longer has to push the
 		// agent into calling the MCP tool — it has to tell the agent that its
-		// closing words ARE the reply, and that a heads-up is optional.
+		// closing words ARE the reply, and that it posts no progress notes on
+		// the way there (they land in the main timeline and read as noise).
 		const conversationPreamble = sessionConfig.conversation
-			? 'You are in a live, interactive chat conversation — a human just messaged you directly and is on the other end waiting for a reply, separate from any of your usual autonomous workflows described below. Whatever you say at the end of your turn is posted into the chat automatically and is what the human reads, so end every turn with the actual reply: the answer, the result, or what you found, written to them rather than a summary of your own process. If you are about to do something that takes a while (research, a long tool chain, work across several files), it is usually kind to post a short heads-up first with the post_conversation_message tool — one line on what you are going into. That is a nice-to-have, not a rule: plenty of messages just want a direct answer, and a heads-up before a one-sentence reply is noise. Both the heads-up and your final reply appear in the chat, so do not repeat yourself. Staying silent is sometimes the right call, but only when a reply genuinely adds nothing; do not default to silence just because it is available.\n\nOther people and agents may be in this chat too. Call get_conversation to see who is in the room (it lists each participant with their actor ID). Humans in the room already see every message, so address them by name in your reply and never ask whether you may; for example, if a decision is theirs, say so to them directly. To pull another agent in and make it respond, post with post_conversation_message and put its name in mention_names (or its actor ID in metadata.mentions); a name written in your reply does not wake an agent. Handing work over on an object works differently: a comment wakes an agent only when it @mentions it in `mentions` (or when a human comments and the object has a driver), so an agent that replies on an object without mentioning anyone wakes nobody. Whenever you would end your reply by asking the person to choose or confirm something that fits in 2 to 4 options (a confirmation, a choice between alternatives, a timing, a go-ahead), do not write the question in your reply: call the ask_user_question tool so they can tap an answer, with your recommended option first and the reason for it in the description of that option, then end your turn without repeating the question. This holds even if your own instructions say to list open questions or recommend an option in prose. Do not ask at all when you can reasonably decide yourself.\n\n'
+			? 'You are in a live, interactive chat conversation — a human just messaged you directly and is on the other end waiting for a reply, separate from any of your usual autonomous workflows described below. Whatever you say at the end of your turn is posted into the chat automatically and is what the human reads, so end every turn with the actual reply: the answer, the result, or what you found, written to them rather than a summary of your own process. Do not post progress notes while you work, however long the work takes: no acknowledgement that you got the message, no line on what you are about to do, no note that you are still on it. The chat already shows the human that you are working, and every extra message is one more thing they have to read before the answer. Your reply at the end of the turn is the only message they should get. Use the post_conversation_message tool mid-turn only when you cannot go on without something from the human, or to bring another agent in. Ending a turn with no reply at all is sometimes the right call, but only when a reply genuinely adds nothing; do not default to silence just because it is available.\n\nOther people and agents may be in this chat too. Call get_conversation to see who is in the room (it lists each participant with their actor ID). Humans in the room already see every message, so address them by name in your reply and never ask whether you may; for example, if a decision is theirs, say so to them directly. To pull another agent in and make it respond, post with post_conversation_message and put its name in mention_names (or its actor ID in metadata.mentions); a name written in your reply does not wake an agent. Handing work over on an object works differently: a comment wakes an agent only when it @mentions it in `mentions` (or when a human comments and the object has a driver), so an agent that replies on an object without mentioning anyone wakes nobody. Whenever you would end your reply by asking the person to choose or confirm something that fits in 2 to 4 options (a confirmation, a choice between alternatives, a timing, a go-ahead), do not write the question in your reply: call the ask_user_question tool so they can tap an answer, with your recommended option first and the reason for it in the description of that option, then end your turn without repeating the question. This holds even if your own instructions say to list open questions or recommend an option in prose. Do not ask at all when you can reasonably decide yourself.\n\n'
 			: ''
 		// A helper another agent started from a chat. It is interactive only so it
 		// can ask the person something, and it ends the moment it gives a result.
 		const helperPreamble =
 			sessionConfig.stop_on_result === true
-				? 'Another agent started you to do one piece of work, and the person it is working with can see your progress. Your final message is sent back to that agent and ends this session, so only give it when the work is done. If you cannot continue without a decision or detail only the person can give, ask with the ask_user_question tool (the Maskin MCP tool; the built-in AskUserQuestion is not available here) and end your turn: the session stays open for their answer. Do the same when you would otherwise finish with a question for the person, such as which direction to take or which of a few options they want: do not put that question in your final message, because the final message ends this session and nobody can answer it. Ask with ask_user_question (recommended option first, the reason in its description) and end your turn, or finish without the question if you can reasonably decide yourself.\n\n'
+				? 'Another agent started you to do one piece of work, and the person it is working with can see your progress. Your final message is sent back to that agent and ends this session, so only give it when the work is done. If you cannot continue without a decision or detail only the person can give, ask with the ask_user_question tool (the Maskin MCP tool; the built-in AskUserQuestion is not available here) and end your turn: the session stays open for their answer. Do the same when you would otherwise finish with a question for the person, such as which direction to take or which of a few options they want: do not put that question in your final message, because the final message ends this session and nobody can answer it. Ask with ask_user_question (recommended option first, the reason in its description) and end your turn, or finish without the question if you can reasonably decide yourself. Background jobs and subagents stop when you give your final message, so do not give it until they have finished: run subagents in the foreground, or keep a blocking call going.\n\n'
 				: ''
 		// What the agent may do with each connected integration, told up front so it does
 		// not learn it by having calls refused. Best effort: a failed lookup leaves it out.
@@ -2931,7 +3090,11 @@ ${accessPreamble}${missingToolBlock}${handoffBlock}${HUMAN_MESSAGE_STYLE}${askWi
 		// the start-event's `skills_staged` at 0 for both paths keeps queries
 		// simple: `skills_attached > 0 AND session_skill_load_failed absent`
 		// is a passing session on either path.
-		void trackAgentSessionStartedWithPrompt({
+		// The event is held until the first turn has run, because the size of the
+		// first call (tools, tokens, cost, cache) only exists then. It goes out once
+		// per launch: at the first `result`, or empty from clearActiveSession if the
+		// launch ends before any turn. `launchedAt` keeps its timestamp at launch.
+		this.holdLaunchStartEvent(session.id, {
 			workspaceId: session.workspaceId,
 			sessionId: session.id,
 			agentId: agent.id,
@@ -2944,6 +3107,7 @@ ${accessPreamble}${missingToolBlock}${handoffBlock}${HUMAN_MESSAGE_STYLE}${askWi
 			skillsStaged: 0,
 			triggerType,
 			triggerId: session.triggerId ?? undefined,
+			launchedAt: new Date(),
 		})
 
 		// Interactive sessions have no opening ACTION_PROMPT — the first user turn
@@ -3043,6 +3207,10 @@ ${cont.continues_prompt}
 					wsSettings,
 					enterprise,
 					pinned: pinnedModel,
+					subscriptionOnly:
+						(session.config as Record<string, unknown> | null)?.[
+							RETRY_SUBSCRIPTION_ONLY_CONFIG_KEY
+						] === true,
 					agent: {
 						provider: agent.llmProvider,
 						apiKey: (llmConfig.api_key as string | undefined) ?? null,
@@ -3230,7 +3398,7 @@ ${cont.continues_prompt}
 					eq(integrations.providerMode, 'registered'),
 				),
 			)
-			.orderBy(asc(integrations.createdAt))
+			.orderBy(asc(integrations.createdAt), asc(integrations.id))
 
 		const tokenManager = new TokenManager()
 		// MCP servers injected by virtue of a workspace having an active
@@ -3251,6 +3419,50 @@ ${cont.continues_prompt}
 		// entries), so a duplicate of an entry the agent already carries can be dropped.
 		const attachedKeys = new Set<string>()
 		const accessByIntegration = new Map(accessRows.map((a) => [a.integrationId, a.access]))
+		// What this agent may do with one integration. Access is what attaches its tools:
+		// whoever grants it should not also have to open each agent and add the server.
+		const accessFor = (integration: typeof integrations.$inferSelect) =>
+			accessByIntegration.get(integration.id) ??
+			effectiveAccess(
+				{
+					providerMode: 'registered',
+					defaultAgentAccess: integration.defaultAgentAccess ?? 'read',
+				},
+				null,
+			)
+		// A workspace can connect several accounts of one gateway provider (two Gmail inboxes). The
+		// ones this agent gets tools for, oldest first; the oldest of all is the one the plain
+		// gateway address answers from. With one such account the server keeps its old key; with
+		// several, each gets its own key and its own address by integration id.
+		const gatewayDefaultId = new Map<string, string>()
+		const gatewayAttached = new Map<string, string[]>()
+		for (const integration of activeIntegrations) {
+			if (!GATEWAY_PROVIDERS.has(integration.provider)) continue
+			if (!gatewayDefaultId.has(integration.provider)) {
+				gatewayDefaultId.set(integration.provider, integration.id)
+			}
+			if ((integration.config as IntegrationConfig | null)?.expose_to_agent_sessions === false) {
+				continue
+			}
+			const hasServer = Boolean(safeProviderMcp(integration.provider)?.server)
+			if (
+				hasServer &&
+				attachesServer(
+					{
+						providerMode: 'registered',
+						status: 'active',
+						exposed: true,
+						access: accessFor(integration),
+					},
+					true,
+				)
+			) {
+				gatewayAttached.set(integration.provider, [
+					...(gatewayAttached.get(integration.provider) ?? []),
+					integration.id,
+				])
+			}
+		}
 		const integrationTokens: Record<string, string> = {}
 		// Custom extension MCPs (extension-<slug>). Only extensions this agent holds a
 		// grant on are attached. Each key is read through Keychain for this agent and
@@ -3318,24 +3530,16 @@ ${cont.continues_prompt}
 				continue
 			}
 			const mcp = resolved.config.mcp
-			// What this agent may do with the integration. Access is what attaches its tools:
-			// whoever grants it should not also have to open each agent and add the server.
-			const access =
-				accessByIntegration.get(integration.id) ??
-				effectiveAccess(
-					{
-						providerMode: 'registered',
-						defaultAgentAccess: integration.defaultAgentAccess ?? 'read',
-					},
-					null,
-				)
+			const access = accessFor(integration)
 			const autoInjectServer =
 				mcp?.server &&
 				attachesServer(
 					{ providerMode: 'registered', status: 'active', exposed: true, access },
 					true,
 				)
-					? mcp.server
+					? integration.provider === 'posthog'
+						? withPostHogProjectPin(mcp.server, integration.config)
+						: mcp.server
 					: null
 
 			// A custom tool server is one row, one server: attached when the agent has access, and
@@ -3511,8 +3715,27 @@ ${cont.continues_prompt}
 				}
 			}
 			if (autoInjectServer) {
-				autoInjectedMcpServers[`integration-${integration.provider}`] = autoInjectServer
-				attachedKeys.add(`integration-${integration.provider}`)
+				let serverKey = `integration-${integration.provider}`
+				let serverSpec: unknown = withSessionHeader(autoInjectServer)
+				const accounts = gatewayAttached.get(integration.provider) ?? []
+				if (accounts.length > 1) {
+					// Several accounts: one server each, named by the address.
+					const slug = accountSlug(integration.externalId ?? '') || integration.id.slice(0, 8)
+					serverKey = `integration-${integration.provider}-${slug}`
+					if (serverKey in autoInjectedMcpServers) {
+						serverKey = `${serverKey}-${integration.id.slice(0, 4)}`
+					}
+					serverSpec = gatewayServerSpec(integration.provider, integration.id)
+				} else if (
+					accounts.length === 1 &&
+					integration.id !== gatewayDefaultId.get(integration.provider)
+				) {
+					// The only account this agent has is not the oldest one, which is what the plain
+					// address answers from. Same key as ever, pointed at its own account.
+					serverSpec = gatewayServerSpec(integration.provider, integration.id)
+				}
+				autoInjectedMcpServers[serverKey] = serverSpec
+				attachedKeys.add(serverKey)
 				logger.info('Auto-injected MCP server for active integration', {
 					sessionId: session.id,
 					workspaceId: session.workspaceId,
@@ -3524,6 +3747,8 @@ ${cont.continues_prompt}
 		// Keychain credentials: bring-your-own keys this session's actor may read.
 		const keychainEnv = await this.buildKeychainEnv(session)
 		Object.assign(envVars, keychainEnv)
+		// Kept in memory so the log writers can mask these values; see session-log-redactor.ts.
+		sessionLogRedactor.register(session.id, keychainEnv)
 
 		// Custom tool servers. One that Maskin fronts (gated) is reached through the gateway, which
 		// fills any saved credential in itself and tells the agent plainly if it may not. One that
@@ -3578,6 +3803,8 @@ ${cont.continues_prompt}
 							MASKIN_API_URL: '${MASKIN_API_URL}',
 							MASKIN_API_KEY: '${MASKIN_API_KEY}',
 							MASKIN_WORKSPACE_ID: '${MASKIN_WORKSPACE_ID}',
+							// Lets the relay ask Maskin before a write whether the session's flow is in pilot.
+							MASKIN_SESSION_ID: '${SESSION_ID}',
 						},
 					}
 				: {
@@ -3976,7 +4203,10 @@ ${cont.continues_prompt}
 		session: typeof sessions.$inferSelect,
 	): Promise<ActorIntegrationAccess[]> {
 		try {
-			return await listAgentAccess(this.db, session.workspaceId, session.actorId)
+			// The conversation, so an Allow for just this chat shows in the access block.
+			return await listAgentAccess(this.db, session.workspaceId, session.actorId, {
+				conversationId: session.conversationId,
+			})
 		} catch (err) {
 			logger.warn('Could not load the agent integration access', {
 				sessionId: session.id,
@@ -4311,9 +4541,10 @@ ${cont.continues_prompt}
 							? { sinceUnixSec: Math.floor(lastChunkAt / 1000) }
 							: { tail: 0 as const }
 					firstConnect = false
-					for await (const chunk of this.containers.logs(containerId, true, logOpts)) {
+					for await (const rawChunk of this.containers.logs(containerId, true, logOpts)) {
 						attempt = 0
 						lastChunkAt = Date.now()
+						const chunk = { ...rawChunk, data: sessionLogRedactor.redact(sessionId, rawChunk.data) }
 						if (
 							chunk.stream === 'stdout' &&
 							thinkingRowThrottle.shouldDrop(sessionId, chunk.data)
@@ -4343,6 +4574,8 @@ ${cont.continues_prompt}
 							if (chunk.stream === 'stdout') {
 								await this.turnFinalizer.onStdout(sessionId, chunk.data, log.id)
 								await this.recordTurnUsage(sessionId, chunk.data)
+								this.observeFirstCallSize(sessionId, chunk.data)
+								await this.observeTurnSize(sessionId, chunk.data)
 							}
 						}
 
@@ -5251,6 +5484,156 @@ ${cont.continues_prompt}
 	}
 
 	/**
+	 * Reads the window size from a session's stdout and hands each closed turn to chat rotation.
+	 * Runs after the turn finalizer, so the turn's reply is already in the chat when rotation
+	 * looks. With rotation off it only records the reading for the session-completed event. A
+	 * background session (no turns) that compacts in a loop is stopped, when rotation is on.
+	 * Never throws: a fault here must not break log ingest.
+	 */
+	private async observeTurnSize(sessionId: string, chunk: string): Promise<void> {
+		try {
+			let observer = this.turnSizeObservers.get(sessionId)
+			if (!observer) {
+				observer = new TurnSizeObserver()
+				this.turnSizeObservers.set(sessionId, observer)
+			}
+			for (const reading of observer.feed(chunk)) {
+				await this.chatRotation.onTurn(sessionId, reading)
+			}
+			if (
+				observer.pendingCompactions >= SessionManager.BACKGROUND_COMPACTION_STOP &&
+				chatRotationEnabled() &&
+				!this.compactionLoopStopped.has(sessionId)
+			) {
+				await this.stopCompactionLoop(sessionId)
+			}
+		} catch (err) {
+			logger.warn('Failed to read the turn size', { sessionId, error: String(err) })
+		}
+	}
+
+	/** Stops a background session that keeps compacting. A chat is restarted by rotation instead. */
+	private async stopCompactionLoop(sessionId: string): Promise<void> {
+		const [session] = await this.db
+			.select()
+			.from(sessions)
+			.where(eq(sessions.id, sessionId))
+			.limit(1)
+		this.compactionLoopStopped.add(sessionId)
+		if (!session || session.status !== 'running' || session.conversationId) return
+		recordSessionContextSize(sessionId, { endCause: 'compaction_failed' })
+		logger.warn('Stopping a background session that keeps compacting', { sessionId })
+		await this.insertSystemLog(
+			sessionId,
+			'Session stopped: its context kept filling up and compacting.',
+		).catch(() => {})
+		await this.stopSession(sessionId).catch((err) =>
+			logger.error('Failed to stop a compacting session', { sessionId, error: String(err) }),
+		)
+	}
+
+	/**
+	 * Closes a chat session for rotation: saves what the next seed needs on the row, then closes
+	 * it as an idle chat is closed, so the next message starts a fresh session. The rotated event
+	 * goes out only when this call is the one that closed the session.
+	 */
+	private async closeSessionForRotation(
+		session: typeof sessions.$inferSelect,
+		record: RotationRecord,
+	): Promise<void> {
+		await this.db
+			.update(sessions)
+			.set({
+				config: sql`coalesce(${sessions.config}, '{}'::jsonb) || ${JSON.stringify({ rotation: record })}::jsonb`,
+			})
+			.where(eq(sessions.id, session.id))
+		const closed = await this.completeIdleChatSession(session, { rotated: true })
+		if (!closed) return
+		const route = (session.config as { llm_route?: unknown } | null)?.llm_route
+		void trackChatSessionRotated({
+			workspaceId: session.workspaceId,
+			agentId: session.actorId,
+			reason: record.reason,
+			route: typeof route === 'string' ? route : null,
+			sizeBucket: record.sizeBucket,
+			handoff: record.handoff,
+		})
+	}
+
+	/** Holds this launch's session-start event until its first turn has run. */
+	private holdLaunchStartEvent(
+		sessionId: string,
+		props: Parameters<typeof trackAgentSessionStartedWithPrompt>[0],
+	): void {
+		// A launch whose teardown never ran still owes its event: send it empty.
+		this.flushLaunchStartEvent(sessionId)
+		this.pendingLaunchStarts.set(sessionId, { props, observer: new FirstCallObserver() })
+	}
+
+	/** Sends a held event with the first-call fields empty. A no-op once it has gone out. */
+	private flushLaunchStartEvent(sessionId: string): void {
+		const pending = this.pendingLaunchStarts.get(sessionId)
+		if (!pending) return
+		this.pendingLaunchStarts.delete(sessionId)
+		void trackAgentSessionStartedWithPrompt({
+			...pending.props,
+			startPrompt: pending.observer.startPromptSize,
+		})
+	}
+
+	/**
+	 * Feeds stdout to the launch's first-call observer and sends the held
+	 * session-start event, with the first-call size on it, when the first turn's
+	 * `result` arrives. Sync and cheap on the hot path: no pending launch, no work.
+	 */
+	private observeFirstCallSize(sessionId: string, chunk: string): void {
+		const pending = this.pendingLaunchStarts.get(sessionId)
+		if (!pending) return
+		let first: FirstTurnResult | null
+		try {
+			first = pending.observer.feed(chunk)
+		} catch (err) {
+			logger.warn('Failed to read first-call size', { sessionId, error: String(err) })
+			return
+		}
+		if (!first) return
+		this.pendingLaunchStarts.delete(sessionId)
+		void this.emitLaunchStartWithFirstCall(sessionId, pending, first).catch((err) =>
+			logger.warn('Failed to emit first-call size', { sessionId, error: String(err) }),
+		)
+	}
+
+	private async emitLaunchStartWithFirstCall(
+		sessionId: string,
+		pending: PendingLaunchStart,
+		first: FirstTurnResult,
+	): Promise<void> {
+		// Only a recorded cost goes on the event (resolveRecordedCostUsd): the CLI's
+		// figure on a route that reaches Anthropic, or tokens times a published price.
+		// A custom endpoint with no price, or a maskin_plan session with no priced
+		// model, leaves it empty: the session row's own fallbacks are estimates.
+		let firstTurnCostUsd: number | null = null
+		try {
+			const { route, modelName } = await this.loadSessionRouteAndModel(sessionId)
+			firstTurnCostUsd = await resolveRecordedCostUsd({
+				route,
+				modelName,
+				usage: { ...first.resultUsage, durationMs: null },
+			})
+		} catch (err) {
+			logger.warn('Failed to price the first turn, leaving its cost empty', {
+				sessionId,
+				error: String(err),
+			})
+		}
+		await trackAgentSessionStartedWithPrompt({
+			...pending.props,
+			firstCall: { ...first.size, firstTurnCostUsd },
+			startPrompt: pending.observer.startPromptSize,
+		})
+	}
+
+	/**
 	 * Mid-session budget check for one running maskin_plan session. Called
 	 * from the watchdog every ~60s for every running maskin_plan session.
 	 *
@@ -5437,11 +5820,14 @@ ${cont.continues_prompt}
 	 * reprocessing — neither can re-mark the session failed afterwards. A CAS
 	 * miss (something else already transitioned the row) is a silent no-op.
 	 */
-	private async completeIdleChatSession(session: typeof sessions.$inferSelect): Promise<void> {
+	private async completeIdleChatSession(
+		session: typeof sessions.$inferSelect,
+		opts: { rotated?: boolean } = {},
+	): Promise<boolean> {
 		// A session that went quiet with an unanswered message is wedged
 		// mid-turn, not idle — leave it for the hard timeout reaper, which
 		// closes it as `timeout` so the chat UI surfaces the interruption.
-		if (await this.hasUnansweredConversationTurn(session)) return
+		if (await this.hasUnansweredConversationTurn(session)) return false
 		const now = new Date()
 		// Save the usage first, as the timeout close does: the terminal row is final
 		// for usage writes, and the settle below reads these totals for its
@@ -5477,11 +5863,13 @@ ${cont.continues_prompt}
 						kind: 'complete',
 						classification: 'agent_completed',
 						source: 'idle-watcher',
-						resultText: 'Conversation went idle — session closed',
+						resultText: opts.rotated
+							? 'Chat restarted with a handoff note — session closed'
+							: 'Conversation went idle — session closed',
 					},
 			this.buildSettleDeps(),
 		)
-		if (settled.alreadySettled) return
+		if (settled.alreadySettled) return false
 
 		logger.info(`Completing idle chat session: ${session.id}`, {
 			conversationId: session.conversationId,
@@ -5533,7 +5921,9 @@ ${cont.continues_prompt}
 			session.id,
 			creditFailure
 				? 'Session failed — every turn hit a credit error'
-				: 'Session completed — conversation idle',
+				: opts.rotated
+					? 'Session completed — chat restarted in a fresh session'
+					: 'Session completed — conversation idle',
 		).catch((err) =>
 			logger.warn('Failed to write idle chat close system log', {
 				sessionId: session.id,
@@ -5547,6 +5937,7 @@ ${cont.continues_prompt}
 		await this.drainQueue(session.workspaceId).catch((err) =>
 			logger.error('Failed to drain queue after idle chat close', { error: String(err) }),
 		)
+		return true
 	}
 
 	/**
@@ -6400,6 +6791,8 @@ ${cont.continues_prompt}
 				and(
 					notInArray(sessions.status, [...TERMINAL_STATUSES]),
 					or(eq(sessions.status, 'queued'), eq(sessions.sessionState, 'waiting_for_machine')),
+					// Held at the daily limit on purpose, not stuck behind a full slot.
+					sql`NOT ${heldNotReleased}`,
 				),
 			)
 		const count = Number(row?.count ?? 0)
@@ -6627,6 +7020,7 @@ ${cont.continues_prompt}
 		// activeSessions entry to key off.
 		sessionGithubLogClassifier.unregisterSession(sessionId)
 		thinkingRowThrottle.forget(sessionId)
+		sessionLogRedactor.forget(sessionId)
 	}
 
 	/**
@@ -6642,7 +7036,8 @@ ${cont.continues_prompt}
 		sessionId: string,
 		lines: Array<{ stream: 'stdout' | 'stderr' | 'system'; content: string }>,
 	): Promise<void> {
-		for (const line of lines) {
+		for (const rawLine of lines) {
+			const line = { ...rawLine, content: sessionLogRedactor.redact(sessionId, rawLine.content) }
 			if (line.stream === 'stdout' && thinkingRowThrottle.shouldDrop(sessionId, line.content)) {
 				continue
 			}
@@ -6664,6 +7059,8 @@ ${cont.continues_prompt}
 				if (line.stream === 'stdout') {
 					await this.turnFinalizer.onStdout(sessionId, line.content, log.id)
 					await this.recordTurnUsage(sessionId, line.content)
+					this.observeFirstCallSize(sessionId, line.content)
+					await this.observeTurnSize(sessionId, line.content)
 				}
 			}
 		}
@@ -7263,6 +7660,7 @@ ${cont.continues_prompt}
 		await this.clearActiveSession(sessionId)
 		sessionGithubLogClassifier.unregisterSession(sessionId)
 		thinkingRowThrottle.forget(sessionId)
+		sessionLogRedactor.forget(sessionId)
 		await this.drainQueue(updated.workspaceId).catch((err) =>
 			logger.error('Failed to drain queue after remote session completion', { error: String(err) }),
 		)
@@ -7359,6 +7757,14 @@ ${cont.continues_prompt}
 		if (now - this.lastLogPruneAt < SessionManager.LOG_PRUNE_INTERVAL_MS) return
 		this.lastLogPruneAt = now
 
+		// YouTube data has its own retention (30 days even for chats, all of it once the integration
+		// is gone). Isolated so a failure here never stops the general sweep below.
+		await sweepYoutubeSessionLogs(this.db).catch((err) =>
+			logger.warn('YouTube session log sweep failed', {
+				error: err instanceof Error ? err.message : String(err),
+			}),
+		)
+
 		const cutoff = new Date(now - SessionManager.LOG_RETENTION_MS)
 		let checked = 0
 		let pruned = 0
@@ -7421,7 +7827,12 @@ ${cont.continues_prompt}
 	}
 
 	private async clearActiveSession(sessionId: string): Promise<void> {
+		this.flushLaunchStartEvent(sessionId)
 		this.turnFinalizer.forgetSession(sessionId)
+		this.chatRotation.forget(sessionId)
+		this.turnSizeObservers.delete(sessionId)
+		this.compactionLoopStopped.delete(sessionId)
+		forgetSessionContextSize(sessionId)
 		this.mcpHealthBuffers.delete(sessionId)
 		clearTimeout(this.mcpHealth.get(sessionId)?.timer)
 		this.mcpHealth.delete(sessionId)

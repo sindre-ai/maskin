@@ -12,6 +12,7 @@ import {
 import { ISOLATION_LOAD_MESSAGE, prepareIsolatedViewHtml, readViewSources } from '@/lib/mini-app'
 import { subscribeToSSE } from '@/lib/sse-invalidation'
 import { useTheme } from '@/lib/theme'
+import { type ExportPage, requestExportPages } from '@/lib/view-export'
 import {
 	type ListAnswer,
 	type ListSource,
@@ -23,7 +24,7 @@ import { applyAppTheme } from '@/lib/view-theme'
 import type { DataQueryResult, DataQuerySpec } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
 import { RefreshCw } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type MutableRefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 /** Quiet time after a relevant event before the sources are re-checked, so a burst of writes is one check. */
 const SETTLE_MS = 2_000
@@ -34,11 +35,26 @@ const MAX_TIMER_MS = 2_000_000_000
 /** Times a view that navigates away from its srcdoc is reset before we give up on it. */
 const MAX_FRAME_RESETS = 3
 const MIN_HEIGHT = 160
+/**
+ * Times one frame may report a taller document before the host stops following it. A view
+ * whose height depends on the frame's own (min-height: 100vh plus a margin, say) is told a
+ * taller height after each resize, grows, and is told again without end; a real page settles in
+ * a few reports. The frame keeps the height it reached, and a fresh frame starts counting again.
+ */
+const MAX_HEIGHT_GROWTHS = 100
 /** A replacement frame that has not reported its size by now takes over anyway. */
 const SWAP_TIMEOUT_MS = 3_000
 /** A failed live-refresh check or next-change lookup is retried this many times, backing off, before the view is flagged as possibly out of date. */
 const MAX_REFRESH_RETRIES = 5
 const REFRESH_RETRY_MS = 5_000
+/**
+ * Automatic reloads (a live event changed a number, a saved answer was stale, a time-based
+ * change came due) replace the whole frame, which is the costly part of a view. However often
+ * those fire, the frame is replaced at most once per this long; changes in between wait and are
+ * handled together by the one replacement. A person's Refresh and a frame that navigated away
+ * skip the wait.
+ */
+const MIN_SWAP_INTERVAL_MS = 30_000
 // A query with no answer by now has hung; give up so the spinner stops and Refresh is offered.
 const QUERY_TIMEOUT_MS = 30_000
 
@@ -53,6 +69,10 @@ interface LoopCustomViewProps {
 	onProposeChange?: (change: ProposedChange) => void
 	/** Raised after a proposed change was saved: the view reloads its lists so it shows the new value. */
 	reloadToken?: number
+	/** Told whenever a reload starts or ends, so the page can disable its Refresh item while one runs. */
+	onRefreshingChange?: (refreshing: boolean) => void
+	/** Filled with a function that asks the frame on screen for its pages, for Export. Only called on the person's click. */
+	exportRef?: MutableRefObject<(() => Promise<ExportPage[]>) | null>
 }
 
 export function LoopCustomView({
@@ -62,6 +82,8 @@ export function LoopCustomView({
 	onOpenItem,
 	onProposeChange,
 	reloadToken,
+	onRefreshingChange,
+	exportRef,
 }: LoopCustomViewProps) {
 	const { data: file, isLoading, isError } = useFile(workspaceId, fileId)
 	const html = file?.mimeType.toLowerCase().startsWith('text/html') ? file.content : null
@@ -90,6 +112,8 @@ export function LoopCustomView({
 			onOpenItem={onOpenItem}
 			onProposeChange={onProposeChange}
 			reloadToken={reloadToken}
+			onRefreshingChange={onRefreshingChange}
+			exportRef={exportRef}
 		/>
 	)
 }
@@ -103,6 +127,8 @@ function ViewFrame({
 	onOpenItem,
 	onProposeChange,
 	reloadToken,
+	onRefreshingChange,
+	exportRef,
 }: {
 	html: string
 	sources: ReadonlyMap<string, DataQuerySpec>
@@ -112,10 +138,14 @@ function ViewFrame({
 	onOpenItem?: (objectId: string) => void
 	onProposeChange?: (change: ProposedChange) => void
 	reloadToken?: number
+	onRefreshingChange?: (refreshing: boolean) => void
+	exportRef?: MutableRefObject<(() => Promise<ExportPage[]>) | null>
 }) {
 	const iframeRef = useRef<HTMLIFrameElement>(null)
 	const navigate = useNavigate()
 	const [height, setHeight] = useState(MIN_HEIGHT)
+	const heightRef = useRef(MIN_HEIGHT)
+	const growthsRef = useRef(0)
 	// Width the view needs when it is wider than the box it sits in. The frame takes that width
 	// and the box scrolls sideways; null means "fit the box". Reset whenever the box changes
 	// width or the frame is replaced, so a view that fits again goes back to fitting.
@@ -141,11 +171,40 @@ function ViewFrame({
 	frameKeyRef.current = frameKey
 	// Set when the frame on screen must go at once (it navigated away), not wait for its successor.
 	const swapNowRef = useRef(false)
+	// When the frame was last replaced on its own, and the timer holding back the next one.
+	const lastSwapAtRef = useRef(0)
+	const swapTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 	const loadsRef = useRef(0)
 	const resetsRef = useRef(0)
 	const blockedRef = useRef(false)
 	// The last answer given to the frame per source (by its query), to tell whether a change matters.
 	const lastResultsRef = useRef(new Map<string, string>())
+
+	/**
+	 * Replaces the frame because something changed on its own, at most once per MIN_SWAP_INTERVAL_MS.
+	 * A request inside the wait is folded into one replacement at the end of it; the new frame
+	 * takes whatever answers were fresh by then.
+	 */
+	const requestSwap = useCallback(() => {
+		const wait = lastSwapAtRef.current + MIN_SWAP_INTERVAL_MS - Date.now()
+		if (wait <= 0) {
+			lastSwapAtRef.current = Date.now()
+			setFrameKey((k) => k + 1)
+			return
+		}
+		if (swapTimerRef.current !== undefined) return
+		swapTimerRef.current = setTimeout(() => {
+			swapTimerRef.current = undefined
+			lastSwapAtRef.current = Date.now()
+			setFrameKey((k) => k + 1)
+		}, wait)
+	}, [])
+	useEffect(
+		() => () => {
+			if (swapTimerRef.current !== undefined) clearTimeout(swapTimerRef.current)
+		},
+		[],
+	)
 	// The view's light and dark styles follow the app's theme, not the browser's.
 	const { resolvedTheme } = useTheme()
 	const srcDoc = useMemo(
@@ -179,6 +238,9 @@ function ViewFrame({
 	// is true while any query is in flight.
 	const [updatedAt, setUpdatedAt] = useState<number | null>(null)
 	const [refreshing, setRefreshing] = useState(false)
+	useEffect(() => {
+		onRefreshingChange?.(refreshing)
+	}, [refreshing, onRefreshingChange])
 	const pendingRef = useRef(0)
 	// When each source's answer on screen was fetched, by query key.
 	const answeredAtRef = useRef(new Map<string, number>())
@@ -274,6 +336,23 @@ function ViewFrame({
 		void refreshAll()
 	}, [reloadToken, refreshAll])
 
+	// Export reads the frame on screen, and only when asked. The frame is the isolation frame's
+	// first child; a frame that navigated away (blocked) is not asked.
+	useEffect(() => {
+		if (!exportRef) return
+		const ask = () => {
+			const frame = () => iframeRef.current?.contentWindow?.frames[0] ?? null
+			if (blockedRef.current || !frame()) {
+				return Promise.reject(new Error('The view is not ready.'))
+			}
+			return requestExportPages(frame, (message) => frame()?.postMessage(message, '*'))
+		}
+		exportRef.current = ask
+		return () => {
+			if (exportRef.current === ask) exportRef.current = null
+		}
+	}, [exportRef])
+
 	useEffect(() => {
 		// The view runs one frame inside the iframe we render (see prepareIsolatedViewHtml), so
 		// it is that iframe's first child frame. Cross-origin windows still expose `frames`.
@@ -356,7 +435,9 @@ function ViewFrame({
 									const onScreen = lastResultsRef.current.get(key)
 									if (onScreen !== undefined && onScreen !== JSON.stringify(latest)) {
 										freshRef.current.set(key, latest)
-										setFrameKey((k) => k + 1)
+										// What the next frame will show, so later checks compare with it.
+										lastResultsRef.current.set(key, JSON.stringify(latest))
+										requestSwap()
 									}
 								},
 								(err) => {
@@ -371,9 +452,15 @@ function ViewFrame({
 					},
 					post: (message) => viewWindow()?.postMessage(message, '*'),
 					onDocHeight: (h) => {
-						setHeight(Math.max(MIN_HEIGHT, Math.ceil(h)))
 						// The newest frame has drawn; it replaces the one on screen.
 						setShownKey(frameKeyRef.current)
+						const next = Math.max(MIN_HEIGHT, Math.ceil(h))
+						if (next > heightRef.current) {
+							growthsRef.current += 1
+							if (growthsRef.current > MAX_HEIGHT_GROWTHS) return
+						}
+						heightRef.current = next
+						setHeight(next)
 					},
 					// A view wider than its box takes the width it needs and the box scrolls
 					// sideways, rather than the view clipping or the page overflowing.
@@ -385,7 +472,7 @@ function ViewFrame({
 		}
 		window.addEventListener('message', onMessage)
 		return () => window.removeEventListener('message', onMessage)
-	}, [workspaceId, queryAndStore, syncUpdatedAt, answerList, navigate])
+	}, [workspaceId, queryAndStore, syncUpdatedAt, answerList, navigate, requestSwap])
 
 	// Keeps the view live without it having to cooperate, and only while it is open (this
 	// component is mounted). A page cannot be told to re-render from outside, so when an
@@ -423,10 +510,10 @@ function ViewFrame({
 					failures = 0
 					setStale(false)
 					if (JSON.stringify(latest) !== before) {
-						lastResultsRef.current.delete(key)
+						// The replacement may be held back, so later checks compare with what it will show.
+						lastResultsRef.current.set(key, JSON.stringify(latest))
 						freshRef.current.set(key, latest)
-						setFrameKey((k) => k + 1)
-						return
+						requestSwap()
 					}
 				}
 			} catch (err) {
@@ -460,7 +547,7 @@ function ViewFrame({
 			document.removeEventListener('visibilitychange', onVisible)
 			if (timer !== undefined) clearTimeout(timer)
 		}
-	}, [queryAndStore])
+	}, [queryAndStore, requestSwap])
 
 	// Some answers change with no write at all: an object ages out of "last 7 days", a
 	// day-by-day chart rolls over at midnight. No event announces that, so on each load of
@@ -507,7 +594,7 @@ function ViewFrame({
 						dropCachedResult(workspaceId, key)
 						freshRef.current.delete(key)
 					}
-					setFrameKey((k) => k + 1)
+					requestSwap()
 				}, wait)
 			}
 		}
@@ -516,7 +603,7 @@ function ViewFrame({
 			cancelled = true
 			if (timer !== undefined) clearTimeout(timer)
 		}
-	}, [workspaceId, srcDoc, frameKey])
+	}, [workspaceId, srcDoc, frameKey, requestSwap])
 
 	useEffect(() => {
 		const box = boxRef.current
@@ -546,6 +633,7 @@ function ViewFrame({
 	// biome-ignore lint/correctness/useExhaustiveDependencies: srcDoc and frameKey are the triggers
 	useEffect(() => {
 		loadsRef.current = 0
+		growthsRef.current = 0
 		blockedRef.current = false
 		setQueryFailed(false)
 		setContentWidth(null)

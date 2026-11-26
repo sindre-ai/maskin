@@ -9,8 +9,7 @@ export const COMPANY_DISPLAY_NAME = 'Company'
 
 export const CONTACT_STATUSES = [
 	'new_lead',
-	'connection_requested',
-	'messaged',
+	'initial_contact',
 	'in_conversation',
 	'meeting_booked',
 	'converted',
@@ -36,6 +35,7 @@ export const CONTACT_FIELDS: FieldDefinition[] = [
 	{ name: 'position', type: 'text' },
 	{ name: 'connected_on', type: 'date' },
 	{ name: 'last_contacted', type: 'date' },
+	{ name: 'first_contact_channel', type: 'enum', values: ['linkedin', 'email'] },
 	{ name: 'notes', type: 'text' },
 	{ name: 'lead_source', type: 'text' },
 	{ name: 'priority', type: 'enum', values: ['hot', 'warm', 'cold'] },

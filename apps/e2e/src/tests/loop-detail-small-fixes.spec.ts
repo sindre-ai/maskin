@@ -28,7 +28,7 @@ test.describe('Loop detail — post-ship small defects', () => {
 			const loop = await account.api.createObject(account.workspaceId, {
 				type: 'loop',
 				title: 'Renewal risk loop',
-				status: 'learning',
+				status: 'pilot',
 			})
 
 			await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
@@ -52,7 +52,7 @@ test.describe('Loop detail — post-ship small defects', () => {
 		const loop = await account.api.createObject(account.workspaceId, {
 			type: 'loop',
 			title: 'Chart fallback loop',
-			status: 'learning',
+			status: 'pilot',
 		})
 		await account.api.createComment(account.workspaceId, {
 			entity_id: loop.id,
@@ -88,7 +88,7 @@ test.describe('Loop detail — post-ship small defects', () => {
 		const loop = await account.api.createObject(account.workspaceId, {
 			type: 'loop',
 			title: 'Empty chart loop',
-			status: 'learning',
+			status: 'pilot',
 		})
 		await account.api.createComment(account.workspaceId, {
 			entity_id: loop.id,
@@ -119,7 +119,7 @@ test.describe('Loop detail — post-ship small defects', () => {
 		const loop = await account.api.createObject(account.workspaceId, {
 			type: 'loop',
 			title: 'Folding loop',
-			status: 'learning',
+			status: 'pilot',
 		})
 
 		// Three routine updates from the same actor — the editor nudging the

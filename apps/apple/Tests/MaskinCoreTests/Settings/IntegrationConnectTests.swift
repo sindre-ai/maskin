@@ -324,14 +324,19 @@ struct IntegrationsConnectStoreTests {
 private final class BodyTransport: ClientTransport, @unchecked Sendable {
 	private let lock = NSLock()
 	private var _requests: [(path: String, headers: HTTPFields, body: String)] = []
+	private var _baseURLs: [URL] = []
 	var requests: [(path: String, headers: HTTPFields, body: String)] { lock.withLock { _requests } }
+	var baseURLs: [URL] { lock.withLock { _baseURLs } }
 
 	func send(
 		_ request: HTTPRequest, body: HTTPBody?, baseURL: URL, operationID: String
 	) async throws -> (HTTPResponse, HTTPBody?) {
 		var text = ""
 		if let body { text = String(decoding: try await Data(collecting: body, upTo: 1 << 20), as: UTF8.self) }
-		lock.withLock { _requests.append((request.path ?? "", request.headerFields, text)) }
+		lock.withLock {
+			_requests.append((request.path ?? "", request.headerFields, text))
+			_baseURLs.append(baseURL)
+		}
 		var response = HTTPResponse(status: .ok)
 		response.headerFields[.contentType] = "application/json"
 		let json =
@@ -376,6 +381,30 @@ struct NativeConnectRequestTests {
 		#expect(decoded == ["native_return_url": "maskin://integrations/callback"])
 		#expect(start.integrationId == "8d1f0a4e-3c63-4e1b-9d2e-0c6f7a2b1c11")
 	}
+
+	@Test("the connect call goes to the web host while other calls stay on the API host")
+	func connectUsesWebHost() async throws {
+		let apiTransport = BodyTransport()
+		let webTransport = BodyTransport()
+		let api = Client(
+			serverURL: URL(string: "https://api.example")!, transport: apiTransport,
+			middlewares: [IdempotencyMiddleware()])
+		let web = Client(
+			serverURL: URL(string: "https://web.example")!, transport: webTransport,
+			middlewares: [IdempotencyMiddleware()])
+		let source = APISettingsSource(client: api, workspaceID: "ws-1", connectClient: web)
+		_ = try await source.startConnect(provider: "slack", idempotencyKey: "k-3")
+		_ = try await source.startConnect(provider: "linkedin-unipile", idempotencyKey: "k-4")
+		#expect(webTransport.baseURLs.map(\.host) == ["web.example", "web.example"])
+		#expect(apiTransport.requests.isEmpty)
+	}
+
+	@Test("without a separate connect client the connect call uses the one client")
+	func connectDefaultsToClient() async throws {
+		let transport = BodyTransport()
+		_ = try await source(transport).startConnect(provider: "slack", idempotencyKey: "k-5")
+		#expect(transport.baseURLs.map(\.host) == ["localhost"])
+	}
 }
 
 @MainActor
@@ -383,10 +412,10 @@ struct NativeConnectRequestTests {
 struct ConnectWithKeyStoreTests {
 	final class FakeKeyAPI: IntegrationKeyAPI, @unchecked Sendable {
 		var failure: SettingsError?
-		private(set) var sent: [(provider: String, key: String)] = []
-		func connect(provider: String, key: String, idempotencyKey: String) async throws {
+		private(set) var sent: [(provider: String, key: String, projectID: String?)] = []
+		func connect(provider: String, key: String, projectID: String?, idempotencyKey: String) async throws {
 			if let failure { throw failure }
-			sent.append((provider, key))
+			sent.append((provider, key, projectID))
 		}
 	}
 
@@ -402,6 +431,32 @@ struct ConnectWithKeyStoreTests {
 		#expect(api.sent.map(\.key) == ["phx_abc"])
 		#expect(store.didConnect && store.key.isEmpty && store.error == nil)
 		#expect(!store.canSave)
+	}
+
+	@Test("PostHog sends the project id when set and leaves it out when empty")
+	func projectPin() async {
+		let api = FakeKeyAPI()
+		let store = ConnectWithKeyStore(providerID: "posthog", providerName: "PostHog", api: api)
+		store.key = "phx_abc"
+		store.projectID = " 12345 "
+		await store.save()
+		#expect(api.sent.map(\.projectID) == ["12345"])
+
+		let plain = FakeKeyAPI()
+		let unpinned = ConnectWithKeyStore(providerID: "posthog", providerName: "PostHog", api: plain)
+		unpinned.key = "phx_abc"
+		await unpinned.save()
+		#expect(plain.sent.map(\.projectID) == [nil])
+	}
+
+	@Test("a project id that is not a number blocks saving")
+	func badProject() {
+		let store = ConnectWithKeyStore(providerID: "posthog", providerName: "PostHog", api: FakeKeyAPI())
+		store.key = "phx_abc"
+		store.projectID = "12a"
+		#expect(!store.projectIDIsValid && !store.canSave)
+		store.projectID = ""
+		#expect(store.canSave)
 	}
 
 	@Test("a refused key shows the server's sentence and keeps the field")

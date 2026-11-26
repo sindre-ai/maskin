@@ -1,8 +1,10 @@
-import { ClaudeTabPanel, useClaudeTab } from '@/components/settings/claude-connection'
+import { ChatGptTabPanel, useChatGptConnected } from '@/components/settings/chatgpt-connection'
+import { ClaudeTabPanel, useClaudeConnected } from '@/components/settings/claude-connection'
 import { Steps } from '@/components/settings/mcp-steps'
 import { CodeBlock } from '@/components/shared/code-block'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { trackEvent } from '@/lib/analytics'
 import { getApiKey } from '@/lib/auth'
 import { TriangleAlert } from 'lucide-react'
@@ -10,8 +12,8 @@ import { useEffect, useRef, useState } from 'react'
 
 type PanelTab = 'claude-code' | 'cursor' | 'vscode' | 'claude-desktop' | 'other'
 
-// The Claude tab is added in front of these when the person may use it (see useClaudeTab).
-type TabValue = 'claude' | PanelTab
+// The Claude tab, then the ChatGPT tab (behind chatgpt-mcp-tab), sit in front of these.
+type TabValue = 'claude' | 'chatgpt' | PanelTab
 
 const tabs: { value: PanelTab; label: string }[] = [
 	{ value: 'claude-code', label: 'Claude Code' },
@@ -179,15 +181,17 @@ function NoKeyNotice() {
 }
 
 export function McpConnectionSection({ workspaceId }: { workspaceId: string }) {
-	const claude = useClaudeTab()
+	// One read, here: with the flag on the Claude tab lists only Claude connections and ChatGPT gets its own.
+	const chatGptTab = useFeatureFlag('chatgpt-mcp-tab')
+	const claudeConnected = useClaudeConnected(chatGptTab)
+	const chatGptConnected = useChatGptConnected()
 	const [chosenTab, setChosenTab] = useState<TabValue | null>(null)
 	const listRef = useRef<HTMLDivElement>(null)
 
-	// The Claude tab opens first when it is there; until the person picks a tab, the default follows it.
+	// The Claude tab opens first, until the person picks another. A ChatGPT choice falls back to Claude
+	// if the flag is off.
 	const activeTab: TabValue =
-		chosenTab === 'claude' && !claude.visible
-			? 'claude-code'
-			: (chosenTab ?? (claude.visible ? 'claude' : 'claude-code'))
+		chosenTab === 'chatgpt' && !chatGptTab ? 'claude' : (chosenTab ?? 'claude')
 
 	// getApiKey is read on each render and again at click time for the install links, so the
 	// key is never held in state and never rendered into an href.
@@ -195,7 +199,7 @@ export function McpConnectionSection({ workspaceId }: { workspaceId: string }) {
 	const hasKey = !!storedKey
 	const mcpUrl = getMcpUrl()
 	const panels = buildPanels(mcpUrl, storedKey ?? KEY_PLACEHOLDER, workspaceId)
-	const panel = activeTab === 'claude' ? null : panels[activeTab]
+	const panel = activeTab === 'claude' || activeTab === 'chatgpt' ? null : panels[activeTab]
 
 	// On a narrow screen the strip scrolls; keep the selected tab in view so the next one peeks out.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: re-run when the active tab changes
@@ -223,17 +227,29 @@ export function McpConnectionSection({ workspaceId }: { workspaceId: string }) {
 			<div className="overflow-hidden rounded-xl border border-border">
 				<Tabs value={activeTab} onValueChange={(v) => setChosenTab(v as TabValue)}>
 					<TabsList ref={listRef} variant="line" aria-label="App" className="px-2">
-						{claude.visible && (
-							<TabsTrigger value="claude">
-								Claude
+						<TabsTrigger value="claude">
+							Claude
+							<span
+								className={
+									claudeConnected
+										? 'eyebrow ml-1.5 rounded bg-status-live-bg px-1.5 py-0.5 text-status-live-text!'
+										: 'eyebrow ml-1.5 rounded bg-brand-subtle px-1.5 py-0.5 text-brand-subtle-foreground!'
+								}
+							>
+								{claudeConnected ? 'Connected' : 'Sign in'}
+							</span>
+						</TabsTrigger>
+						{chatGptTab && (
+							<TabsTrigger value="chatgpt">
+								ChatGPT
 								<span
 									className={
-										claude.connected
+										chatGptConnected
 											? 'eyebrow ml-1.5 rounded bg-status-live-bg px-1.5 py-0.5 text-status-live-text!'
 											: 'eyebrow ml-1.5 rounded bg-brand-subtle px-1.5 py-0.5 text-brand-subtle-foreground!'
 									}
 								>
-									{claude.connected ? 'Connected' : 'Sign in'}
+									{chatGptConnected ? 'Connected' : 'Sign in'}
 								</span>
 							</TabsTrigger>
 						)}
@@ -244,8 +260,10 @@ export function McpConnectionSection({ workspaceId }: { workspaceId: string }) {
 						))}
 					</TabsList>
 					<TabsContent value={activeTab} className="mt-0 space-y-4 p-4">
-						{panel === null ? (
-							<ClaudeTabPanel mcpUrl={mcpUrl} />
+						{activeTab === 'chatgpt' ? (
+							<ChatGptTabPanel mcpUrl={mcpUrl} />
+						) : panel === null ? (
+							<ClaudeTabPanel mcpUrl={mcpUrl} split={chatGptTab} />
 						) : (
 							<>
 								{!hasKey && <NoKeyNotice />}

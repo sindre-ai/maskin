@@ -5,6 +5,8 @@ import {
 	events,
 	actors,
 	agentSkills,
+	installedLoops,
+	marketplaceLoops,
 	objects,
 	triggers,
 	workspaceMembers,
@@ -12,10 +14,12 @@ import {
 	workspaces as workspacesTable,
 } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
+import { KNOWLEDGE_WIKI_LOOP_NAME, KNOWLEDGE_WIKI_LOOP_SLUG, readLoopViews } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
 import { onTestFinished } from 'vitest'
 import { __resetTeamMemberForTesting, configureTeamMember } from '../../lib/analytics/team-member'
+import { seedMarketplaceLoops } from '../../lib/dev-bootstrap'
 import { createApiError, formatZodError } from '../../lib/errors'
 import { openSecret } from '../../lib/workspace-secrets'
 import { insertActor, insertWorkspace, setWorkspacePlan } from '../factories'
@@ -36,6 +40,7 @@ type Env = {
 		notifyBridge: PgNotifyBridge
 		sessionManager: { createSession: (...args: unknown[]) => Promise<unknown> }
 		agentStorage: InstanceType<typeof AgentStorageManager>
+		storageProvider?: StorageProvider
 	}
 }
 
@@ -50,7 +55,9 @@ vi.mock('../../lib/analytics/posthog', () => ({
 }))
 
 const { default: workspacesRoutes } = await import('../../routes/workspaces')
-const { bootstrapDefaultAgents } = await import('../../services/workspace-bootstrap')
+const { bootstrapDefaultAgents, installDefaultMarketplaceLoops } = await import(
+	'../../services/workspace-bootstrap'
+)
 const { AgentStorageManager } = await import('../../services/agent-storage')
 
 function createMemoryStorage(): StorageProvider {
@@ -90,10 +97,12 @@ const DEFAULT_AGENT_NAMES = [
 	'Driver',
 	'Signal Analyst',
 	'Researcher',
-	'Knowledge Curator',
 ]
 
-function createApp(agentStorage = new AgentStorageManager(createMemoryStorage(), db)) {
+function createApp(
+	agentStorage = new AgentStorageManager(createMemoryStorage(), db),
+	storageProvider?: StorageProvider,
+) {
 	const app = new OpenAPIHono<Env>({
 		defaultHook: (result, c) => {
 			if (!result.success) {
@@ -117,6 +126,7 @@ function createApp(agentStorage = new AgentStorageManager(createMemoryStorage(),
 		c.set('notifyBridge', {} as PgNotifyBridge)
 		c.set('sessionManager', { createSession: vi.fn().mockResolvedValue({}) })
 		c.set('agentStorage', agentStorage)
+		if (storageProvider) c.set('storageProvider', storageProvider)
 		await next()
 	})
 
@@ -127,10 +137,9 @@ function createApp(agentStorage = new AgentStorageManager(createMemoryStorage(),
 /**
  * Flips the `enterprise_granted` ops grant via the real admin route.
  *
- * The allowlist is scoped to just this call rather than the whole test: an
- * actor in MASKIN_ENTERPRISE_ACTOR_IDS is enterprise-entitled outright, so leaving
- * it set would make every later assertion pass through the allowlist and never
- * touch the per-workspace grant these tests are about.
+ * The allowlist is scoped to just this call rather than the whole test: it only
+ * decides who may set the grant, so leaving it set would let a later assertion
+ * pass for the wrong reason.
  */
 async function grantEnterpriseAsOps(
 	app: ReturnType<typeof createApp>,
@@ -275,7 +284,7 @@ describe('Workspaces Integration', () => {
 		it('reports a human member count per workspace, excluding seeded agents', async () => {
 			const app = createApp()
 
-			// Creating a workspace also seeds six default agent actors as members.
+			// Creating a workspace also seeds five default agent actors as members.
 			// The count is about people, so a solo workspace must still read 1.
 			const created = await app.request(
 				jsonRequest('POST', '/api/workspaces', { name: 'Counted WS' }),
@@ -828,32 +837,57 @@ describe('Workspaces Integration', () => {
 			expect(listed?.enterprise).toBe(true)
 		})
 
-		it('entitles an enterprise billing owner without any per-workspace grant', async () => {
+		it('does not entitle an allowlisted billing owner without a per-workspace grant', async () => {
 			const app = createApp()
 			const createRes = await app.request(
-				jsonRequest('POST', '/api/workspaces', { name: 'Enterprise Owner Entitlement' }),
+				jsonRequest('POST', '/api/workspaces', { name: 'Ops Owner No Grant' }),
 			)
 			const ws = await createRes.json()
 			expect(ws.enterprise).toBe(false)
 
-			// The allowlist is read from process.env at call time, so flipping it
-			// here exercises exactly what a founder deployment configures.
 			const prev = process.env.MASKIN_ENTERPRISE_ACTOR_IDS
 			process.env.MASKIN_ENTERPRISE_ACTOR_IDS = getTestActorId()
 			try {
 				const listRes = await app.request(jsonGet('/api/workspaces'))
 				const list = (await listRes.json()) as Array<{ id: string; enterprise: boolean }>
-				expect(list.find((w) => w.id === ws.id)?.enterprise).toBe(true)
+				expect(list.find((w) => w.id === ws.id)?.enterprise).toBe(false)
 
 				const res = await app.request(
 					jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
 						settings: { llm_keys: { anthropic: 'sk-ant-enterprise' } },
 					}),
 				)
-				expect(res.status).toBe(200)
-				const body = await res.json()
-				expect(body.settings.llm_keys).toBeUndefined()
-				expect(body.llm_configured.anthropic).toBe(true)
+				expect(res.status).toBe(403)
+			} finally {
+				// '' parses to an empty allowlist, same as unset.
+				process.env.MASKIN_ENTERPRISE_ACTOR_IDS = prev ?? ''
+			}
+		})
+
+		it('gives a workspace made by an allowlisted actor the trial card step, with no grant', async () => {
+			const app = createApp()
+			const prev = process.env.MASKIN_ENTERPRISE_ACTOR_IDS
+			process.env.MASKIN_ENTERPRISE_ACTOR_IDS = getTestActorId()
+			try {
+				const res = await app.request(
+					jsonRequest('POST', '/api/workspaces', { name: 'Made By Ops Actor' }),
+				)
+				expect(res.status).toBe(201)
+				const created = await res.json()
+				expect(created.enterprise).toBe(false)
+
+				const [row] = await db
+					.select({
+						settings: workspacesTable.settings,
+						enterpriseGranted: workspacesTable.enterpriseGranted,
+					})
+					.from(workspacesTable)
+					.where(eq(workspacesTable.id, created.id))
+				expect(row?.enterpriseGranted).toBe(false)
+				expect((row?.settings as { billing?: Record<string, unknown> }).billing).toMatchObject({
+					plan: 'trial',
+					trial_state: 'awaiting_card',
+				})
 			} finally {
 				// '' parses to an empty allowlist, same as unset.
 				process.env.MASKIN_ENTERPRISE_ACTOR_IDS = prev ?? ''
@@ -1030,20 +1064,11 @@ describe('Workspaces Integration', () => {
 			const listRes = await app.request(jsonGet(`/api/workspaces/${ws.id}/members`))
 			expect(listRes.status).toBe(200)
 			const members = await listRes.json()
-			// Creator (owner) + all 6 default agents (seeded atomically inside the
-			// create transaction) + the newly-added member = 8.
-			expect(members).toHaveLength(8)
+			// Creator (owner) + all 5 default agents (seeded atomically inside the
+			// create transaction) + the newly-added member = 7.
+			expect(members).toHaveLength(7)
 			const roles = members.map((m: { role: string }) => m.role).sort()
-			expect(roles).toEqual([
-				'member',
-				'member',
-				'member',
-				'member',
-				'member',
-				'member',
-				'member',
-				'owner',
-			])
+			expect(roles).toEqual(['member', 'member', 'member', 'member', 'member', 'member', 'owner'])
 		})
 	})
 
@@ -1283,56 +1308,45 @@ describe('Workspaces Integration', () => {
 		it('creates two workspaces for the same creator with default agents each and no cross-contamination', async () => {
 			const app = createApp()
 
-			// The ownership cap (trial tier: 1 owned workspace) would otherwise
-			// block the second create below — bypass it via the enterprise
-			// allowlist so this test can focus on its actual subject: agent-seed
-			// isolation between two workspaces owned by the same creator.
-			const ORIGINAL_ENV = process.env.MASKIN_ENTERPRISE_ACTOR_IDS
-			process.env.MASKIN_ENTERPRISE_ACTOR_IDS = getTestActorId()
-			try {
-				const first = await (
-					await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Same Tenant A' }))
-				).json()
-				const second = await (
-					await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Same Tenant B' }))
-				).json()
+			// A trial-tier actor may only own one workspace, so raise the first to pro
+			// before creating the second. This test is about agent-seed isolation, not
+			// the ownership cap.
+			const first = await (
+				await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Same Tenant A' }))
+			).json()
+			await setWorkspacePlan(db, first.id, 'pro')
+			const second = await (
+				await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Same Tenant B' }))
+			).json()
 
-				expect(first.id).not.toBe(second.id)
-				expect(await agentNamesFor(first.id)).toEqual([...DEFAULT_AGENT_NAMES].sort())
-				expect(await agentNamesFor(second.id)).toEqual([...DEFAULT_AGENT_NAMES].sort())
+			expect(first.id).not.toBe(second.id)
+			expect(await agentNamesFor(first.id)).toEqual([...DEFAULT_AGENT_NAMES].sort())
+			expect(await agentNamesFor(second.id)).toEqual([...DEFAULT_AGENT_NAMES].sort())
 
-				// Agent actor rows are distinct between workspaces — a workspace's
-				// members must not overlap another workspace's, otherwise
-				// permissions/skills would leak across tenants.
-				const firstAgentIds = new Set(
-					(
-						await db
-							.select({ actorId: workspaceMembers.actorId })
-							.from(workspaceMembers)
-							.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
-							.where(eq(workspaceMembers.workspaceId, first.id))
-					)
-						.map((r) => r.actorId)
-						.filter((id) => id !== getTestActorId()),
-				)
-				const secondAgentIds = (
+			// Agent actor rows are distinct between workspaces — a workspace's
+			// members must not overlap another workspace's, otherwise
+			// permissions/skills would leak across tenants.
+			const firstAgentIds = new Set(
+				(
 					await db
 						.select({ actorId: workspaceMembers.actorId })
 						.from(workspaceMembers)
 						.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
-						.where(eq(workspaceMembers.workspaceId, second.id))
+						.where(eq(workspaceMembers.workspaceId, first.id))
 				)
 					.map((r) => r.actorId)
-					.filter((id) => id !== getTestActorId())
-				for (const id of secondAgentIds) expect(firstAgentIds.has(id)).toBe(false)
-			} finally {
-				if (ORIGINAL_ENV === undefined) {
-					// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
-					delete process.env.MASKIN_ENTERPRISE_ACTOR_IDS
-				} else {
-					process.env.MASKIN_ENTERPRISE_ACTOR_IDS = ORIGINAL_ENV
-				}
-			}
+					.filter((id) => id !== getTestActorId()),
+			)
+			const secondAgentIds = (
+				await db
+					.select({ actorId: workspaceMembers.actorId })
+					.from(workspaceMembers)
+					.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+					.where(eq(workspaceMembers.workspaceId, second.id))
+			)
+				.map((r) => r.actorId)
+				.filter((id) => id !== getTestActorId())
+			for (const id of secondAgentIds) expect(firstAgentIds.has(id)).toBe(false)
 		})
 
 		it('re-invoking the seeding path against an already-seeded workspace inserts zero new agent rows', async () => {
@@ -1404,7 +1418,7 @@ describe('Workspaces Integration', () => {
 
 			// The shared "Maskin way of working" skill is attached to every default
 			// agent (mirrored from the Template workspace) — Coach, Chief of Staff,
-			// Driver, Signal Analyst, Researcher, Knowledge Curator.
+			// Driver, Signal Analyst, Researcher.
 			const [wayOfWorkingSkill] = await db
 				.select({ id: workspaceSkills.id })
 				.from(workspaceSkills)
@@ -1421,7 +1435,7 @@ describe('Workspaces Integration', () => {
 				.select({ actorId: agentSkills.actorId })
 				.from(agentSkills)
 				.where(eq(agentSkills.workspaceSkillId, wayOfWorkingSkillId))
-			expect(wayOfWorkingAttachRows).toHaveLength(6)
+			expect(wayOfWorkingAttachRows).toHaveLength(5)
 
 			const triggerRows = await db
 				.select({ name: triggers.name })
@@ -1432,8 +1446,9 @@ describe('Workspaces Integration', () => {
 			// in DEFAULT_WORKSPACE_TRIGGERS, to 15 with the Chief of Staff's
 			// "Daily briefing" cron, and to 16 with its hourly "For You — curate
 			// the list" cron, then down to 12 when the Bet discovery loop's four
-			// triggers were dropped from the seed.
-			expect(triggerRows).toHaveLength(12)
+			// triggers were dropped from the seed, then to 10 when the Knowledge Wiki's two
+			// moved out of the seed into the marketplace install.
+			expect(triggerRows).toHaveLength(10)
 		})
 
 		it('gives the Researcher the cited deep research mode and the deep-research-subagents skill', async () => {
@@ -1471,7 +1486,7 @@ describe('Workspaces Integration', () => {
 			expect(attachRows.map((r) => r.actorId)).toEqual([researcher?.id])
 		})
 
-		it('seeds the Workspace improvements and Knowledge Wiki loops wired to their triggers, and no Bet discovery loop', async () => {
+		it('seeds the Workspace improvements loop wired to its triggers, and no Bet discovery loop or Knowledge Wiki copy', async () => {
 			const app = createApp()
 
 			const createRes = await app.request(
@@ -1485,10 +1500,7 @@ describe('Workspaces Integration', () => {
 				.from(objects)
 				.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'loop')))
 
-			expect(loopRows.map((r) => r.title).sort()).toEqual([
-				'Knowledge Wiki → digest',
-				'Workspace improvements',
-			])
+			expect(loopRows.map((r) => r.title).sort()).toEqual(['Workspace improvements'])
 
 			const triggerRows = await db
 				.select({ id: triggers.id, name: triggers.name })
@@ -1508,16 +1520,103 @@ describe('Workspaces Integration', () => {
 					triggerIdByName.get('Capture outcome'),
 				]),
 			)
+		})
 
-			const knowledgeWikiLoop = loopRows.find((r) => r.title === 'Knowledge Wiki → digest')
-			const knowledgeWikiTriggerIds =
-				(knowledgeWikiLoop?.metadata as { trigger_ids?: string[] } | null)?.trigger_ids ?? []
-			expect(new Set(knowledgeWikiTriggerIds)).toEqual(
-				new Set([
-					triggerIdByName.get('Fold new knowledge into the wiki'),
-					triggerIdByName.get('Compile the twice-weekly digest'),
-				]),
-			)
+		describe('Knowledge Wiki marketplace install', () => {
+			async function knowledgeWikiRows(workspaceId: string) {
+				return db
+					.select({ id: installedLoops.id, objectId: installedLoops.objectId })
+					.from(installedLoops)
+					.innerJoin(marketplaceLoops, eq(installedLoops.sourceLoopId, marketplaceLoops.id))
+					.where(
+						and(
+							eq(installedLoops.workspaceId, workspaceId),
+							eq(marketplaceLoops.slug, KNOWLEDGE_WIKI_LOOP_SLUG),
+						),
+					)
+			}
+
+			async function curatorsIn(workspaceId: string) {
+				return db
+					.select({ id: actors.id, metadata: actors.metadata })
+					.from(workspaceMembers)
+					.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+					.where(
+						and(
+							eq(workspaceMembers.workspaceId, workspaceId),
+							eq(actors.name, 'Knowledge Curator'),
+						),
+					)
+			}
+
+			it('installs the marketplace Knowledge Wiki into a new workspace, with one Curator and both tabs', async () => {
+				onTestFinished(async () => {
+					await sql`TRUNCATE marketplace_loops, marketplace_loop_items CASCADE`
+				})
+				await sql`TRUNCATE marketplace_loops, marketplace_loop_items CASCADE`
+				await seedMarketplaceLoops(db)
+
+				const storage = createMemoryStorage()
+				const agentStorage = new AgentStorageManager(storage, db)
+				const app = createApp(agentStorage, storage)
+
+				const createRes = await app.request(
+					jsonRequest('POST', '/api/workspaces', { name: 'Wiki Install' }),
+				)
+				expect(createRes.status).toBe(201)
+				const ws = await createRes.json()
+
+				const installs = await knowledgeWikiRows(ws.id)
+				expect(installs).toHaveLength(1)
+
+				const curators = await curatorsIn(ws.id)
+				expect(curators).toHaveLength(1)
+				expect(
+					(curators[0]?.metadata as { source_item_id?: string } | null)?.source_item_id,
+				).toBeTruthy()
+
+				const [loopObject] = await db
+					.select({ title: objects.title, metadata: objects.metadata })
+					.from(objects)
+					.where(and(eq(objects.workspaceId, ws.id), eq(objects.id, installs[0]?.objectId ?? '')))
+				expect(loopObject?.title).toBe(KNOWLEDGE_WIKI_LOOP_NAME)
+				expect(readLoopViews(loopObject?.metadata ?? {})).toHaveLength(2)
+
+				// The old hand-made copy is gone: the install is the only Knowledge Wiki loop.
+				const wikiLoops = await db
+					.select({ id: objects.id })
+					.from(objects)
+					.where(
+						and(
+							eq(objects.workspaceId, ws.id),
+							eq(objects.type, 'loop'),
+							eq(objects.title, 'Knowledge Wiki → digest'),
+						),
+					)
+				expect(wikiLoops).toHaveLength(0)
+
+				// Running the bootstrap again installs nothing new and adds no second Curator.
+				await bootstrapDefaultAgents(db, agentStorage, ws.id, getTestActorId())
+				await installDefaultMarketplaceLoops(db, agentStorage, storage, ws.id, getTestActorId())
+				expect(await knowledgeWikiRows(ws.id)).toHaveLength(1)
+				expect(await curatorsIn(ws.id)).toHaveLength(1)
+			})
+
+			it('still creates the workspace when the marketplace has no Knowledge Wiki yet', async () => {
+				await sql`TRUNCATE marketplace_loops, marketplace_loop_items CASCADE`
+
+				const storage = createMemoryStorage()
+				const app = createApp(new AgentStorageManager(storage, db), storage)
+
+				const createRes = await app.request(
+					jsonRequest('POST', '/api/workspaces', { name: 'No Marketplace Yet' }),
+				)
+				expect(createRes.status).toBe(201)
+				const ws = await createRes.json()
+
+				expect(await knowledgeWikiRows(ws.id)).toHaveLength(0)
+				expect(await curatorsIn(ws.id)).toHaveLength(0)
+			})
 		})
 
 		it('re-invoking bootstrapDefaultAgents inserts zero new loop objects', async () => {
@@ -1537,7 +1636,7 @@ describe('Workspaces Integration', () => {
 				.from(objects)
 				.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'loop')))
 
-			expect(loopRows).toHaveLength(2)
+			expect(loopRows).toHaveLength(1)
 		})
 
 		it('leaves three pre-existing workspaces byte-identical when a new workspace is seeded', async () => {

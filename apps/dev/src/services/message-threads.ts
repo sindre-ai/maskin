@@ -24,6 +24,13 @@ export type ThreadSummary = {
 const PARTICIPANT_LIMIT = 3
 
 /**
+ * Replies a person can read. A helper's result handed back to an agent and a card button's
+ * nudge are delivered to the agent but hidden by both clients, so they are not counted,
+ * not unread, and their author is not in the avatar stack.
+ */
+const shownInThread = sql`(${messages.metadata}->>'helper_return') IS NULL AND coalesce(${messages.metadata}->>'hidden_from_chat', 'false') <> 'true'`
+
+/**
  * Reply counts, unread counts and avatar stacks for a set of thread roots.
  * Roots with no replies are absent from the result.
  */
@@ -52,7 +59,7 @@ export async function loadThreadSummaries(
 				eq(messageThreadReads.actorId, callerId),
 			),
 		)
-		.where(inArray(messages.threadRootId, rootIds))
+		.where(and(inArray(messages.threadRootId, rootIds), shownInThread))
 		.groupBy(messages.threadRootId)
 
 	const repliers = await db
@@ -64,7 +71,7 @@ export async function loadThreadSummaries(
 		})
 		.from(messages)
 		.innerJoin(actors, eq(actors.id, messages.actorId))
-		.where(inArray(messages.threadRootId, rootIds))
+		.where(and(inArray(messages.threadRootId, rootIds), shownInThread))
 		.orderBy(messages.id)
 
 	const rootAuthorIds = [...new Set(roots.map((r) => r.actorId))]

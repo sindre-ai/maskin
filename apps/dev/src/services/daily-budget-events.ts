@@ -3,12 +3,14 @@
  * Spec: sections 5 and 7a of the "daily token budget" bet. Reporting only: nothing here gates,
  * queues or defers a session. The gate that does is services/self-start-limits.ts, which writes
  * a `session_admission` event with decision `blocked` or `deferred` (entity: the agent) when it
- * refuses a self-started run.
+ * refuses a self-started run, and where work that is not urgent is held at the workspace's daily
+ * limit: that one is a `deferred` event on the held session, and an `admitted` one with
+ * `held_for_ms` when the release pass lets it go (held-session-release.ts).
  *
  *   session_admission     One per session started through startSession(). Carries the decision
- *                         (admitted, deferred or blocked), a priority and an estimated cost. In 1a
- *                         every decision is "admitted"; the rows are the baseline 1b is judged
- *                         against. Not covered: resumeSession() (an existing row is re-driven, not
+ *                         (admitted, deferred or blocked), a priority (urgent, normal or low) and
+ *                         an estimated cost. A session held at the daily limit writes "deferred",
+ *                         then "admitted" with held_for_ms when it is let go. Not covered: resumeSession() (an existing row is re-driven, not
  *                         started), the two direct createSession() callers (workspaces.ts onboarding
  *                         kickoff, desktop-teach.ts) and voice calls (voice_sessions rows, not
  *                         sessions rows).
@@ -24,6 +26,7 @@
  */
 import type { Database } from '@maskin/db'
 import { events, sessions, workspaces } from '@maskin/db/schema'
+import type { SessionImportance } from '@maskin/shared'
 import { and, desc, eq, gte, inArray, isNull, lt, or, sql } from 'drizzle-orm'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
@@ -33,8 +36,8 @@ export const SESSION_ADMISSION_ACTION = 'session_admission'
 export const DAILY_BUDGET_SUMMARY_ACTION = 'daily_budget_summary'
 
 export type AdmissionDecision = 'admitted' | 'deferred' | 'blocked'
-/** Placeholder scale for 1a: human-facing work is urgent, everything else is normal. 1b owns the real one. */
-export type AdmissionPriority = 'urgent' | 'normal'
+/** The one importance scale: see `sessionImportance` in @maskin/shared. */
+export type AdmissionPriority = SessionImportance
 
 /** How many recent completed runs of the same agent and trigger the cost estimate looks at. */
 const ESTIMATE_SAMPLE = 20
@@ -83,6 +86,14 @@ export interface AdmissionInput {
 	/** Why the session started (config.start_reason); see self-start-limits.ts. */
 	startReason?: string
 	selfStarted?: boolean
+	/** Defaults to admitted. `deferred` is a session parked at the daily limit (it runs later). */
+	decision?: AdmissionDecision
+	/** Defaults to urgent for human-facing work and normal for the rest. */
+	importance?: AdmissionPriority
+	/** deferred: when the session comes due on its own if nothing lets it go first. */
+	heldUntil?: string
+	/** admitted after a hold: how long the session waited, in ms. */
+	heldForMs?: number
 }
 
 /** Writes the admission event for a freshly started session. Never throws. */
@@ -95,8 +106,9 @@ export async function recordSessionAdmission(db: Database, input: AdmissionInput
 			})
 			return null
 		})
-		const decision: AdmissionDecision = 'admitted'
-		const priority: AdmissionPriority = input.humanFacing ? 'urgent' : 'normal'
+		const decision: AdmissionDecision = input.decision ?? 'admitted'
+		const priority: AdmissionPriority =
+			input.importance ?? (input.humanFacing ? 'urgent' : 'normal')
 		await recordEvent(db, {
 			workspaceId: input.workspaceId,
 			actorId: input.actorId,
@@ -111,6 +123,8 @@ export async function recordSessionAdmission(db: Database, input: AdmissionInput
 				trigger_id: input.triggerId,
 				start_reason: input.startReason ?? null,
 				self_started: input.selfStarted ?? null,
+				...(input.heldUntil ? { held_until: input.heldUntil } : {}),
+				...(input.heldForMs !== undefined ? { held_for_ms: input.heldForMs } : {}),
 			},
 		})
 	} catch (err) {

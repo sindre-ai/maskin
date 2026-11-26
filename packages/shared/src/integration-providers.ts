@@ -10,6 +10,7 @@
  */
 export const MULTI_INSTALL_PROVIDERS: ReadonlySet<string> = new Set([
 	'github',
+	'gmail',
 	'linkedin-unipile',
 	'skjald',
 ])

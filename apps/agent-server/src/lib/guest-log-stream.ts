@@ -1,4 +1,5 @@
 import { StringDecoder } from 'node:string_decoder'
+import { TOKEN_SHAPE_REDACTIONS } from '@maskin/shared'
 import { logger } from './logger'
 
 /**
@@ -87,16 +88,8 @@ const REDACTIONS: ReadonlyArray<readonly [RegExp, string]> = [
 	],
 	// Credentials embedded in a URL's userinfo: https://user:pass@host
 	[/(\b[a-z][a-z0-9+.-]*:\/\/)[^/\s:@]+:[^/\s@]+@/gi, `$1${REDACTED}@`],
-	// Known token prefixes, wherever they appear (log prose, JSON, argv dumps).
-	[/\bgithub_pat_[A-Za-z0-9_]{20,}/g, REDACTED],
-	[/\bgh[pousr]_[A-Za-z0-9]{16,}/g, REDACTED],
-	[/\bsk-ant-[A-Za-z0-9._-]{16,}/g, REDACTED],
-	[/\bsk-[A-Za-z0-9]{20,}/g, REDACTED],
-	[/\bank_[A-Za-z0-9]{16,}/g, REDACTED],
-	[/\b(?:mat|mrt)_[A-Za-z0-9_-]{16,}/g, REDACTED],
-	[/\bxox[abposr]-[A-Za-z0-9-]{10,}/g, REDACTED],
-	// JWTs (Anthropic OAuth, GitHub App installation tokens, MCP bearer tokens).
-	[/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, REDACTED],
+	// Known token prefixes and JWTs, wherever they appear (shared with the dev server's log masking).
+	...TOKEN_SHAPE_REDACTIONS,
 ]
 
 /**

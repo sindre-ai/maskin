@@ -65,7 +65,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 				{/* v2 pairs the workspace name with an explicit collapse control
 				    (mockup line 62). SidebarRail still handles the drag edge; this
 				    is the discoverable affordance. It has no place on the rail
-				    itself — there the workspace tile expands the sidebar. */}
+				    itself — there the top toggle button expands the sidebar. */}
 				<div className="flex items-center gap-1">
 					<div className="min-w-0 flex-1">
 						<WorkspaceSwitcher />

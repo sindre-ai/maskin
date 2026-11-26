@@ -5,10 +5,16 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useConnectDesktop } from '@/hooks/use-desktop'
 import { type TeachingStatus, useDesktopTeaching } from '@/hooks/use-desktop-teaching'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { cn } from '@/lib/cn'
 import type { ComputerViewFlow } from '@/lib/computer-view-flow'
-import { attachClipboardShortcuts, createCopyArming, takeRemoteCopy } from '@/lib/desktop-clipboard'
+import { API_ORIGIN } from '@/lib/constants'
+import {
+	COPY_WINDOW_MS,
+	NO_NEW_COPY,
+	attachClipboardShortcuts,
+	createCopyArming,
+	takeRemoteCopy,
+} from '@/lib/desktop-clipboard'
 import { KEYBOARD_SENTINEL, SPECIAL_KEYS, diffTyped, keysymForChar } from '@/lib/desktop-keyboard'
 import type RfbClient from '@novnc/novnc/lib/rfb'
 import { Eye, Keyboard, Maximize2, MousePointer2, RefreshCw, Square } from 'lucide-react'
@@ -138,8 +144,9 @@ export function DesktopViewer({
 	const [copyArming] = useState(() => createCopyArming())
 	// The browser refused to take what the computer copied (Safari): the Copy button steps in.
 	const [copyBlocked, setCopyBlocked] = useState(false)
-	const clipboardEnabled = useFeatureFlag('computer-clipboard')
 	const [keyboardUp, setKeyboardUp] = useState(false)
+	// Runs when the computer has not answered Ctrl/Cmd+C by the end of the window.
+	const copyTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 	const keyboardRef = useRef<HTMLTextAreaElement>(null)
 	const lastTyped = useRef(KEYBOARD_SENTINEL)
 	// Set when the person hides the keyboard, so a tap on the picture does not bring it back.
@@ -172,7 +179,7 @@ export function DesktopViewer({
 				if (cancelled || !target) return
 
 				setPhase('connecting')
-				const url = new URL(path, window.location.href)
+				const url = new URL(path, API_ORIGIN || window.location.href)
 				url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
 				url.searchParams.set('ticket', ticket)
 
@@ -196,6 +203,7 @@ export function DesktopViewer({
 						if (cancelled || !result) return
 						setCopyBlocked(!result.ok)
 						if (result.ok) toast.success('Copied to your clipboard')
+						else toast.error(result.message)
 					})
 				})
 				rfb.addEventListener('disconnect', () => {
@@ -243,7 +251,7 @@ export function DesktopViewer({
 	}, [controlling, copyArming])
 
 	// Ctrl/Cmd+V and Ctrl/Cmd+C on the picture, while the person is in control.
-	const shortcutsOn = controlling && clipboardEnabled && phase === 'connected'
+	const shortcutsOn = controlling && phase === 'connected'
 	useEffect(() => {
 		const target = targetRef.current
 		if (!shortcutsOn || !target) return
@@ -251,9 +259,18 @@ export function DesktopViewer({
 			onPasteFailed: (message) => toast.error(message),
 			onCopyPressed: () => {
 				copyArming.arm()
+				clearTimeout(copyTimeout.current)
+				copyTimeout.current = setTimeout(() => {
+					if (!copyArming.waiting()) return
+					copyArming.disarm()
+					setCopyBlocked(true)
+					toast.error(NO_NEW_COPY)
+				}, COPY_WINDOW_MS + 100)
 			},
 		})
 	}, [shortcutsOn, copyArming])
+
+	useEffect(() => () => clearTimeout(copyTimeout.current), [])
 
 	const busy = phase === 'starting' || phase === 'connecting'
 	const failed = phase === 'disconnected' || phase === 'error'
@@ -270,7 +287,7 @@ export function DesktopViewer({
 	const typing = touch && controlling && phase === 'connected'
 	// A phone has no Ctrl/Cmd keys, so it keeps both buttons. Elsewhere the keys do the job and
 	// Copy appears only when the browser refused to take what the computer copied.
-	const clipboardButtons = controlling && clipboardEnabled && (touch || copyBlocked)
+	const clipboardButtons = controlling && (touch || copyBlocked)
 
 	const typeIntoComputer = (e: React.FormEvent<HTMLTextAreaElement>) => {
 		const area = e.currentTarget

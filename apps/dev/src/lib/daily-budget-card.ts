@@ -118,6 +118,8 @@ export interface BudgetCardInput {
 	approximate: boolean
 	/** A line about an older target that could not be converted, when there is one. */
 	note?: string
+	/** What is held for later. Left out, the card has no day plan. */
+	plan?: DayPlan
 }
 
 export interface BudgetCardText {
@@ -168,13 +170,116 @@ export function forecastLines(f: MonthForecast, approximate: boolean): string[] 
 	return lines
 }
 
+/** One line of the day plan. `estimate` is a percent of the plan, or null for "Estimate unknown". */
+export interface PlanItem {
+	title: string
+	estimate: number | null
+}
+
+/** What is waiting, as the card reads it. Held items are in the order they will start. */
+export interface DayPlanInput {
+	running: PlanItem[]
+	held: PlanItem[]
+	/** Percent of the plan spent so far today. */
+	spentToday: number
+	/** Percent of the plan a day may use before new work stops (target times the stop share). */
+	stopAt: number
+	/** True when yesterday used up its day, so what waits now waited for that. */
+	stoppedYesterday: boolean
+}
+
+export interface DayPlan {
+	running: PlanItem[]
+	waiting: PlanItem[]
+	wontFit: PlanItem[]
+	/** Today's spend has already reached the stop point: no new work starts today. */
+	stoppedToday: boolean
+	stoppedYesterday: boolean
+}
+
+/**
+ * Splits the held work into what fits in today's room and what does not. Room is what is left
+ * under the stop point. Items go in start order; an item with a known estimate fits while the
+ * running total stays inside the room, and an item with an unknown estimate counts as fitting as
+ * long as there is any room, because nothing says it will not.
+ */
+export function planDay(input: DayPlanInput): DayPlan {
+	const room = input.stopAt - input.spentToday
+	const stoppedToday = room <= 0
+	const waiting: PlanItem[] = []
+	const wontFit: PlanItem[] = []
+	let used = 0
+	for (const item of input.held) {
+		if (stoppedToday || (item.estimate !== null && used + item.estimate > room)) {
+			wontFit.push(item)
+			continue
+		}
+		used += item.estimate ?? 0
+		waiting.push(item)
+	}
+	return {
+		running: input.running,
+		waiting,
+		wontFit,
+		stoppedToday,
+		stoppedYesterday: input.stoppedYesterday,
+	}
+}
+
+/** How many items one list shows before it says "and N more". */
+export const PLAN_LIST_LIMIT = 5
+
+function itemLine(item: PlanItem): string {
+	return `- ${item.title}: ${item.estimate === null ? 'Estimate unknown' : `about ${formatPercent(item.estimate)} of plan`}`
+}
+
+function listBlock(heading: string, items: PlanItem[]): string[] {
+	if (items.length === 0) return []
+	const shown = items.slice(0, PLAN_LIST_LIMIT).map(itemLine)
+	const more = items.length - shown.length
+	return [`${heading}:\n${[...shown, ...(more > 0 ? [`- and ${more} more`] : [])].join('\n')}`]
+}
+
+/**
+ * The day plan lines for the card: what runs, what waits and what will not fit, then one plain
+ * sentence on where the day stands. Empty when nothing is held, so a card with no held work reads
+ * as it did before.
+ */
+export function dayPlanLines(plan: DayPlan): string[] {
+	const heldCount = plan.waiting.length + plan.wontFit.length
+	if (heldCount === 0) return []
+	const lines = [
+		...listBlock('Running now', plan.running),
+		...listBlock('Waiting for room', plan.waiting),
+		...listBlock("Won't fit today", plan.wontFit),
+	]
+	if (plan.stoppedToday) {
+		lines.push(
+			`New work has stopped for today. ${plural(plan.wontFit.length, 'item', 'items')} will not run until tomorrow. Nothing failed. Urgent work always runs at once.`,
+		)
+	} else if (plan.wontFit.length > 0) {
+		lines.push(
+			`Close to the stop point. ${plural(plan.wontFit.length, 'item', 'items')} will not fit today. Nothing failed.`,
+		)
+	} else {
+		lines.push(
+			`On track. ${plural(plan.waiting.length, 'item waits', 'items wait')} for room and none are left out.`,
+		)
+	}
+	if (plan.stoppedYesterday) {
+		lines.push('Yesterday ran up to the stop point, so this work waited. Nothing failed.')
+	}
+	return lines
+}
+
 export function buildBudgetCard(input: BudgetCardInput): BudgetCardText {
-	const { target, yesterday, today, forecast, approximate, note } = input
+	const { target, yesterday, today, forecast, approximate, note, plan } = input
 	return {
 		headline: yesterdayLine(yesterday),
 		rationale: [
 			todayLine(today, target),
 			...forecastLines(forecast, approximate),
+			...(plan ? dayPlanLines(plan) : []),
 			...(note ? [note] : []),
 		].join('\n\n'),
 	}
@@ -192,7 +297,7 @@ export function buildBudgetCard(input: BudgetCardInput): BudgetCardText {
 export function readBudgetSettings(
 	settings: unknown,
 	capCents: number | null,
-): { target: BudgetTarget; timezone: string; note: string | null } | null {
+): { target: BudgetTarget; timezone: string; stopShare: number; note: string | null } | null {
 	const parsed = storedDailyBudgetSchema.safeParse(
 		(settings as { daily_budget?: unknown } | null)?.daily_budget,
 	)
@@ -201,6 +306,7 @@ export function readBudgetSettings(
 	return {
 		target: { amount: budget.amount },
 		timezone: budget.timezone,
+		stopShare: budget.stop_share,
 		note:
 			earlier && !earlier.converted
 				? `Your earlier daily target could not be turned into a percent of your plan, so this card uses ${formatPercent(budget.amount)} a day. Set a percent in Settings, Billing.`

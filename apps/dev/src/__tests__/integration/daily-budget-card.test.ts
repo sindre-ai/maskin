@@ -4,10 +4,12 @@
  * card per owner), a deleted card is not sent again, the next local day sends again, and a
  * workspace with no target gets nothing.
  */
-import { events, notifications } from '@maskin/db/schema'
+import { events, notifications, sessions } from '@maskin/db/schema'
 import { FOR_YOU_KIND } from '@maskin/shared'
 import { and, eq, sql } from 'drizzle-orm'
+import { recordEvent } from '../../lib/events/record-event'
 import { DailyBudgetCardScheduler } from '../../services/daily-budget-card-scheduler'
+import { SESSION_ADMISSION_ACTION } from '../../services/daily-budget-events'
 import {
 	ensureWorkspaceMember,
 	insertActor,
@@ -199,5 +201,97 @@ describe('daily budget card scheduler', () => {
 		expect(created).toHaveLength(1)
 		// Guards the claim query: it reads this shape.
 		expect(created[0]?.data).toMatchObject({ metadata: { source: 'daily_budget_card' } })
+	})
+
+	describe('day plan', () => {
+		async function hold(
+			workspaceId: string,
+			agentId: string,
+			ownerId: string,
+			triggerId: string | undefined,
+			priority: 'normal' | 'low',
+			createdAt: Date,
+		) {
+			const held = await insertSession(db, workspaceId, agentId, ownerId, {
+				status: 'starting',
+				startedAt: null,
+				triggerId,
+				createdAt,
+			})
+			await recordEvent(db, {
+				workspaceId,
+				actorId: agentId,
+				action: SESSION_ADMISSION_ACTION,
+				entityType: 'session',
+				entityId: held?.id as string,
+				data: { decision: 'deferred', priority, estimated_cost_usd: null },
+			})
+			return held
+		}
+
+		it('lists held work with estimates, and what will not fit, on the same card', async () => {
+			const { ownerId, workspaceId, agentId } = await setup({ daily_budget: target, billing: plan })
+			const trigger = await insertTrigger(db, workspaceId, ownerId, agentId, { name: 'Sweep' })
+			// The median of the agent's recent runs on this trigger is $1, 5% of a $20 plan.
+			for (let i = 0; i < 3; i++) {
+				await insertSession(db, workspaceId, agentId, ownerId, {
+					status: 'completed',
+					triggerId: trigger?.id,
+					totalCostUsd: '1.000000',
+					createdAt: yesterdayNoon,
+					completedAt: yesterdayNoon,
+				})
+			}
+			await hold(
+				workspaceId,
+				agentId,
+				ownerId,
+				trigger?.id,
+				'low',
+				new Date('2026-03-09T10:00:00Z'),
+			)
+			await hold(
+				workspaceId,
+				agentId,
+				ownerId,
+				trigger?.id,
+				'normal',
+				new Date('2026-03-09T11:00:00Z'),
+			)
+			await hold(
+				workspaceId,
+				agentId,
+				ownerId,
+				undefined,
+				'normal',
+				new Date('2026-03-09T12:00:00Z'),
+			)
+
+			await new DailyBudgetCardScheduler(db).tick(day1)
+			const rows = await cards(workspaceId)
+			expect(rows).toHaveLength(1)
+			const content = rows[0]?.content as string
+			// The 5% day has room for one 5% item: the first normal one. The unknown one still fits.
+			expect(content).toContain('Waiting for room:\n- Researcher, Sweep: about 5% of plan')
+			expect(content).toContain('- Researcher: Estimate unknown')
+			expect(content).toContain("Won't fit today:\n- Researcher, Sweep: about 5% of plan")
+			expect(content).toContain(
+				'Close to the stop point. 1 item will not fit today. Nothing failed.',
+			)
+		})
+
+		it('does not list a held session that has started, and adds nothing when nothing is held', async () => {
+			const { ownerId, workspaceId, agentId } = await setup({ daily_budget: target, billing: plan })
+			const started = await hold(workspaceId, agentId, ownerId, undefined, 'normal', yesterdayNoon)
+			await db
+				.update(sessions)
+				.set({ status: 'running', startedAt: yesterdayNoon })
+				.where(eq(sessions.id, started?.id as string))
+
+			await new DailyBudgetCardScheduler(db).tick(day1)
+			const [row] = await cards(workspaceId)
+			expect(row?.content).not.toContain('Waiting for room')
+			expect(row?.content).not.toContain('Running now')
+		})
 	})
 })

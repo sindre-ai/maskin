@@ -2,265 +2,267 @@ import { describe, expect, it, vi } from 'vitest'
 import {
 	STEP_LESSON,
 	buildSummaryEmail,
+	digestPreheader,
+	digestSubject,
 	emailRole,
 	pickNextStep,
 } from '../../services/briefing-email-text'
 import type { NextStepFacts } from '../../services/briefing-email-text'
-import type { BriefingText } from '../../services/briefing-push-scheduler'
+import type {
+	DigestData,
+	DigestUpdateRow,
+	DigestWaitingRow,
+} from '../../services/digest-email-data'
+import { MAIN_BUTTON } from '../../services/email-layout'
 
-const summary = (over: Partial<BriefingText> = {}): BriefingText => ({
+const NOW = new Date('2026-03-10T08:00:00Z')
+const at = (hhmm: string) => new Date(`2026-03-10T${hhmm}:00Z`)
+
+const waitingRow = (over: Partial<DigestWaitingRow> = {}): DigestWaitingRow => ({
 	workspaceId: 'w1',
-	title: '2 things need you',
-	body: "Ada finished 'Draft the launch note'",
-	waiting: 2,
-	finished: 1,
-	topObjectId: 'o1',
-	workspaceName: 'Acme',
-	topHeadline: 'Approve the launch email',
-	finishedRuns: [{ agentName: 'Ada', objectTitle: 'Draft the launch note' }],
-	waitingElsewhere: 0,
-	multiWorkspace: false,
+	title: 'Approve the launch plan',
+	line: 'Strategist needs your yes before Friday.',
+	typeLabel: 'Bet',
+	typeKind: 'bet',
+	at: at('07:12'),
+	dueAt: null,
+	path: '/w1/objects/o1',
+	buttonLabel: 'Review',
+	...over,
+})
+const updateRow = (over: Partial<DigestUpdateRow> = {}): DigestUpdateRow => ({
+	workspaceId: 'w1',
+	title: 'Three customers ask for SSO',
+	line: 'Strategist mentioned you',
+	at: at('06:05'),
+	path: '/w1/objects/o2',
+	...over,
+})
+const digest = (over: Partial<DigestData> = {}): DigestData => ({
+	waitingCount: 2,
+	waiting: [
+		waitingRow(),
+		waitingRow({
+			title: 'Which sender?',
+			line: '2 new messages',
+			typeLabel: 'Chat',
+			typeKind: 'chat',
+			path: '/w1/chats/c1',
+			buttonLabel: 'Reply',
+		}),
+	],
+	groups: [
+		{ kind: 'objects', count: 2, rows: [updateRow(), updateRow({ title: 'Pick a sender' })] },
+		{
+			kind: 'flows',
+			count: 1,
+			rows: [updateRow({ title: 'Weekly digest', line: 'Finished a run', path: '/w1/loops/f1' })],
+		},
+		{
+			kind: 'chats',
+			count: 1,
+			rows: [updateRow({ title: 'Design Studio', line: '1 new message', path: '/w1/chats/c2' })],
+		},
+	],
+	updatesCount: 4,
+	anchorWorkspaceId: 'w1',
+	...over,
+})
+const input = (over: Record<string, unknown> = {}) => ({
+	digest: digest(),
+	step: 'daily' as const,
+	appUrl: 'https://maskin.test',
+	timezone: 'UTC',
+	now: NOW,
+	sendTime: '07:30',
+	rhythm: null,
+	buttonUrl: 'https://maskin.test/w1?surface=email&block=summary',
+	stopUrl: 'https://maskin.test/api/email/stop?token=abc',
+	nextStep: null,
 	...over,
 })
 
-const run = (n: number) => ({ agentName: 'Ada', objectTitle: `Task ${n}` })
-
-const urls = {
-	nextStep: null as string | null,
-	buttonUrl: 'https://maskin.io/w1/objects/o1?surface=email',
-	stopUrl: 'https://maskin.io/email/stop?token=abc',
-}
+describe('digestSubject', () => {
+	it('covers both parts, only updates and only waiting items', () => {
+		expect(digestSubject(2, 5)).toBe('2 need you, 5 other updates')
+		expect(digestSubject(1, 1)).toBe('1 needs you, 1 other update')
+		expect(digestSubject(0, 5)).toBe('5 updates')
+		expect(digestSubject(0, 1)).toBe('1 update')
+		expect(digestSubject(2, 0)).toBe('2 need you')
+		expect(digestSubject(1, 0)).toBe('1 needs you')
+	})
+})
 
 describe('buildSummaryEmail', () => {
-	it('uses the push title as subject and has text, html, one button and the stop link', () => {
-		const mail = buildSummaryEmail({ summary: summary(), step: 'daily', ...urls })
-		expect(mail.subject).toBe('2 things need you')
-		expect(mail.text).toContain("Ada finished 'Draft the launch note'")
-		expect(mail.text).toContain('Starting with: Approve the launch email')
-		expect(mail.text).toContain(urls.buttonUrl)
-		expect(mail.text).toContain(urls.stopUrl)
-		expect(mail.html).toContain(`href="${urls.buttonUrl}"`)
-		expect(mail.html).toContain(`href="${urls.stopUrl}"`)
-		expect(mail.html.match(/display: inline-block/g)).toHaveLength(1)
+	it('has the split subject, the two parts, one Open Maskin button and the stop link', () => {
+		const mail = buildSummaryEmail(input())
+		expect(mail.subject).toBe('2 need you, 4 other updates')
+		expect(mail.text).toContain('Needs you (2)')
+		expect(mail.text).toContain('Updates (4)')
+		expect(mail.text).toContain('Objects (2)')
+		expect(mail.text).toContain('Flows (1)')
+		expect(mail.text).toContain('Chats (1)')
+		expect(mail.text).toContain('Open Maskin: https://maskin.test/w1?surface=email&block=summary')
+		expect(mail.text).toContain('Stop these emails: https://maskin.test/api/email/stop?token=abc')
+		expect(mail.html).toContain('<h1')
+		expect(mail.html.match(/>Open Maskin</g)).toHaveLength(1)
+		expect(mail.html).toContain('Stop these emails')
+		// The old body is gone.
+		for (const old of ['Done for you', 'Waiting on you', 'things need you', 'Open it']) {
+			expect(mail.text).not.toContain(old)
+			expect(mail.html).not.toContain(old)
+		}
 	})
 
 	it('sets the one-click unsubscribe headers to the stop link', () => {
-		const mail = buildSummaryEmail({ summary: summary(), step: 1, ...urls })
-		expect(mail.headers).toEqual({
-			'List-Unsubscribe': `<${urls.stopUrl}>`,
-			'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
-		})
+		const { headers } = buildSummaryEmail(input())
+		expect(headers['List-Unsubscribe']).toBe('<https://maskin.test/api/email/stop?token=abc>')
+		expect(headers['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click')
 	})
 
-	it('gives steps 1, 2 and 3 their own lesson and the daily mail none', () => {
-		const text = (step: 1 | 2 | 3 | 'daily') =>
-			buildSummaryEmail({ summary: summary(), step, ...urls }).text
-		const lessons = Object.values(STEP_LESSON)
-		expect(new Set(lessons).size).toBe(3)
-		expect(text(1)).toContain(STEP_LESSON[1])
-		expect(text(2)).toContain(STEP_LESSON[2])
-		expect(text(3)).toContain(STEP_LESSON[3])
+	it('gives each waiting item its own button: Review for a card, Reply for a chat, both tagged as email', () => {
+		const { html, text } = buildSummaryEmail(input())
+		expect(html).toContain('>Review</a>')
+		expect(html).toContain('>Reply</a>')
+		expect(html).toContain(
+			'href="https://maskin.test/w1/objects/o1?surface=email&amp;block=waiting"',
+		)
+		expect(html).toContain('href="https://maskin.test/w1/chats/c1?surface=email&amp;block=waiting"')
+		expect(text).toContain('Reply: https://maskin.test/w1/chats/c1?surface=email&block=waiting')
+		// Update rows link to their object, flow or chat and have no button.
+		expect(html).toContain('href="https://maskin.test/w1/loops/f1?surface=email&amp;block=updates"')
+		expect(html).toContain('href="https://maskin.test/w1/chats/c2?surface=email&amp;block=updates"')
+	})
+
+	it('shows a due time before an asked time, with the type label', () => {
+		const { text } = buildSummaryEmail(
+			input({
+				digest: digest({
+					waiting: [waitingRow({ dueAt: new Date('2026-03-11T10:00:00Z') }), waitingRow()],
+				}),
+			}),
+		)
+		expect(text).toContain('[Bet, Due Wed 10:00]')
+		expect(text).toContain('[Bet, Asked 07:12]')
+	})
+
+	it('folds the waiting items past the shown ones into one link', () => {
+		const { text, html } = buildSummaryEmail(input({ digest: digest({ waitingCount: 20 }) }))
+		expect(text).toContain('18 more waiting for you in Maskin')
+		expect(html).toContain('18 more waiting for you in Maskin')
+		expect(buildSummaryEmail(input()).text).not.toContain('more waiting')
+	})
+
+	it('folds a group past its five rows into "N more in Maskin"', () => {
+		const rows = Array.from({ length: 5 }, (_, i) => updateRow({ title: `Row ${i}` }))
+		const { text } = buildSummaryEmail(
+			input({
+				digest: digest({
+					groups: [{ kind: 'objects', count: 9, rows }],
+					updatesCount: 9,
+				}),
+			}),
+		)
+		expect(text).toContain('Objects (9)')
+		expect(text).toContain('4 more in Maskin')
+		expect(text).toContain('Updates (9)')
+	})
+
+	it('leaves Needs you out when nothing waits, and Updates out when there are none', () => {
+		const updatesOnly = buildSummaryEmail(
+			input({ digest: digest({ waitingCount: 0, waiting: [] }) }),
+		)
+		expect(updatesOnly.subject).toBe('4 updates')
+		expect(updatesOnly.text).not.toContain('Needs you')
+		expect(updatesOnly.html).not.toContain('Needs you')
+
+		const waitingOnly = buildSummaryEmail(
+			input({ digest: digest({ groups: [], updatesCount: 0 }) }),
+		)
+		expect(waitingOnly.subject).toBe('2 need you')
+		expect(waitingOnly.text).not.toContain('Updates')
+		expect(waitingOnly.html).not.toContain('Updates')
+	})
+
+	it('leaves a group out when it has no rows', () => {
+		const { text } = buildSummaryEmail(
+			input({
+				digest: digest({
+					groups: [{ kind: 'chats', count: 1, rows: [updateRow({ title: 'Design Studio' })] }],
+					updatesCount: 1,
+				}),
+			}),
+		)
+		expect(text).toContain('Chats (1)')
+		expect(text).not.toContain('Objects')
+		expect(text).not.toContain('Flows')
+	})
+
+	it('gives steps 1, 2 and 3 their own lesson, below the list and above the button', () => {
 		for (const step of [1, 2, 3] as const) {
-			const others = lessons.filter((l) => l !== STEP_LESSON[step])
-			for (const other of others) expect(text(step)).not.toContain(other)
+			const { text, html } = buildSummaryEmail(
+				input({ step, nextStep: 'Open the card at the top first.' }),
+			)
+			expect(text).toContain(STEP_LESSON[step])
+			expect(html).toContain(STEP_LESSON[step].slice(0, 30))
+			expect(text.indexOf('Chats (1)')).toBeLessThan(text.indexOf('Next step'))
+			expect(text.indexOf('Next step')).toBeLessThan(text.indexOf(STEP_LESSON[step]))
+			expect(text.indexOf(STEP_LESSON[step])).toBeLessThan(text.indexOf('Open Maskin:'))
 		}
-		const daily = text('daily')
-		for (const lesson of lessons) expect(daily).not.toContain(lesson)
+		const daily = buildSummaryEmail(input()).text
+		for (const lesson of Object.values(STEP_LESSON)) expect(daily).not.toContain(lesson)
 	})
 
-	it('carries the same lesson in the html part', () => {
-		const html = buildSummaryEmail({ summary: summary(), step: 2, ...urls }).html
-		expect(html).toContain('A flow is a team of agents')
-		expect(html).not.toContain('A card is something')
+	it('names the send time and says one email a day, or a week', () => {
+		expect(buildSummaryEmail(input()).text).toContain(
+			'One email a day instead of one per notification. It lists what is still unread when it goes out, at 07:30.',
+		)
+		expect(buildSummaryEmail(input({ rhythm: 'weekly' })).html).toContain('One email a week')
 	})
 
-	it('has the three parts: done for you, waiting on you, next step', () => {
-		const mail = buildSummaryEmail({
-			summary: summary(),
-			step: 'daily',
-			...urls,
-			nextStep: 'Open the card at the top first.',
-		})
-		const at = (needle: string) => mail.text.indexOf(needle)
-		expect(at('Done for you')).toBeGreaterThan(-1)
-		expect(at('Done for you')).toBeLessThan(at('Waiting on you'))
-		expect(at('Waiting on you')).toBeLessThan(at('Next step'))
-		expect(mail.text).toContain('- Open the card at the top first.')
-		expect(mail.html).toContain('Open the card at the top first.')
+	it("prints times in the person's timezone", () => {
+		const { text } = buildSummaryEmail(input({ timezone: 'Europe/Copenhagen' }))
+		expect(text).toContain('Asked 08:12') // 07:12 UTC is 08:12 in Copenhagen in March
 	})
 
-	it('lists up to 5 finished runs, then "and N more", and leaves out empty parts', () => {
-		const runs = [1, 2, 3, 4, 5].map(run)
-		const mail = buildSummaryEmail({
-			summary: summary({ finished: 8, finishedRuns: runs, waiting: 0, topHeadline: null }),
-			step: 'daily',
-			...urls,
-		})
-		expect(mail.text).toContain("- Ada finished 'Task 1'")
-		expect(mail.text).toContain("- Ada finished 'Task 5'")
-		expect(mail.text).toContain('- and 3 more')
-		expect(mail.text).not.toContain('Waiting on you')
-		expect(mail.text).not.toContain('Next step')
+	it('has a hidden preview that leads with the first waiting item and counts the rest', () => {
+		expect(digestPreheader(digest())).toBe('Approve the launch plan, and 5 more unread.')
+		expect(digestPreheader(digest({ waitingCount: 0, waiting: [] }))).toBe(
+			'Three customers ask for SSO, and 3 more unread.',
+		)
+		expect(
+			digestPreheader(
+				digest({ groups: [], updatesCount: 0, waitingCount: 1, waiting: [waitingRow()] }),
+			),
+		).toBe('Approve the launch plan')
+		const { html } = buildSummaryEmail(input())
+		expect(html).toContain('Approve the launch plan, and 5 more unread.')
 	})
 
-	it('groups finished runs by flow: name, number finished, latest title', () => {
-		const mail = buildSummaryEmail({
-			summary: summary({
-				finished: 4,
-				waiting: 0,
-				topHeadline: null,
-				finishedRuns: [],
-				finishedFlows: [
-					{ flowName: 'Weekly research', runs: 3, latestTitle: 'Competitor update' },
-					{ flowName: 'Support', runs: 1, latestTitle: null },
-				],
+	it('escapes text that came from a card, a chat or an object', () => {
+		const { html } = buildSummaryEmail(
+			input({
+				digest: digest({
+					waiting: [waitingRow({ title: '<script>alert(1)</script>', line: '<b>x</b>' })],
+				}),
 			}),
-			step: 'daily',
-			...urls,
-		})
-		expect(mail.text).toContain("- Weekly research: 3 runs finished, latest 'Competitor update'")
-		expect(mail.text).toContain('- Support: 1 run finished')
-		// Only that runs finished: no result or success wording, and no plain "N agent runs" line.
-		expect(mail.text).not.toMatch(/succe|fail|result/i)
-		expect(mail.text).not.toContain('agent run')
+		)
+		expect(html).not.toContain('<script>alert(1)</script>')
+		expect(html).not.toContain('<b>x</b>')
+		expect(html).toContain('&lt;script&gt;')
 	})
 
-	it('names up to 3 flows, then "and N more flows"', () => {
-		const flows = [1, 2, 3, 4, 5].map((n) => ({
-			flowName: `Flow ${n}`,
-			runs: 1,
-			latestTitle: null,
-		}))
-		const mail = buildSummaryEmail({
-			summary: summary({ finished: 5, finishedRuns: [], finishedFlows: flows, waiting: 0 }),
-			step: 'daily',
-			...urls,
-		})
-		expect(mail.text).toContain('- Flow 3: 1 run finished')
-		expect(mail.text).not.toContain('Flow 4')
-		expect(mail.text).toContain('- and 2 more flows')
+	it('takes the button colour from the one place MAIN_BUTTON', () => {
+		const { html } = buildSummaryEmail(input())
+		expect(html).toContain(`bgcolor="${MAIN_BUTTON.bg}"`)
+		expect(html).toContain(MAIN_BUTTON.darkBg)
 	})
 
-	it('keeps runs that tie to no flow in the plain list, with their own "and N more"', () => {
-		const mail = buildSummaryEmail({
-			summary: summary({
-				finished: 10,
-				waiting: 0,
-				finishedRuns: [1, 2, 3, 4, 5].map(run),
-				finishedFlows: [{ flowName: 'Weekly research', runs: 3, latestTitle: 'Brief' }],
-			}),
-			step: 'daily',
-			...urls,
-		})
-		expect(mail.text).toContain("- Weekly research: 3 runs finished, latest 'Brief'")
-		expect(mail.text).toContain("- Ada finished 'Task 1'")
-		// 10 finished, 3 in the flow, 5 listed: 2 more, not 5.
-		expect(mail.text).toContain('- and 2 more')
-		expect(mail.text.indexOf('Weekly research')).toBeLessThan(mail.text.indexOf('Task 1'))
-	})
-
-	it('says "N agent runs finished" only for runs that tie to no flow', () => {
-		const mail = buildSummaryEmail({
-			summary: summary({
-				finished: 5,
-				waiting: 0,
-				finishedRuns: [],
-				finishedFlows: [{ flowName: 'Weekly research', runs: 3, latestTitle: null }],
-			}),
-			step: 'daily',
-			...urls,
-		})
-		expect(mail.text).toContain('- 2 agent runs finished')
-	})
-
-	it('names the workspace and the others when the person is in several', () => {
-		const mail = buildSummaryEmail({
-			summary: summary({ multiWorkspace: true, waitingElsewhere: 2 }),
-			step: 'daily',
-			...urls,
-		})
-		expect(mail.text).toContain('Waiting on you in Acme')
-		expect(mail.text).toContain('2 more in other workspaces')
-	})
-
-	it('labels the button by what waits', () => {
-		const waiting = buildSummaryEmail({ summary: summary(), step: 'daily', ...urls })
-		expect(waiting.html).toContain('>Open it</a>')
-		const finishedOnly = buildSummaryEmail({
-			summary: summary({ waiting: 0, topObjectId: null }),
-			step: 'daily',
-			...urls,
-		})
-		expect(finishedOnly.html).toContain('>Open Maskin</a>')
-	})
-
-	it('says the count once: the title is the headline, not also the first bullet', () => {
-		const mail = buildSummaryEmail({ summary: summary(), step: 'daily', ...urls })
-		expect(mail.text.match(/2 things need you/g)).toHaveLength(1)
-		expect(mail.text).toContain('Waiting on you\n- Starting with: Approve the launch email')
-		// The html shows the number big, with its label beside it, and no second copy of the title.
-		expect(mail.html).not.toContain('2 things need you')
-		expect(mail.html).toContain('>2</td>')
-		expect(mail.html).toContain('>things need you</td>')
-	})
-
-	it('leaves the waiting part out when the title already says all there is', () => {
-		const mail = buildSummaryEmail({
-			summary: summary({ topHeadline: null, waitingElsewhere: 0 }),
-			step: 'daily',
-			...urls,
-		})
-		expect(mail.text).not.toContain('Waiting on you')
-	})
-
-	it('cuts the top card headline at a word boundary, never mid-word', () => {
-		const headline = `${'Approve the launch plan for '.repeat(5)}and give the go-ahead today`
-		const mail = buildSummaryEmail({
-			summary: summary({ topHeadline: headline }),
-			step: 'daily',
-			...urls,
-		})
-		const line = mail.text.split('\n').find((l) => l.startsWith('- Starting with: ')) as string
-		expect(line.endsWith('…')).toBe(true)
-		const shown = line.slice('- Starting with: '.length, -1)
-		expect(shown.length).toBeLessThanOrEqual(89)
-		expect(headline.startsWith(`${shown} `)).toBe(true)
-	})
-
-	it('has a hidden preview line that is not the subject', () => {
-		const mail = buildSummaryEmail({ summary: summary(), step: 'daily', ...urls })
-		const preview = mail.html.match(/display: none[^>]*>([^<]*)</)?.[1] as string
-		expect(preview).toContain('Starting with: Approve the launch email')
-		expect(preview).not.toContain(mail.subject)
-	})
-
-	it('shows only finished runs, as a tick list, when nothing waits', () => {
-		const mail = buildSummaryEmail({
-			summary: summary({
-				title: "Ada finished 'Task 1'",
-				finished: 1,
-				waiting: 0,
-				topHeadline: null,
-				finishedRuns: [run(1)],
-			}),
-			step: 'daily',
-			...urls,
-		})
-		expect(mail.html).toContain('Done for you')
-		expect(mail.html).toContain('&#10003;')
-		expect(mail.html).not.toContain('Waiting on you')
-		expect(mail.html).toContain('>Open Maskin</a>')
-	})
-
-	it('escapes text that came from a card headline', () => {
-		const mail = buildSummaryEmail({
-			summary: summary({ topHeadline: '<script>alert(1)</script> & more' }),
-			step: 'daily',
-			...urls,
-		})
-		expect(mail.html).not.toContain('<script>')
-		expect(mail.html).toContain('&lt;script&gt;')
-		expect(mail.html).toContain('&amp; more')
+	it('carries a next-step line when there is one, and none when there is not', () => {
+		expect(
+			buildSummaryEmail(input({ nextStep: 'Open the card at the top first.' })).text,
+		).toContain('Next step\n- Open the card at the top first.')
+		expect(buildSummaryEmail(input()).text).not.toContain('Next step')
 	})
 })
 

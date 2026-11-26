@@ -30,7 +30,13 @@ export function ObjectPreviewMeta({ preview }: ObjectPreviewMetaProps) {
 	return (
 		<div className="flex flex-col gap-1">
 			{/* What the draft answers, so the text below is read in context. Not sent. */}
-			{preview.context ? <ReplyContext key={preview.context} text={preview.context} /> : null}
+			{preview.context ? (
+				<ReplyContext
+					key={preview.context}
+					text={preview.context}
+					label={to[0]?.name ? `${to[0].name} wrote` : 'In reply to'}
+				/>
+			) : null}
 			{rows.length > 0 ? (
 				<dl className="flex flex-col gap-0.5 text-[12.5px]">
 					{rows.map((row) => (
@@ -53,9 +59,10 @@ export function ObjectPreviewMeta({ preview }: ObjectPreviewMetaProps) {
 /**
  * The message a draft answers, clamped to five lines. A reply is approved after reading what it
  * answers, so a longer message opens in full with Show more; the toggle only appears when the
- * quote is actually cut off.
+ * quote is actually cut off. The label names who wrote it (the draft goes back to them), or
+ * says "In reply to" when no recipient is filed.
  */
-function ReplyContext({ text }: { text: string }) {
+function ReplyContext({ text, label }: { text: string; label: string }) {
 	const quoteRef = useRef<HTMLQuoteElement>(null)
 	const [expanded, setExpanded] = useState(false)
 	const [clamped, setClamped] = useState(false)
@@ -68,7 +75,7 @@ function ReplyContext({ text }: { text: string }) {
 
 	return (
 		<figure className="mb-1">
-			<figcaption className="text-[11px] text-muted-foreground">In reply to</figcaption>
+			<figcaption className="text-[11px] text-muted-foreground">{label}</figcaption>
 			<blockquote
 				ref={quoteRef}
 				className={`whitespace-pre-wrap border-l-2 border-border pl-2 text-[12.5px] text-muted-foreground ${expanded ? '' : 'line-clamp-5'}`}

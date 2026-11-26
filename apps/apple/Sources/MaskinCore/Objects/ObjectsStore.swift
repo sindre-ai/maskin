@@ -675,10 +675,11 @@ public final class ObjectsStore {
 		return moved.undo.isEmpty ? nil : moved.undo
 	}
 
-	/// The status Done would move this object to, or nil to hide the action.
+	/// The status Done would move this object to, or nil to hide the action. Nil too once the object
+	/// is in any finished status: Done would move a `done` task back to `validated`.
 	public func doneTarget(for object: WorkObject) -> String? {
-		let target = StatusFlow.doneTarget(in: directory.schema.statuses(for: object.type))
-		return target == object.status ? nil : target
+		guard StatusCategory.of(object.status) != .done else { return nil }
+		return StatusFlow.doneTarget(in: directory.schema.statuses(for: object.type))
 	}
 
 	/// Sets each object to `status` (bulk) and remembers where each came from.

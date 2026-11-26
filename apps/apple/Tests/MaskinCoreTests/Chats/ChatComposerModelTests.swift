@@ -165,6 +165,19 @@ struct ChatComposerModelTests {
 		#expect(taken?.metadata?.attachments?.first?.sizeBytes == 10)
 	}
 
+	@Test("the chip takes the real name and type of what was prepared")
+	func chipAdoptsPreparedFile() async {
+		let uploader = FakeUploader()
+		let m = model(uploader)
+		m.attach(
+			name: "Photo 19-11-2026, 08.38.jpg", mimeType: "image/jpeg",
+			prepare: { PreparedChatFile(name: "Video 19-11-2026, 08.38.mov", mimeType: "video/quicktime", data: Data(count: 10)) })
+		#expect(await eventually { m.attachments.first?.ref != nil })
+		#expect(m.attachments.first?.name == "Video 19-11-2026, 08.38.mov")
+		#expect(m.attachments.first?.mimeType == "video/quicktime")
+		#expect(m.attachments.first?.isImage == false)
+	}
+
 	@Test("a failed upload blocks sending until it is retried or removed")
 	func failedUpload() async {
 		let uploader = FakeUploader()
@@ -185,7 +198,7 @@ struct ChatComposerModelTests {
 		#expect(m.canSend)
 	}
 
-	@Test("a file over the 1 GB cap fails before uploading")
+	@Test("a file over the 5 GB cap fails before uploading")
 	func oversize() async {
 		let uploader = FakeUploader()
 		let m = model(uploader)
@@ -201,7 +214,7 @@ struct ChatComposerModelTests {
 		#expect(await eventually { m.hasFailedAttachment })
 		#expect(await uploader.uploaded.isEmpty)
 		#expect(await uploader.streamed.isEmpty)
-		if case .failed(let reason)? = m.attachments.first?.state { #expect(reason.contains("1 GB")) }
+		if case .failed(let reason)? = m.attachments.first?.state { #expect(reason.contains("5 GB")) }
 	}
 
 	@Test("a 200 MB file on disk uploads from the file and the temp copy is removed afterwards")
@@ -393,18 +406,27 @@ struct ChatDraftStoreTests {
 struct ComposerLastSlotTests {
 	@Test("empty shows the mic, content shows send, busy and empty shows stop")
 	func rule() {
-		#expect(ComposerLastSlot.resolve(hasContent: false, busy: false, showsMic: true, showsSend: true) == .mic)
-		#expect(ComposerLastSlot.resolve(hasContent: true, busy: false, showsMic: true, showsSend: true) == .send)
-		#expect(ComposerLastSlot.resolve(hasContent: false, busy: true, showsMic: true, showsSend: true) == .stop)
-		#expect(ComposerLastSlot.resolve(hasContent: true, busy: true, showsMic: true, showsSend: true) == .send, "text wins over stop")
+		#expect(ComposerLastSlot.resolve(hasContent: false, hasText: false, busy: false, showsMic: true, showsSend: true) == .mic)
+		#expect(ComposerLastSlot.resolve(hasContent: true, hasText: true, busy: false, showsMic: true, showsSend: true) == .send)
+		#expect(ComposerLastSlot.resolve(hasContent: false, hasText: false, busy: true, showsMic: true, showsSend: true) == .stop)
+		#expect(ComposerLastSlot.resolve(hasContent: true, hasText: true, busy: true, showsMic: true, showsSend: true) == .send, "text wins over stop")
+	}
+
+	@Test("a picture with no text keeps the mic beside send")
+	func attachmentKeepsMic() {
+		#expect(ComposerLastSlot.resolve(hasContent: true, hasText: false, busy: false, showsMic: true, showsSend: true) == .sendWithMic)
+		#expect(ComposerLastSlot.resolve(hasContent: true, hasText: false, busy: true, showsMic: true, showsSend: true) == .sendWithMic, "a busy agent does not change it")
+		#expect(ComposerLastSlot.resolve(hasContent: true, hasText: false, busy: false, showsMic: false, showsSend: true) == .send, "no mic offered, plain send")
+		#expect(ComposerLastSlot.resolve(hasContent: true, hasText: false, busy: false, showsMic: true, showsSend: false) == .none)
+		#expect(ComposerLastSlot.resolve(hasContent: true, hasText: true, busy: false, showsMic: true, showsSend: true) == .send, "once there is text, send alone")
 	}
 
 	@Test("a host without a mic or without send collapses the slot")
 	func hostOptions() {
-		#expect(ComposerLastSlot.resolve(hasContent: false, busy: false, showsMic: false, showsSend: true) == .none)
-		#expect(ComposerLastSlot.resolve(hasContent: false, busy: true, showsMic: false, showsSend: true) == .stop)
-		#expect(ComposerLastSlot.resolve(hasContent: true, busy: false, showsMic: true, showsSend: false) == .none, "Hold reason: the sheet commits")
-		#expect(ComposerLastSlot.resolve(hasContent: false, busy: false, showsMic: true, showsSend: false) == .mic)
+		#expect(ComposerLastSlot.resolve(hasContent: false, hasText: false, busy: false, showsMic: false, showsSend: true) == .none)
+		#expect(ComposerLastSlot.resolve(hasContent: false, hasText: false, busy: true, showsMic: false, showsSend: true) == .stop)
+		#expect(ComposerLastSlot.resolve(hasContent: true, hasText: true, busy: false, showsMic: true, showsSend: false) == .none, "Hold reason: the sheet commits")
+		#expect(ComposerLastSlot.resolve(hasContent: false, hasText: false, busy: false, showsMic: true, showsSend: false) == .mic)
 	}
 
 	@Test("an attachment alone counts as content")

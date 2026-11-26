@@ -84,7 +84,14 @@ the bound is in danger, on first use, or hourly for expiry.
 - Regaining connectivity: refresh (coalesced: at most one per 5 s, so a flapping link refreshes
   once) and the outbox drains (every time; the outbox serialises itself).
 - Offline: no refreshes are sent; `isOnline` drives the single global banner.
-- Live SSE events keep refetching per store as before; an SSE reconnect also reloads.
+- Live SSE events refetch per store, coalesced: the Team list (chat list + threads, and actors +
+  flow rooms), the Agents list and the working-agents feed each reload at most once per 5 s however
+  many events arrive (`RefreshDebouncer.minInterval`). While the app is in the background
+  (`EventHub.isForeground`) they skip the refetch; the hub sends one `.reconnected` when the app
+  returns if any was skipped.
+- A `.reconnected` (SSE reconnect, foreground, connectivity) reloads a list only if it has not
+  been refetched in the last 5 s.
+- The Agents list asks for a quiet agent's latest session at most once a minute per agent.
 
 ## Adopting it in a store
 

@@ -291,6 +291,26 @@ export class TestAPI {
 		if (!res.ok) throw new Error(`deleteObject failed: ${res.status}`)
 	}
 
+	async listInstalledLoops(
+		workspaceId: string,
+	): Promise<{ id: string; objectId: string | null }[]> {
+		const res = await fetch(`${this.baseURL}/api/installed-loops?workspaceId=${workspaceId}`, {
+			headers: this.headers(workspaceId),
+		})
+		if (!res.ok) throw new Error(`listInstalledLoops failed: ${res.status}`)
+		const body = (await res.json()) as { installs: { id: string; objectId: string | null }[] }
+		return body.installs
+	}
+
+	async uninstallLoop(id: string, workspaceId: string): Promise<void> {
+		const res = await fetch(`${this.baseURL}/api/installed-loops/${id}`, {
+			method: 'DELETE',
+			headers: this.headers(workspaceId),
+			body: JSON.stringify({ keepProvisionedItems: false }),
+		})
+		if (!res.ok) throw new Error(`uninstallLoop failed: ${res.status}`)
+	}
+
 	async createNotification(
 		workspaceId: string,
 		data: {
@@ -634,7 +654,13 @@ export class TestAPI {
 
 	async createConversation(
 		workspaceId: string,
-		data: { title: string; participant_actor_ids: string[]; initial_message?: string },
+		data: {
+			title: string
+			participant_actor_ids: string[]
+			initial_message?: string
+			/** Open the pair's one direct message instead of a new topical chat. */
+			direct?: boolean
+		},
 	): Promise<ConversationDetailResponse> {
 		const res = await fetch(`${this.baseURL}/api/conversations`, {
 			method: 'POST',

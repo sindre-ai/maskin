@@ -72,7 +72,7 @@ async function seed(account: { workspaceId: string; api: TestAPI }) {
 	const loop = await api.createObject(workspaceId, {
 		type: 'loop',
 		title: 'Calendar loop',
-		status: 'learning',
+		status: 'pilot',
 	})
 	const post = await api.createObject(workspaceId, {
 		type: 'task',

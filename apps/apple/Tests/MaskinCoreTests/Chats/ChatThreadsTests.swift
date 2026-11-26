@@ -167,6 +167,20 @@ struct ChatStoreThreadTests {
 		#expect(h.store.replies(to: 10).last?.id == id)
 	}
 
+	@Test("a reply to someone keeps the attachments and the people tagged in the composer")
+	func replyKeepsComposerMetadata() async {
+		let h = harness()
+		await h.store.start()
+		let file = ChatAttachmentRef(fileID: "f1", name: "plan.pdf")
+		let metadata = ChatSendMetadata(attachments: [file], mentions: ["sam", "relay", "kim"])
+		_ = h.store.reply("See attached", in: 10, to: chatRelay, alsoInChannel: false, metadata: metadata)
+		#expect(await h.settled())
+		let sent = await h.api.sentMetadata.last ?? nil
+		#expect(sent?.attachments == [file])
+		// The addressee leads and is not listed twice.
+		#expect(sent?.mentions == ["relay", "sam", "kim"])
+	}
+
 	@Test("a hidden nudge inside a thread is not counted by the pill, so it agrees with the thread")
 	func pillIgnoresHiddenReplies() async {
 		let h = harness()

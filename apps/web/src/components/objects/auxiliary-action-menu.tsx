@@ -15,6 +15,7 @@ import { useSubscribe, useUnsubscribe } from '@/hooks/use-subscriptions'
 import { trackEvent } from '@/lib/analytics'
 import type { ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { CREATE_VIEW_LABEL } from '@/lib/create-view-message'
 import { VIEWER_READ_ONLY_MESSAGE } from '@/lib/workspace-role'
 import {
 	Archive,
@@ -23,6 +24,7 @@ import {
 	Copy,
 	ExternalLink,
 	FileText,
+	LayoutDashboard,
 	MoreHorizontal,
 	Trash2,
 } from 'lucide-react'
@@ -47,6 +49,8 @@ export interface AuxiliaryActionMenuProps {
 	object: ObjectResponse
 	onDeleteRequest: () => void
 	onArchiveRequest?: () => void
+	/** Given only when the person may create a view; the item is left out without it. */
+	onCreateViewRequest?: () => void
 	workspaceId: string
 	open?: boolean
 	onOpenChange?: (open: boolean) => void
@@ -56,6 +60,7 @@ export function AuxiliaryActionMenu({
 	object,
 	onDeleteRequest,
 	onArchiveRequest,
+	onCreateViewRequest,
 	workspaceId,
 	open,
 	onOpenChange,
@@ -119,6 +124,14 @@ export function AuxiliaryActionMenu({
 				onSelect: handleSubscribeToggle,
 			},
 		]
+		if (onCreateViewRequest) {
+			base.push({
+				id: 'create-view',
+				label: CREATE_VIEW_LABEL,
+				icon: LayoutDashboard,
+				onSelect: onCreateViewRequest,
+			})
+		}
 		if (canArchive && onArchiveRequest) {
 			base.push({
 				id: 'archive',
@@ -149,6 +162,7 @@ export function AuxiliaryActionMenu({
 		handleSubscribeToggle,
 		onDeleteRequest,
 		onArchiveRequest,
+		onCreateViewRequest,
 		canArchive,
 		writeBlock,
 	])

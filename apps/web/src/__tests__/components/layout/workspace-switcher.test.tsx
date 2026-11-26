@@ -318,14 +318,17 @@ describe('WorkspaceSwitcher', () => {
 
 	it('expands the sidebar instead of opening the menu when collapsed to the rail', async () => {
 		// The rail is 60px wide — there is nowhere for the workspace list to
-		// render, so the tile is the expand affordance (mockup line 108).
+		// render, so the top button is the expand affordance.
 		sidebarState = 'collapsed'
 		mockHook({ data: [wsA, wsB], isLoading: false, isError: false })
 		const { Wrapper } = makeWrapper()
 		const user = userEvent.setup()
 		render(<WorkspaceSwitcher />, { wrapper: Wrapper })
 
-		await user.click(screen.getByRole('button', { name: 'Expand sidebar' }))
+		const expand = screen.getByRole('button', { name: 'Expand sidebar' })
+		// The toggle icon replaces the workspace initial on the rail.
+		expect(expand).not.toHaveTextContent('W')
+		await user.click(expand)
 
 		expect(toggleSidebar).toHaveBeenCalledTimes(1)
 		expect(screen.queryByRole('menu')).not.toBeInTheDocument()

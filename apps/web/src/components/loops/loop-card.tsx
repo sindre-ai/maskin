@@ -8,14 +8,15 @@ import { formatFigure } from '@/lib/format-number'
 import { toastSessionCreateError } from '@/lib/session-errors'
 import { Link, useNavigate } from '@tanstack/react-router'
 import type { FailedAgent } from './loop-brief'
-import { LOOP_PILL_STYLES, isLiveLoopPill } from './loop-pill'
+import { LOOP_PILL_STYLES, isLiveLoopPill, loopPillStyle } from './loop-pill'
 import { loopActivityLine, loopProgress } from './loop-row'
 import { paceVerdict } from './target-card'
 
 /** The word at the card's top right: "Needs you" while the flow waits on the viewer. */
 export function loopStatusWord(loop: Pick<LoopSummary, 'pill' | 'status'>, needsYou: boolean) {
 	if (needsYou) return { label: 'Needs you', text: LOOP_PILL_STYLES.waiting_on_you.text }
-	return { label: LOOP_PILL_STYLES[loop.pill].label, text: LOOP_PILL_STYLES[loop.pill].text }
+	const pill = loopPillStyle(loop.pill)
+	return { label: pill.label, text: pill.text }
 }
 
 /**
@@ -37,7 +38,7 @@ export function LoopCard({
 	const canWrite = useCanWrite()
 	const createSession = useCreateSession(loop.workspaceId)
 	const status = loopStatusWord(loop, needsYou)
-	const dot = needsYou ? LOOP_PILL_STYLES.waiting_on_you.dot : LOOP_PILL_STYLES[loop.pill].dot
+	const dot = needsYou ? LOOP_PILL_STYLES.waiting_on_you.dot : loopPillStyle(loop.pill).dot
 	const target = loop.targets?.[0]
 	const progress = loopProgress(loop)
 	const prompt = failed?.session.actionPrompt?.trim() ?? ''

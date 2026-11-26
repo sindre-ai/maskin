@@ -106,7 +106,7 @@ struct LargeFileUploaderTests {
 		#expect(FileUploadLimits.needsDirectUpload(sizeBytes: 10 * mib + 1, mimeType: "application/pdf"))
 		#expect(!FileUploadLimits.needsDirectUpload(sizeBytes: 50 * mib, mimeType: "video/quicktime"))
 		#expect(FileUploadLimits.needsDirectUpload(sizeBytes: 50 * mib + 1, mimeType: "video/mp4"))
-		#expect(ChatLimits.maxFileBytes == 1024 * mib)
+		#expect(ChatLimits.maxFileBytes == 5 * 1024 * mib)
 	}
 
 	@Test("parts are cut from the file in order, sent without credentials, and completed with their ETags")
@@ -154,7 +154,7 @@ struct LargeFileUploaderTests {
 		#expect(!seen.contains { $0.path.hasSuffix("/complete") })
 	}
 
-	@Test("a file over 1 GB is refused before anything is sent")
+	@Test("a file over 5 GB is refused before anything is sent")
 	func refusesOversize() async throws {
 		let upload = uploader()
 		await #expect(throws: ChatsError.self) {

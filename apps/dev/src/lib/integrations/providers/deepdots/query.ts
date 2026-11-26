@@ -28,6 +28,8 @@ interface ListSpec {
 	tiebreaker: string
 	/** True when the route has a text search (the "search" query parameter). */
 	searchable: boolean
+	/** The row field the route insists on seeing in the filter ("X is required in issues filter"). */
+	requiredFilterField?: string
 	/** The fields an agent gets back. Anything else is dropped. */
 	fields: readonly string[]
 }
@@ -47,6 +49,8 @@ export const LIST_SPECS: Record<DeepdotsList, ListSpec> = {
 		dateField: 'externalGeneratedAt',
 		tiebreaker: 'id',
 		searchable: false,
+		// Deepdots answers 400 "issues_topics is required in issues filter" without a condition on it.
+		requiredFilterField: 'issues_topics',
 		fields: [
 			'id',
 			'issues_name',
@@ -77,19 +81,14 @@ export const LIST_SPECS: Record<DeepdotsList, ListSpec> = {
 		],
 	},
 	topics: {
-		path: '/dimensions/topics',
+		// Not /dimensions/topics: that route answered 406 "Company not found" for a user whose
+		// insights read fine, so it wants a company we cannot name (no test login to find out how).
+		// This one sits in the insights family, which works with the same sign-in.
+		path: '/feedbacks/insight/topics',
 		dateField: null,
 		tiebreaker: 'topic',
 		searchable: false,
-		fields: [
-			'topic',
-			'severity',
-			'num_feedback',
-			'num_issues',
-			'num_values',
-			'change_7d',
-			'change_30d',
-		],
+		fields: ['topic', 'total_issues', 'total_values', 'total_combined'],
 	},
 }
 
@@ -98,9 +97,13 @@ export interface ListInput {
 	skip?: number
 	since?: string
 	search?: string
+	/** A topic name, as returned by the topics list. The issues route needs it. */
+	topic?: string
 }
 
-export type BuiltRequest = { ok: true; url: string; limit: number } | { ok: false; message: string }
+export type BuiltRequest =
+	| { ok: true; url: string; limit: number; probed: boolean }
+	| { ok: false; message: string }
 
 const ESCAPED = /[+&#%=]/g
 
@@ -123,15 +126,35 @@ function clampInt(value: number | undefined, fallback: number, min: number, max:
 
 /**
  * The URL for one page. Asks for one row more than `limit`, so the caller can tell whether
- * another page exists without a count call.
+ * another page exists without a count call. Never asks for more than MAX_LIMIT rows: the issues
+ * and topics routes answered 400 to limit 51, so at limit 50 the page is asked for as it is
+ * (`probed` false) and a full page counts as "maybe more".
  */
 export function buildListRequest(list: DeepdotsList, input: ListInput): BuiltRequest {
 	const spec = LIST_SPECS[list]
 	const limit = clampInt(input.limit, DEFAULT_LIMIT, 1, MAX_LIMIT)
 	const skip = clampInt(input.skip, 0, 0, MAX_SKIP)
 
+	const topic = input.topic?.trim().slice(0, 200)
+	if (spec.requiredFilterField && !topic) {
+		return {
+			ok: false,
+			message: `topic is required for ${list}: Deepdots only returns them for a topic. Pass a topic name, as returned by deepdots_list_topics.`,
+		}
+	}
+	if (input.topic !== undefined && input.topic.trim() !== '' && !spec.requiredFilterField) {
+		return { ok: false, message: `topic is not available for ${list}.` }
+	}
+
 	const order = [...(spec.dateField ? [`${spec.dateField} DESC`] : []), `${spec.tiebreaker} DESC`]
-	const filter: Record<string, unknown> = { limit: limit + 1, skip, order }
+	const asked = Math.min(limit + 1, MAX_LIMIT)
+	const filter: Record<string, unknown> = { limit: asked, skip, order }
+
+	const where: Record<string, unknown> = {}
+	if (spec.requiredFilterField && topic) {
+		// issues_topics is an array on each row, so the condition is "one of these topics".
+		where[spec.requiredFilterField] = { inq: [topic] }
+	}
 
 	if (input.since !== undefined) {
 		if (!spec.dateField) return { ok: false, message: `since is not available for ${list}.` }
@@ -143,15 +166,22 @@ export function buildListRequest(list: DeepdotsList, input: ListInput): BuiltReq
 			}
 		}
 		// One operator in the condition: Deepdots applies only the first.
-		filter.where = { [spec.dateField]: { gte: when.toISOString() } }
+		where[spec.dateField] = { gte: when.toISOString() }
 	}
+	// Conditions side by side in where are combined as AND, each with one operator.
+	if (Object.keys(where).length > 0) filter.where = where
 
 	const params = [`filter=${encodeURIComponent(serializeFilter(filter))}`]
 	if (input.search !== undefined && input.search.trim() !== '') {
 		if (!spec.searchable) return { ok: false, message: `search is not available for ${list}.` }
 		params.push(`search=${encodeURIComponent(input.search.trim().slice(0, 200))}`)
 	}
-	return { ok: true, url: `${DEEPDOTS_BASE_URL}${spec.path}?${params.join('&')}`, limit }
+	return {
+		ok: true,
+		url: `${DEEPDOTS_BASE_URL}${spec.path}?${params.join('&')}`,
+		limit,
+		probed: asked > limit,
+	}
 }
 
 function trimValue(value: unknown): unknown {
@@ -186,6 +216,8 @@ export function trimPage(
 	body: unknown,
 	limit: number,
 	skip: number,
+	/** False when the request had no extra row, so a full page is all we know. */
+	probed = true,
 ): TrimmedPage | null {
 	const rows = rowsOf(body)
 	if (!rows) return null
@@ -198,6 +230,6 @@ export function trimPage(
 		}
 		return out
 	})
-	const hasMore = rows.length > limit
+	const hasMore = probed ? rows.length > limit : rows.length >= limit
 	return { items, has_more: hasMore, next_skip: hasMore ? skip + limit : null }
 }

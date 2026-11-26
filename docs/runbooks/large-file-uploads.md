@@ -1,7 +1,7 @@
 # Large file uploads — storage setup and failure modes
 
 Files up to 50 MB go through the API as base64 JSON (`POST /api/files`). Larger files, up to
-1 GB (`MAX_LARGE_FILE_SIZE_BYTES` in `packages/shared/src/schemas/files.ts`), go **straight from
+5 GB (`MAX_LARGE_FILE_SIZE_BYTES` in `packages/shared/src/schemas/files.ts`), go **straight from
 the browser to object storage** over presigned multipart URLs:
 
 1. `POST /api/files/uploads` — the API creates an S3 multipart upload and returns one presigned

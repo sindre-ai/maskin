@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { createTestApp } from '../setup'
 
 const WORKSPACE_ID = '11111111-1111-4111-8111-111111111111'
@@ -8,12 +7,7 @@ const INTEGRATION_ID = '33333333-3333-4333-8333-333333333333'
 const PASSWORD = 'p4ssw0rd-do-not-store-in-clear'
 
 const originalFetch = globalThis.fetch
-const ENV_KEYS = [
-	'FF_TESTER_ACTOR_IDS',
-	'FF_TESTER_FEATURES',
-	'POSTHOG_API_KEY',
-	'INTEGRATION_ENCRYPTION_KEY',
-] as const
+const ENV_KEYS = ['POSTHOG_API_KEY', 'INTEGRATION_ENCRYPTION_KEY'] as const
 const originalEnv: Record<string, string | undefined> = {}
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -27,12 +21,9 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 beforeEach(() => {
 	for (const key of ENV_KEYS) originalEnv[key] = process.env[key]
-	process.env.FF_TESTER_ACTOR_IDS = ACTOR_ID
-	process.env.FF_TESTER_FEATURES = 'deepdots-connect'
 	process.env.INTEGRATION_ENCRYPTION_KEY = '0123456789abcdef'.repeat(4)
 	// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
 	delete process.env.POSTHOG_API_KEY
-	_resetFeatureFlagConfig()
 })
 
 afterEach(() => {
@@ -41,7 +32,6 @@ afterEach(() => {
 		if (originalEnv[key] === undefined) delete process.env[key]
 		else process.env[key] = originalEnv[key]
 	}
-	_resetFeatureFlagConfig()
 	vi.restoreAllMocks()
 })
 
@@ -59,20 +49,6 @@ function connectRequest(body: unknown) {
 }
 
 describe('POST /api/integrations/deepdots/connect', () => {
-	it('answers 404 while the flag is off, and calls nothing', async () => {
-		process.env.FF_TESTER_FEATURES = ''
-		_resetFeatureFlagConfig()
-		const fetchMock = vi.fn()
-		globalThis.fetch = fetchMock as unknown as typeof fetch
-		const { app, calls } = await setup()
-
-		const res = await app.request(connectRequest({ email: 'a@b.com', password: PASSWORD }))
-
-		expect(res.status).toBe(404)
-		expect(fetchMock).not.toHaveBeenCalled()
-		expect(calls.inserts).toHaveLength(0)
-	})
-
 	it('refuses a wrong password on the spot and stores nothing', async () => {
 		globalThis.fetch = vi
 			.fn()

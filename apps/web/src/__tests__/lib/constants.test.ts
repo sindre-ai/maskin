@@ -6,6 +6,7 @@ import {
 	defaultTypeColor,
 	getStatusColor,
 	getTypeColor,
+	relationshipTypeLabel,
 	statusColors,
 	statusStage,
 	typeColors,
@@ -68,6 +69,7 @@ describe('statusStage', () => {
 		['done', 'done'],
 		['in_review', 'review'],
 		['live', 'review'],
+		['scored', 'review'],
 		['succeeded', 'done'],
 		['In progress', 'progress'],
 		['active', 'progress'],
@@ -91,5 +93,20 @@ describe('statusStage', () => {
 	it('treats a custom workspace status as unknown, never as not started', () => {
 		expect(statusStage('waiting_for_legal')).toBe('unknown')
 		expect(statusStage('')).toBe('unknown')
+	})
+
+	it('keeps flow statuses on the plain ring', () => {
+		expect(statusStage('supervised')).toBe('unknown')
+		expect(statusStage('pilot')).toBe('unknown')
+	})
+})
+
+describe('relationshipTypeLabel', () => {
+	it('turns underscores into spaces', () => {
+		expect(relationshipTypeLabel('breaks_into')).toBe('breaks into')
+	})
+
+	it('says flow where the stored type says loop', () => {
+		expect(relationshipTypeLabel('in_loop')).toBe('in flow')
 	})
 })

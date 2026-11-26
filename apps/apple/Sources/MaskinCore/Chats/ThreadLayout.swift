@@ -8,9 +8,8 @@ public enum ThreadItem: Identifiable, Equatable, Sendable {
 	case message(ChatMessage, showsAuthor: Bool)
 	/// "N new", above the first message the reader hadn't seen when they opened the thread.
 	case unreadDivider(count: Int)
-	/// A sub-agent session the message above handed work to. `behind` names the sessions of the
-	/// same message it waits on (a name, never an id).
-	case handoff(SpawnedSession, behind: [String])
+	/// The sub-agent sessions the message above handed work to, in one card.
+	case handoff([HandoffEntry])
 	/// A live call: one card holding every line of the call, which the thread does not also show as bubbles.
 	case liveCall(LiveCallCard)
 	/// Where a live call started or ended: `LIVE MEETING · STARTED 14:02`.
@@ -28,12 +27,24 @@ public enum ThreadItem: Identifiable, Equatable, Sendable {
 		case .daySeparator(let day): "day-\(Int(day.timeIntervalSince1970))"
 		case .system(let m): m.id
 		case .message(let m, _): m.id
-		case .handoff(let session, _): "handoff-\(session.id)"
+		case .handoff(let entries): "handoff-\(entries.first?.session.id ?? "")"
 		case .liveCall(let card): card.id
 		case .callDivider(let divider): divider.id
 		case .receipt(let event): event.id
 		case .callSummary(let summary, _): "summary-\(summary.id)"
 		}
+	}
+}
+
+/// One row of a handoff card. `behind` names the sessions of the same message it waits on (a name,
+/// never an id).
+public struct HandoffEntry: Equatable, Sendable {
+	public var session: SpawnedSession
+	public var behind: [String]
+
+	public init(_ session: SpawnedSession, behind: [String] = []) {
+		self.session = session
+		self.behind = behind
 	}
 }
 
@@ -257,13 +268,14 @@ public enum ThreadLayout {
 		}
 	}
 
-	/// One row per spawned session the strip has a pill for, in the server's order.
+	/// One card per message for the spawned sessions the strip has a pill for, in the server's order.
 	static func handoffItems(for message: ChatMessage) -> [ThreadItem] {
 		let names = Dictionary(
 			message.spawnedSessions.map { ($0.id, $0.actorName) }, uniquingKeysWith: { first, _ in first })
-		return message.spawnedSessions.filter { $0.pill != nil }.map { session in
-			.handoff(session, behind: session.dependsOn.compactMap { names[$0] })
+		let entries = message.spawnedSessions.filter { $0.pill != nil }.map { session in
+			HandoffEntry(session, behind: session.dependsOn.compactMap { names[$0] })
 		}
+		return entries.isEmpty ? [] : [.handoff(entries)]
 	}
 
 	/// How one message sits in its run of consecutive messages from one author.

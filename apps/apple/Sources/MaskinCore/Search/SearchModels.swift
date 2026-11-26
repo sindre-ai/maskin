@@ -80,10 +80,6 @@ public struct SearchResult: Identifiable, Sendable, Equatable, Hashable {
 	/// Object type (`task`, `bet`...) for objects; mime type for files.
 	public var detail: String?
 	public var updatedAt: Date?
-	/// Text the client-side filter matches against (chats and agents have no server search).
-	public var searchableText: String
-	/// Actor ids of the people and agents in a chat; empty for everything else. The @ filter reads it.
-	public var participantIds: [String]
 
 	public var id: String { "\(kind.rawValue):\(entityId)" }
 
@@ -102,8 +98,7 @@ public struct SearchResult: Identifiable, Sendable, Equatable, Hashable {
 
 	public init(
 		kind: SearchKind, entityId: String, title: String, subtitle: String = "",
-		snippet: String = "", detail: String? = nil, updatedAt: Date? = nil,
-		searchableText: String? = nil, participantIds: [String] = []
+		snippet: String = "", detail: String? = nil, updatedAt: Date? = nil
 	) {
 		self.kind = kind
 		self.entityId = entityId
@@ -112,8 +107,6 @@ public struct SearchResult: Identifiable, Sendable, Equatable, Hashable {
 		self.snippet = snippet
 		self.detail = detail
 		self.updatedAt = updatedAt
-		self.searchableText = searchableText ?? [title, subtitle, snippet].joined(separator: "\n")
-		self.participantIds = participantIds
 	}
 }
 
@@ -133,24 +126,31 @@ public struct SearchError: Error, Equatable, Sendable {
 	}
 }
 
-/// Everything Search needs from the server. The production implementation wraps the generated
-/// client (`APISearchRemote`); tests supply a fake.
+/// What the server search answered: its rows in its own order, and whether some of its sources failed.
+public struct SearchAnswer: Sendable, Equatable {
+	public var results: [SearchResult]
+	/// Some sources failed while the others answered, so counts may be understated.
+	public var isPartial: Bool
+
+	public init(results: [SearchResult], isPartial: Bool = false) {
+		self.results = results
+		self.isPartial = isPartial
+	}
+}
+
+/// Everything Search needs from the server. The production implementation is `APISearchRemote`;
+/// tests supply a fake.
 public protocol SearchRemote: Sendable {
-	/// `GET /api/objects/search?q=` (server-side match on title and content).
-	func searchObjects(query: String, limit: Int) async throws -> [SearchResult]
-	/// `GET /api/files?q=` (server-side match on file name).
+	/// `GET /api/search`: chats, flows, agents and items, matched and ordered by the server, the same
+	/// answer in the same order as the web. `participants` (actor ids) keeps only the chats all of
+	/// them are in; the other sources then answer nothing.
+	func search(query: String, participants: [String], limit: Int) async throws -> SearchAnswer
+	/// `GET /api/files?q=` (server-side match on file name). Files are not in the server search.
 	func searchFiles(query: String, limit: Int) async throws -> [SearchResult]
-	/// `GET /api/conversations`, newest first. No `q` parameter exists, so the store filters.
-	func conversations() async throws -> [SearchResult]
-	/// Agent actors (`GET /api/actors`, `type == agent`). No `q` parameter, so the store filters.
-	func agents() async throws -> [SearchResult]
-	/// The workspace's flows (loop objects). No `q` parameter, so the store filters by name.
-	func flows() async throws -> [SearchResult]
 	/// Every person and agent in the workspace, for the @ menu.
 	func people() async throws -> [SearchPerson]
 }
 
 extension SearchRemote {
-	public func flows() async throws -> [SearchResult] { [] }
 	public func people() async throws -> [SearchPerson] { [] }
 }

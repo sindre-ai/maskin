@@ -69,6 +69,8 @@ public struct ObjectsScreen: View {
 	/// The magnifier opens a field that filters this page only.
 	private var shellActions: ShellActions {
 		ShellActions(
+			// iPad: one "+" on every screen. It opens the same new item action as the Display sheet's chip.
+			new: ShellIdiom.isPad ? { intents.create() } : nil, newLabel: "New item",
 			displaySymbol: ShellActions.slidersSymbol,
 			displayActive: store.display.isCustomised || store.statusFilter != nil,
 			displayToggle: { showDisplay = true },
@@ -136,6 +138,7 @@ public struct ObjectsScreen: View {
 				.navigationDestination(for: ObjectRoute.self) { route in
 					detail(route, onOpen: { path.append(ObjectRoute(id: $0)) }, onClose: { path.removeLast() })
 					.zoomDestination(id: route.id, in: zoom)
+					.hidesPadBar()
 				}
 		}
 	}
