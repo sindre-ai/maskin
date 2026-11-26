@@ -55,7 +55,6 @@ import { autoSubscribe } from './subscriptions'
 export const DEFAULT_AGENT_IDS = [
 	'workspace_coach',
 	'chief_of_staff',
-	'driver',
 	'signal_analyst',
 	'researcher',
 ] as const

@@ -91,13 +91,7 @@ function createMemoryStorage(): StorageProvider {
 	}
 }
 
-const DEFAULT_AGENT_NAMES = [
-	'Workspace Coach',
-	'Chief of Staff',
-	'Driver',
-	'Signal Analyst',
-	'Researcher',
-]
+const DEFAULT_AGENT_NAMES = ['Workspace Coach', 'Chief of Staff', 'Signal Analyst', 'Researcher']
 
 function createApp(
 	agentStorage = new AgentStorageManager(createMemoryStorage(), db),
@@ -284,7 +278,7 @@ describe('Workspaces Integration', () => {
 		it('reports a human member count per workspace, excluding seeded agents', async () => {
 			const app = createApp()
 
-			// Creating a workspace also seeds five default agent actors as members.
+			// Creating a workspace also seeds four default agent actors as members.
 			// The count is about people, so a solo workspace must still read 1.
 			const created = await app.request(
 				jsonRequest('POST', '/api/workspaces', { name: 'Counted WS' }),
@@ -1064,11 +1058,11 @@ describe('Workspaces Integration', () => {
 			const listRes = await app.request(jsonGet(`/api/workspaces/${ws.id}/members`))
 			expect(listRes.status).toBe(200)
 			const members = await listRes.json()
-			// Creator (owner) + all 5 default agents (seeded atomically inside the
-			// create transaction) + the newly-added member = 7.
-			expect(members).toHaveLength(7)
+			// Creator (owner) + all 4 default agents (seeded atomically inside the
+			// create transaction) + the newly-added member = 6.
+			expect(members).toHaveLength(6)
 			const roles = members.map((m: { role: string }) => m.role).sort()
-			expect(roles).toEqual(['member', 'member', 'member', 'member', 'member', 'member', 'owner'])
+			expect(roles).toEqual(['member', 'member', 'member', 'member', 'member', 'owner'])
 		})
 	})
 
@@ -1418,7 +1412,7 @@ describe('Workspaces Integration', () => {
 
 			// The shared "Maskin way of working" skill is attached to every default
 			// agent (mirrored from the Template workspace) — Coach, Chief of Staff,
-			// Driver, Signal Analyst, Researcher.
+			// Signal Analyst, Researcher.
 			const [wayOfWorkingSkill] = await db
 				.select({ id: workspaceSkills.id })
 				.from(workspaceSkills)
@@ -1435,7 +1429,7 @@ describe('Workspaces Integration', () => {
 				.select({ actorId: agentSkills.actorId })
 				.from(agentSkills)
 				.where(eq(agentSkills.workspaceSkillId, wayOfWorkingSkillId))
-			expect(wayOfWorkingAttachRows).toHaveLength(5)
+			expect(wayOfWorkingAttachRows).toHaveLength(4)
 
 			const triggerRows = await db
 				.select({ name: triggers.name })
@@ -1447,8 +1441,9 @@ describe('Workspaces Integration', () => {
 			// "Daily briefing" cron, and to 16 with its hourly "For You — curate
 			// the list" cron, then down to 12 when the Bet discovery loop's four
 			// triggers were dropped from the seed, then to 10 when the Knowledge Wiki's two
-			// moved out of the seed into the marketplace install.
-			expect(triggerRows).toHaveLength(10)
+			// moved out of the seed into the marketplace install, and to 9 when the
+			// Driver's daily sweep left with the Driver agent.
+			expect(triggerRows).toHaveLength(9)
 		})
 
 		it('gives the Researcher the cited deep research mode and the deep-research-subagents skill', async () => {

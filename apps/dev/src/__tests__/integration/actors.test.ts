@@ -1179,13 +1179,7 @@ describe('Actors Integration — signup workspace provisioning', () => {
 	// differently from one created via POST /api/workspaces. Both now share
 	// provisionWorkspace(), so the auto-created workspace must come out with the
 	// full default agent roster and a pinned default chat agent.
-	const DEFAULT_AGENT_NAMES = [
-		'Chief of Staff',
-		'Driver',
-		'Researcher',
-		'Signal Analyst',
-		'Workspace Coach',
-	]
+	const DEFAULT_AGENT_NAMES = ['Chief of Staff', 'Researcher', 'Signal Analyst', 'Workspace Coach']
 
 	it('auto-creates a workspace seeded with the full default agent roster', async () => {
 		const app = createApp()
