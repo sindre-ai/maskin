@@ -1703,7 +1703,8 @@ describe('Workspaces Integration', () => {
 				.from(objects)
 				.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'loop')))
 
-			expect(loopRows).toHaveLength(1)
+			// No flow is seeded by the bootstrap any more: Workspace improvements arrives as a marketplace install.
+			expect(loopRows).toHaveLength(0)
 		})
 
 		it('leaves three pre-existing workspaces byte-identical when a new workspace is seeded', async () => {
