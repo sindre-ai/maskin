@@ -49,6 +49,35 @@ export const LINKEDIN_CAN_COMMENT_VALUES = ['anyone', 'connections', 'no_one'] a
 
 export type LinkedInCanComment = (typeof LINKEDIN_CAN_COMMENT_VALUES)[number]
 
+// ── mentions (tags) ────────────────────────────────────────────────────────
+//
+// A tag is a mention entry plus a {{n}} marker in the text: {{0}} is replaced by the
+// first entry's name and made a clickable tag, {{1}} by the second, and so on. The
+// shape is Unipile's documented one for comments (`name` and `profile_id`); the same
+// shape is sent on posts and edits, where Unipile does not document it publicly.
+
+export const LINKEDIN_MENTIONS_MAX = 20
+
+export const linkedInMentionSchema = z.object({
+	name: z.string().min(1).max(200).describe('Display name shown in the tag, e.g. "Jane Doe".'),
+	profile_id: z
+		.string()
+		.min(1)
+		.describe(
+			'LinkedIn provider id of the person or company, exactly as a tool returned it: recipient_urn from search_people, get_profile or list_connections for a person, company_id from get_company for a company. Not a profile URL or a handle.',
+		),
+})
+
+export type LinkedInMention = z.infer<typeof linkedInMentionSchema>
+
+export const linkedInMentionsField = z
+	.array(linkedInMentionSchema)
+	.max(LINKEDIN_MENTIONS_MAX)
+	.optional()
+	.describe(
+		'Optional tags. Put {{0}} in the text where the first entry goes, {{1}} for the second, and so on; each marker becomes the entry\'s name as a clickable tag that notifies that person or company. Every entry needs its marker in the text and every marker needs an entry, or nothing is sent. Example: text "Thanks {{0}} and {{1}}!" with mentions [{"name":"Jane Doe","profile_id":"ACoAA..."},{"name":"Acme","profile_id":"12345"}]. Leave out for plain text.',
+	)
+
 // ── __publish_post ─────────────────────────────────────────────────────────
 //
 // Personal-profile or per-page publish. Identity is pre-scoped by the
@@ -62,8 +91,9 @@ export const publishPostInputShape = {
 		.min(1)
 		.max(LINKEDIN_POST_MAX_CHARS)
 		.describe(
-			`Post body. Max ${LINKEDIN_POST_MAX_CHARS} chars — LinkedIn hard limit. Plain text; newlines allowed; @mentions and hashtags render as-is on LinkedIn.`,
+			`Post body. Max ${LINKEDIN_POST_MAX_CHARS} chars — LinkedIn hard limit. Plain text; newlines allowed; hashtags render as-is on LinkedIn. A typed @name stays plain text and tags nobody: to tag a person or company, put {{0}} in the text and pass it in mentions.`,
 		),
+	mentions: linkedInMentionsField,
 	attachment_file_ids: z
 		.array(z.string().uuid())
 		.max(9)
@@ -130,8 +160,9 @@ export const editPostInputShape = {
 		.max(LINKEDIN_POST_MAX_CHARS)
 		.optional()
 		.describe(
-			`New post body. Max ${LINKEDIN_POST_MAX_CHARS} chars — LinkedIn hard limit. LinkedIn shows an "edited" marker on the post after this call.`,
+			`New post body. Max ${LINKEDIN_POST_MAX_CHARS} chars — LinkedIn hard limit. LinkedIn shows an "edited" marker on the post after this call. Pass mentions for every tag in the new text.`,
 		),
+	mentions: linkedInMentionsField,
 	can_comment: z
 		.enum(LINKEDIN_CAN_COMMENT_VALUES)
 		.optional()

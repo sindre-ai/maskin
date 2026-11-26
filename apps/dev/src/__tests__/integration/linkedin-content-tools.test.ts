@@ -231,6 +231,45 @@ describe('linkedin_tool_calls content-hash idempotency (Task 7b)', () => {
 		const rows = await db.select().from(linkedinToolCalls)
 		expect(rows).toHaveLength(2)
 	})
+
+	it('treats the same text with different tags as a different post, and sends the tags', async () => {
+		const actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+		await insertConnectedLinkedInCredential(ws.id, actorId)
+
+		const client = stubbedLinkedInClient()
+		__setLinkedInClientForTests(() => client)
+
+		const ctx = { db, actorId, workspaceId: ws.id }
+		const text = 'Thanks {{0}}'
+		const jane = [{ name: 'Jane Doe', profile_id: 'ACoAAAjane' }]
+		const john = [{ name: 'John Roe', profile_id: 'ACoAAAjohn' }]
+		await publishLinkedInPost(ctx, { text, mentions: jane })
+		await publishLinkedInPost(ctx, { text, mentions: john })
+		const replay = await publishLinkedInPost(ctx, { text, mentions: jane })
+
+		expect(client.publishCalls).toHaveLength(2)
+		expect(client.publishCalls[0]).toMatchObject({ text, mentions: jane })
+		expect(client.publishCalls[1]).toMatchObject({ text, mentions: john })
+		expect(replay.replayed).toBe(true)
+	})
+
+	it('refuses a tag with no marker in the text before anything is sent', async () => {
+		const actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+		await insertConnectedLinkedInCredential(ws.id, actorId)
+
+		const client = stubbedLinkedInClient()
+		__setLinkedInClientForTests(() => client)
+
+		await expect(
+			publishLinkedInPost(
+				{ db, actorId, workspaceId: ws.id },
+				{ text: 'Hello', mentions: [{ name: 'Jane Doe', profile_id: 'ACoAAAjane' }] },
+			),
+		).rejects.toMatchObject({ code: 'INVALID_INPUT' })
+		expect(client.publishCalls).toHaveLength(0)
+	})
 })
 
 describe('PurgeIdempotencyJob linkedin_tool_calls extension', () => {
