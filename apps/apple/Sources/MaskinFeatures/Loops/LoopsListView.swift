@@ -16,9 +16,11 @@ struct LoopsListView: View {
 	var isGrid = false
 	var zoomNamespace: Namespace.ID?
 	var onNew: () -> Void = {}
+	/// The server's best-match order while words are typed. Nil keeps the chosen order.
+	var rank: PageSearchRank?
 
 	var body: some View {
-		let loops = store.filtered(query: search)
+		let loops = store.filtered(query: search, rank: rank?.order)
 		Group {
 			if isGrid { grid(loops) } else { list(loops) }
 		}
