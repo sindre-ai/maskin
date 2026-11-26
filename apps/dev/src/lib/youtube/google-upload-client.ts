@@ -7,7 +7,8 @@ import type { PublishPayload, UploadPayload } from './upload'
  * other module does.
  *
  * Privacy is enforced here, not trusted from the request. Google now treats an upload with no
- * privacy status as public, so `buildInsertBody` always writes private and `startUploadSession`
+ * privacy status as public, so `buildInsertBody` always writes an explicit status (the one the
+ * person approved, private when the stored request holds anything else) and `startUploadSession`
  * refuses any body that does not say so. Results carry a category and a code, never Google's text.
  */
 
@@ -31,8 +32,19 @@ export type PublishResult = { ok: true } | { ok: false; code: string }
 
 const RETRYABLE = new Set([408, 429, 500, 502, 503, 504])
 
-/** The JSON Google gets when an upload starts. Private is written here whatever the request held. */
+const PRIVACY_VALUES = new Set(['private', 'unlisted', 'public'])
+
+/**
+ * The JSON Google gets when an upload starts. The status is the approved one; anything that is not
+ * a known privacy is written as private, so a bad stored request can only ever be less public.
+ * A publish time goes with a private video only, and a stored time that has no zone is dropped.
+ */
 export function buildInsertBody(payload: UploadPayload): Record<string, unknown> {
+	const privacyStatus = PRIVACY_VALUES.has(payload.privacyStatus)
+		? payload.privacyStatus
+		: 'private'
+	const publishAt =
+		privacyStatus === 'private' && typeof payload.publishAt === 'string' ? payload.publishAt : null
 	return {
 		snippet: {
 			title: payload.title,
@@ -41,30 +53,35 @@ export function buildInsertBody(payload: UploadPayload): Record<string, unknown>
 			...(payload.categoryId ? { categoryId: payload.categoryId } : {}),
 		},
 		status: {
-			privacyStatus: 'private',
+			privacyStatus,
+			...(publishAt ? { publishAt } : {}),
 			...(payload.containsSyntheticMedia ? { containsSyntheticMedia: true } : {}),
 		},
 	}
 }
 
-function isPrivateBody(body: Record<string, unknown>): boolean {
-	const status = body.status as { privacyStatus?: unknown } | undefined
-	return status?.privacyStatus === 'private'
+/** True when the body names its privacy. A schedule is only valid on a private video. */
+function hasExplicitPrivacy(body: Record<string, unknown>): boolean {
+	const status = body.status as { privacyStatus?: unknown; publishAt?: unknown } | undefined
+	if (typeof status?.privacyStatus !== 'string' || !PRIVACY_VALUES.has(status.privacyStatus)) {
+		return false
+	}
+	return status.publishAt === undefined || status.privacyStatus === 'private'
 }
 
 function authHeaders(accessToken: string): Record<string, string> {
 	return { Authorization: `Bearer ${accessToken}` }
 }
 
-/** Opens a resumable upload. Fails, without calling Google, for any body that is not private. */
+/** Opens a resumable upload. Fails, without calling Google, for any body that does not name its privacy. */
 export async function startUploadSession(request: {
 	accessToken: string
 	body: Record<string, unknown>
 	sizeBytes: number
 	mimeType: string
 }): Promise<SessionResult> {
-	if (!isPrivateBody(request.body)) {
-		return { ok: false, code: 'privacy_not_private', retryable: false }
+	if (!hasExplicitPrivacy(request.body)) {
+		return { ok: false, code: 'privacy_not_set', retryable: false }
 	}
 	let response: Response
 	try {

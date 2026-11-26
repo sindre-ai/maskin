@@ -119,14 +119,36 @@ describe('maskin-youtube tool server', () => {
 			)
 		})
 
-		it('has no input that could set the privacy of an upload', async () => {
+		it('takes a visibility and a publish time, but no raw privacy field', async () => {
 			const { client } = await connect()
 			const { tools } = await client.listTools()
 			const upload = tools.find((t) => t.name === 'youtube__upload_video')
 			const properties = Object.keys(upload?.inputSchema.properties ?? {})
-			for (const name of ['privacy_status', 'privacyStatus', 'visibility', 'publish_at']) {
+			for (const name of ['visibility', 'publish_at']) {
+				expect(properties).toContain(name)
+			}
+			for (const name of ['privacy_status', 'privacyStatus']) {
 				expect(properties).not.toContain(name)
 			}
+		})
+
+		it('passes the visibility and publish time on to the held upload', async () => {
+			prepareUpload.mockResolvedValue({ status: 'pending_approval', action_id: 'a1' })
+			const { client } = await connect()
+			await client.callTool({
+				name: 'youtube__upload_video',
+				arguments: {
+					file_id: FILE_ID,
+					object_id: OBJECT_ID,
+					title: 'Launch',
+					visibility: 'public',
+					publish_at: '2026-12-01T12:00:00Z',
+				},
+			})
+			expect(prepareUpload.mock.calls[0]?.[1]).toMatchObject({
+				visibility: 'public',
+				publish_at: '2026-12-01T12:00:00Z',
+			})
 		})
 
 		it('rejects a call with a bad file id before any code runs', async () => {

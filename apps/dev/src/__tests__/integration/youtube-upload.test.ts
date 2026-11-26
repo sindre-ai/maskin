@@ -110,7 +110,13 @@ describe('YouTube upload and publish', () => {
 		contentHash: HASH,
 	})
 
-	async function holdUpload(over: { aiGenerated?: boolean } = {}) {
+	async function holdUpload(
+		over: {
+			aiGenerated?: boolean
+			visibility?: 'private' | 'unlisted' | 'public'
+			publishAt?: string
+		} = {},
+	) {
 		const payload = buildUploadPayload(file(), { title: 'Launch day', ...over })
 		return createPendingAction(db, {
 			workspaceId,
@@ -192,6 +198,75 @@ describe('YouTube upload and publish', () => {
 			expect(row?.payload).toBeNull()
 			expect(row?.uploadSessionUri).toBeNull()
 			expect(await auditOf(held.id)).toEqual(['approved', 'executed'])
+		})
+
+		it('uploads with the visibility that was approved: private, unlisted, public or scheduled', async () => {
+			vi.useFakeTimers({ toFake: ['Date'] })
+			try {
+				vi.setSystemTime(new Date('2026-12-01T08:00:00Z'))
+				const cases = [
+					[{}, { privacyStatus: 'private' }],
+					[{ visibility: 'unlisted' as const }, { privacyStatus: 'unlisted' }],
+					[{ visibility: 'public' as const }, { privacyStatus: 'public' }],
+					[
+						{ visibility: 'public' as const, publishAt: '2026-12-01T12:00:00Z' },
+						{ privacyStatus: 'private', publishAt: '2026-12-01T12:00:00.000Z' },
+					],
+				] as const
+				for (const [over, status] of cases) {
+					upload.startSession.mockClear()
+					const held = await holdUpload(over)
+					await approve(held.id)
+					expect(await executeApprovedYoutubeAction(db, held.id, deps)).toEqual({
+						ran: true,
+						status: 'executed',
+						resultCode: 'ok',
+					})
+					const session = upload.startSession.mock.calls[0]?.[0] as {
+						body: { status: Record<string, unknown> }
+					}
+					expect(session.body.status).toEqual(status)
+				}
+			} finally {
+				vi.useRealTimers()
+			}
+		})
+
+		it('refuses a scheduled upload whose time has gone by before it starts', async () => {
+			vi.useFakeTimers({ toFake: ['Date'] })
+			try {
+				vi.setSystemTime(new Date('2026-12-01T08:00:00Z'))
+				const held = await holdUpload({ visibility: 'public', publishAt: '2026-12-01T09:00:00Z' })
+				await approve(held.id)
+				vi.setSystemTime(new Date('2026-12-01T09:30:00Z'))
+				expect(await executeApprovedYoutubeAction(db, held.id, deps)).toMatchObject({
+					status: 'failed',
+					resultCode: 'publish_time_passed',
+				})
+				expect(upload.startSession).not.toHaveBeenCalled()
+				expect(upload.chargeUpload).not.toHaveBeenCalled()
+			} finally {
+				vi.useRealTimers()
+			}
+		})
+
+		it('does not send a request that was changed after the approval', async () => {
+			const held = await holdUpload()
+			await approve(held.id)
+			await db
+				.update(youtubePendingActions)
+				.set({
+					payload: {
+						...((await rowOf(held.id))?.payload as Record<string, unknown>),
+						privacyStatus: 'public',
+					},
+				})
+				.where(eq(youtubePendingActions.id, held.id))
+			expect(await executeApprovedYoutubeAction(db, held.id, deps)).toMatchObject({
+				status: 'failed',
+				resultCode: 'payload_changed',
+			})
+			expect(upload.startSession).not.toHaveBeenCalled()
 		})
 
 		it('refuses when the file is no longer the one that was approved', async () => {

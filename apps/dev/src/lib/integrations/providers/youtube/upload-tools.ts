@@ -19,7 +19,7 @@ import { YoutubeError } from './errors'
 import { getYoutubeIntegrationId } from './token'
 
 /**
- * The tools of part 5: prepare a private upload, ask for a video to be made unlisted, public or
+ * The tools of part 5: prepare an upload (private unless asked otherwise), ask for a video to be made unlisted, public or
  * scheduled, and read how either ended. The first two only create a pending action and put its
  * card in front of the people who can approve it (see `youtube/actions.ts`). Nothing here calls
  * the Google write client; the executor does, after a person has said yes.
@@ -35,6 +35,18 @@ export const uploadVideoInput = {
 	description: z.string().max(10_000).optional().describe('The video description.'),
 	tags: z.array(z.string().max(100)).max(50).optional().describe('Tags, 500 characters in total.'),
 	category_id: z.string().max(10).optional().describe('YouTube category id, for example 22.'),
+	visibility: z
+		.enum(['private', 'unlisted', 'public'])
+		.optional()
+		.describe(
+			'Who can watch the video once it is uploaded. Private when left out. Public means everyone, as soon as YouTube has processed it. The approval card shows it in capitals.',
+		),
+	publish_at: z
+		.string()
+		.optional()
+		.describe(
+			'Keep the video private and make it public at this time: ISO 8601 with a time zone, in the future. Only with visibility public.',
+		),
 	ai_generated: z
 		.boolean()
 		.optional()
@@ -139,6 +151,8 @@ export async function prepareUpload(
 			tags: args.tags,
 			categoryId: args.category_id,
 			aiGenerated: args.ai_generated,
+			visibility: args.visibility,
+			publishAt: args.publish_at,
 		})
 	} catch (err) {
 		if (err instanceof YoutubeUploadRuleError) throw invalid(err.message)

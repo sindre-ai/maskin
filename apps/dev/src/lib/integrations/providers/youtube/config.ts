@@ -37,8 +37,8 @@ export function youtubeScopes(env: Record<string, string | undefined> = process.
  *    only, so the write scopes are added only when YOUTUBE_WRITE_SCOPES_ENABLED is "true"
  *    (default off). With it on, a connection also asks for youtube.force-ssl and youtube (the
  *    write tools: comments, playlists and video edits need force-ssl; videos.rate and
- *    thumbnails.set need youtube) and youtube.upload (uploads, always private, a second approval
- *    to publish). Writes only run after a person approves. A connection made without them must
+ *    thumbnails.set need youtube) and youtube.upload (uploads: private unless the request asks for unlisted,
+ *    public or a schedule, one approval for the visibility it shows). Writes only run after a person approves. A connection made without them must
  *    reconnect once the setting is on, and an approved write on a read-only connection ends as
  *    failed with Google's http_403 code.
  *

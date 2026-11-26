@@ -749,13 +749,13 @@ function registerCaptionTools(server: McpServer, ctx: YoutubeMcpContext): void {
 	)
 }
 
-/** Part 5. An upload is always private; making it public is a second request with its own approval. */
+/** Part 5. An upload is private unless it asks for more, in one approval. Changing a private video later is a second request. */
 function registerUploadTools(server: McpServer, ctx: YoutubeMcpContext): void {
 	registerTool(
 		server,
 		ctx,
 		'upload_video',
-		'Prepare the upload of a Maskin video file to the connected YouTube channel. Nothing is sent yet: this holds the request and puts an approval card in front of the workspace owners. When a person approves, the server uploads the video as PRIVATE, always, whatever you ask for. To make it unlisted, public or scheduled you need a second approval with youtube__publish_video. Set ai_generated when the video is AI generated or altered. Returns an action id; read the result with youtube__get_upload_status.',
+		'Prepare the upload of a Maskin video file to the connected YouTube channel. Nothing is sent yet: this holds the request and puts an approval card in front of the workspace owners. Set visibility to private (the default), unlisted or public, or set visibility public with publish_at to keep it private until a set time. One card, one approval: when a person approves, the server uploads the video with exactly that visibility and nothing else. The card shows it in capitals. To change a video that is already uploaded, use youtube__publish_video. Set ai_generated when the video is AI generated or altered. Returns an action id; read the result with youtube__get_upload_status.',
 		uploadVideoInput,
 		(args, client) => prepareUpload(client, args),
 		{ write: true },
