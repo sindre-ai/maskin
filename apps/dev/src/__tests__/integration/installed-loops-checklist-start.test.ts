@@ -206,11 +206,13 @@ describe('Marketplace install — checklist driver starts right away', () => {
 			return ws
 		}
 
-		it('starts the driver once when the workspace may run sessions', async () => {
+		it('starts each flow driver once when the workspace may run sessions', async () => {
 			const ws = await installForNewWorkspace({ startChecklist: true })
-			expect(startSession).toHaveBeenCalledTimes(1)
-			const call = startSession.mock.calls[0] as unknown as [Record<string, unknown>]
-			expect(call[0].workspaceId).toBe(ws.id)
+			// Knowledge Wiki and Workspace improvements both ship a checklist, so two drivers start, once each.
+			expect(startSession).toHaveBeenCalledTimes(2)
+			const calls = startSession.mock.calls as unknown as Array<[Record<string, unknown>]>
+			for (const call of calls) expect(call[0].workspaceId).toBe(ws.id)
+			expect(new Set(calls.map((c) => c[0].actorId)).size).toBe(2)
 		})
 
 		it('starts nothing while the workspace waits for its card', async () => {

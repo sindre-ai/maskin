@@ -13,9 +13,15 @@ import {
 	workspaceSkills,
 } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
-import { eq } from 'drizzle-orm'
+import { and, eq, inArray, sql } from 'drizzle-orm'
 import { recordEvent } from '../lib/events/record-event'
-import { loopSettingsForInstall, readLoopSettings } from '../lib/marketplace-loops/loop-settings'
+import { logger } from '../lib/logger'
+import {
+	type LoopSettings,
+	loopSettingsForInstall,
+	loopSettingsPatch,
+	readLoopSettings,
+} from '../lib/marketplace-loops/loop-settings'
 import { type AgentStorageManager, workspaceSkillKey } from './agent-storage'
 import { provisionLoopChecklist } from './loop-checklist-provisioning'
 import {
@@ -28,7 +34,10 @@ import {
 	findProvisionedSkillBySourceItem,
 	findWorkspaceSkillByName,
 	installMetadata,
+	isRoleActorId,
+	resolveRoleActors,
 	rewriteWiring,
+	roleIdsOfItems,
 } from './loop-provisioning'
 import { syncLoopViews, toViewItems } from './loop-views-provisioning'
 
@@ -110,6 +119,11 @@ export async function installLoopInTransaction(
 	//    map. We can't insert a trigger without a real target_actor_id (FK
 	//    NOT NULL), so the pre-pass + ordering is load-bearing.
 	const sourceToLocal = new Map<string, string>()
+	// Agents the bundle names by role instead of shipping (see resolveRoleActors): bound to the
+	// workspace's own agent of that role, so triggers and skills wire up like any bundled agent.
+	for (const [roleId, localId] of await resolveRoleActors(tx, workspaceId, roleIdsOfItems(items))) {
+		sourceToLocal.set(roleId, localId)
+	}
 
 	const triggerItems: Array<{ sourceItemId: string; snapshot: Record<string, unknown> }> = []
 	// Skill → source-actor-id bindings, resolved to agent_skills rows once
@@ -274,6 +288,15 @@ export async function installLoopInTransaction(
 	const provisionedTriggerIds: string[] = []
 	for (const { sourceItemId, snapshot } of triggerItems) {
 		const rewritten = rewriteWiring(snapshot, sourceToLocal)
+		// The workspace has no agent for the role this trigger names: skip it, the rest installs.
+		if (isRoleActorId(rewritten.targetActorId ?? rewritten.target_actor_id)) {
+			logger.warn('Skipped marketplace trigger: the workspace has no agent for its role', {
+				workspaceId,
+				installId: installRow.id,
+				triggerSourceItemId: sourceItemId,
+			})
+			continue
+		}
 		const metadata = installMetadata(installRow.id, sourceItemId, rewritten)
 		const [row] = await tx
 			.insert(triggers)
@@ -286,27 +309,45 @@ export async function installLoopInTransaction(
 	}
 
 	// Create the Loop object this install represents (see route comment) and
-	// link it back on the install row.
-	const [loopObject] = await tx
-		.insert(objects)
-		.values({
-			workspaceId,
-			type: 'loop',
-			title: loop.name,
-			content: loop.description,
-			// Marketplace templates are pre-vetted, but the loop is still new to
-			// this workspace's data — start it at `pilot` rather than
-			// `live` so its first runs get a look before it's fully
-			// trusted here.
-			status: 'pilot',
-			createdBy: actorId,
-			metadata: {
-				installed_from_marketplace_loop_id: loopId,
-				trigger_ids: provisionedTriggerIds,
-				...loopSettingsForInstall(readLoopSettings(loop.loopSettings)),
-			},
-		})
-		.returning()
+	// link it back on the install row. A flow that ships `adoptExisting` links the workspace's own
+	// hand-made flow of the same name instead of creating a second one.
+	const shippedSettings = readLoopSettings(loop.loopSettings)
+	const adopted = shippedSettings?.adoptExisting
+		? await adoptExistingLoopObject(tx, {
+				workspaceId,
+				title: loop.name,
+				loopId,
+				provisionedTriggerIds,
+				boundActorIds: new Set(
+					[...sourceToLocal].filter(([source]) => isRoleActorId(source)).map(([, local]) => local),
+				),
+				settings: shippedSettings,
+			})
+		: null
+	let loopObject = adopted
+	if (!loopObject) {
+		const [created] = await tx
+			.insert(objects)
+			.values({
+				workspaceId,
+				type: 'loop',
+				title: loop.name,
+				content: loop.description,
+				// Marketplace templates are pre-vetted, but the loop is still new to
+				// this workspace's data — start it at `pilot` rather than
+				// `live` so its first runs get a look before it's fully
+				// trusted here.
+				status: 'pilot',
+				createdBy: actorId,
+				metadata: {
+					installed_from_marketplace_loop_id: loopId,
+					trigger_ids: provisionedTriggerIds,
+					...loopSettingsForInstall(readLoopSettings(loop.loopSettings)),
+				},
+			})
+			.returning()
+		loopObject = created ?? null
+	}
 	if (!loopObject) throw new Error('Failed to insert loop object for install')
 
 	await tx
@@ -331,7 +372,8 @@ export async function installLoopInTransaction(
 	// The loop's onboarding checklist, if it ships one: a parent task and a child task per
 	// prerequisite, driven by the bundled agent it names.
 	let checklistStart: ChecklistStart | null = null
-	const checklist = readLoopSettings(loop.loopSettings)?.checklist
+	// An adopted flow is already running, so it does not get a first-day checklist.
+	const checklist = adopted ? undefined : readLoopSettings(loop.loopSettings)?.checklist
 	if (checklist) {
 		const driverActorId = checklist.driverSourceItemId
 			? (sourceToLocal.get(checklist.driverSourceItemId) ?? null)
@@ -351,7 +393,7 @@ export async function installLoopInTransaction(
 	await recordEvent(tx, {
 		workspaceId,
 		actorId,
-		action: 'created',
+		action: adopted ? 'updated' : 'created',
 		entityType: 'loop',
 		entityId: loopObject.id,
 		data: loopObject,
@@ -372,4 +414,99 @@ export async function installLoopInTransaction(
 	})
 
 	return { installed: { ...installRow, objectId: loopObject.id }, provisioned, checklistStart }
+}
+
+/**
+ * Links a hand-made flow the workspace already has, with the same title, to this install instead of
+ * creating a second one. Only taken when exactly one flow with that title is not yet marketplace-linked;
+ * with none or several nothing is adopted and the install creates its own flow. Its content, status,
+ * comments and tabs stay as they are; a tab with the same name as a shipped one is kept (the view
+ * sync skips a taken name). Of the triggers it ran before, only those the bundle replaces (named in
+ * `replacesTriggerNames`, running on an agent this install bound) are switched off, not deleted, and
+ * their ids are kept on the flow as `replaced_trigger_ids` so they can be switched back on. Any other
+ * trigger on the flow is left running and named in the log. Returns null when there is nothing to adopt.
+ */
+async function adoptExistingLoopObject(
+	tx: Transaction,
+	params: {
+		workspaceId: string
+		title: string
+		loopId: string
+		provisionedTriggerIds: string[]
+		boundActorIds: Set<string>
+		settings: LoopSettings
+	},
+): Promise<typeof objects.$inferSelect | null> {
+	const { workspaceId, title, loopId, provisionedTriggerIds, boundActorIds, settings } = params
+	const candidates = await tx
+		.select()
+		.from(objects)
+		.where(
+			and(
+				eq(objects.workspaceId, workspaceId),
+				eq(objects.type, 'loop'),
+				eq(objects.title, title),
+				sql`coalesce(${objects.metadata}->>'installed_from_marketplace_loop_id', '') = ''`,
+			),
+		)
+		.limit(2)
+	const [existing] = candidates
+	if (candidates.length !== 1 || !existing) {
+		if (candidates.length > 1) {
+			logger.warn('Marketplace flow not adopted: several unlinked flows share its title', {
+				workspaceId,
+				title,
+			})
+		}
+		return null
+	}
+
+	const meta = (existing.metadata as Record<string, unknown> | null) ?? {}
+	const oldTriggerIds = Array.isArray(meta.trigger_ids)
+		? (meta.trigger_ids as unknown[]).filter((id): id is string => typeof id === 'string')
+		: []
+	const replaces = new Set(settings.replacesTriggerNames ?? [])
+	const replacedIds: string[] = []
+	const keptNames: string[] = []
+	if (oldTriggerIds.length > 0) {
+		const oldTriggers = await tx
+			.select({ id: triggers.id, name: triggers.name, targetActorId: triggers.targetActorId })
+			.from(triggers)
+			.where(and(eq(triggers.workspaceId, workspaceId), inArray(triggers.id, oldTriggerIds)))
+		for (const t of oldTriggers) {
+			if (replaces.has(t.name) && boundActorIds.has(t.targetActorId)) replacedIds.push(t.id)
+			else keptNames.push(t.name)
+		}
+	}
+	if (replacedIds.length > 0) {
+		await tx
+			.update(triggers)
+			.set({ enabled: false, updatedAt: new Date() })
+			.where(and(eq(triggers.workspaceId, workspaceId), inArray(triggers.id, replacedIds)))
+	}
+	logger.info('Marketplace flow adopted', {
+		workspaceId,
+		title,
+		flowId: existing.id,
+		switchedOffTriggers: replacedIds.length,
+		leftRunningTriggers: keptNames,
+	})
+
+	// The install's triggers replace the old ones in the flow's list. A trigger left running stays in it.
+	const keptIds = oldTriggerIds.filter((id) => !replacedIds.includes(id))
+	const [updated] = await tx
+		.update(objects)
+		.set({
+			metadata: {
+				...meta,
+				...loopSettingsPatch(settings, meta),
+				installed_from_marketplace_loop_id: loopId,
+				trigger_ids: [...provisionedTriggerIds, ...keptIds],
+				...(replacedIds.length > 0 ? { replaced_trigger_ids: replacedIds } : {}),
+			},
+			updatedAt: new Date(),
+		})
+		.where(eq(objects.id, existing.id))
+		.returning()
+	return updated ?? null
 }

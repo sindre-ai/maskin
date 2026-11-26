@@ -19,6 +19,7 @@ import { MEETING_LOOP } from '../../lib/marketplace-loops/meeting-loop'
 import { PRODUCT_RELEASE_LOOP } from '../../lib/marketplace-loops/product-release-loop'
 import { PRODUCT_USAGE_LOOP } from '../../lib/marketplace-loops/product-usage-loop'
 import { SIGNAL_INTAKE_LOOP } from '../../lib/marketplace-loops/signal-intake-loop'
+import { WORKSPACE_IMPROVEMENTS_LOOP } from '../../lib/marketplace-loops/workspace-improvements-loop'
 import { createTestContext } from '../setup'
 
 const ALL_PACKAGES = [
@@ -31,6 +32,7 @@ const ALL_PACKAGES = [
 	PRODUCT_USAGE_LOOP,
 	ACCOUNTING_LOOP,
 	SIGNAL_INTAKE_LOOP,
+	WORKSPACE_IMPROVEMENTS_LOOP,
 ]
 
 function matchingMarketplaceRows() {

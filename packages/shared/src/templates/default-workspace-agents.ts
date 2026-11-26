@@ -1129,23 +1129,6 @@ If firing:
 		enabled: true,
 	},
 	{
-		name: 'Capture outcome',
-		type: 'event',
-		config: {
-			action: 'status_changed',
-			entity_type: 'insight',
-		},
-		actionPrompt: `You are the Workspace Coach running the feedback step of the 'Workspace improvements' loop.
-
-An insight just changed status. Before doing anything:
-1. Check it is a member of the 'Workspace improvements' loop (list_relationships with target_id=<this insight>, type=in_loop). If not, exit silently.
-2. Check its new status is one of: scored, parked, discarded. If not, exit silently.
-
-If both checks pass, briefly record on the insight (create_comment, attention 1) what actually happened to the recommendation: was the fix applied by the user, ignored, or explicitly rejected — and if you can tell from recent events (get_events on the target agent/loop/trigger), why. Keep it 2–4 sentences. This feedback is what makes future coaching sharper — the goal is a record of 'what actually shipped', not commentary.`,
-		targetActor$id: 'workspace_coach',
-		enabled: true,
-	},
-	{
 		name: 'Daily briefing',
 		type: 'cron',
 		config: {
@@ -1177,68 +1160,6 @@ Do not post a comment, notification or For you item about the briefing. The file
 		targetActor$id: 'chief_of_staff',
 		enabled: true,
 	},
-	{
-		name: 'Cluster & recommend',
-		type: 'cron',
-		config: {
-			expression: '0 9 * * *',
-			skip_when_idle: true,
-		},
-		actionPrompt: `You are the Chief of Staff running the daily clustering step of the 'Workspace improvements' loop.
-
-1. Find all insights currently in this loop (list_relationships with source_id=<this loop id>, type=in_loop) whose status is 'new' or 'processing'. If none, exit silently — do not post a 'nothing to report' comment.
-2. Read each insight's body (get_objects). Cluster them by theme: same target agent, same loop, same trigger, or a shared pattern across multiple agents (e.g. 'three agents all missing a Slack MCP').
-3. For each cluster, produce ONE specific recommendation with a concrete fix — exact prompt-edit language, a specific tool to attach, a cadence change, or a retirement proposal. Vague 'this could be improved' is a failure of this step.
-4. Post ONE consolidated comment on THIS LOOP object (create_comment, target = the loop) with one section per cluster. Score attention honestly from the user's point of view (reserve 5 for genuine blockers). Link each cluster back to its source insight IDs.
-5. Update every insight you touched: move to status 'clustered' if it's now part of a cluster awaiting user decision, or 'scored' if it's a standalone recommendation you've already surfaced.
-6. If the same theme keeps recurring across days with no user action, escalate in the comment ('third day this has come up — worth a call?') rather than silently re-posting.`,
-		targetActor$id: 'chief_of_staff',
-		enabled: true,
-	},
-	{
-		name: 'Workspace Coach — session completed (onboarding)',
-		type: 'event',
-		config: {
-			action: 'status_changed',
-			entity_type: 'session',
-		},
-		actionPrompt: `A session just completed. Decide whether it warrants an onboarding review (Beat 1 of your system prompt).
-
-Fire a review only if:
-- The session belongs to an agent that has ≤3 completed sessions total (i.e. is in its first-3-sessions window), OR
-- The session was flagged as a dry run.
-
-Otherwise, skip silently — the daily sweep will pick up patterns.
-
-If reviewing: fetch get_session(include_logs=true), get_actor on the agent, then file **at most one** coaching insight per the template, linked to the agent via a relates_to relationship. Set \`metadata.tags: "workspace-improvements, onboarding-review"\`.
-
-**Duplicate-check first.** If a prior onboarding-review insight for this agent is still open (status in [new, processing, clustered, scored, parked]), do NOT file a new one — either add new evidence to the existing insight via update_objects, or if you have no substantive new evidence, skip filing entirely. Silence is a valid outcome.
-
-Also: do not audit sessions of the Workspace Coach itself (per your scope boundaries — you don't audit yourself). Skip silently if the session's actor is the Workspace Coach.`,
-		targetActor$id: 'workspace_coach',
-		enabled: true,
-	},
-	{
-		name: 'Workspace Coach — daily sweep',
-		type: 'cron',
-		config: {
-			expression: '0 9 * * *',
-			skip_when_idle: true,
-		},
-		actionPrompt: `Run your daily workspace sweep as defined in Beat 2 of your system prompt.
-
-Cover in one pass:
-1. Every agent (except yourself) — recent sessions (list_sessions + sample get_session with include_logs=true). Are they succeeding at their stated job at reasonable session cost? Any stalled/failed patterns? Any signs of wasted tokens?
-2. Every loop — get_loop + list_relationships(type=in_loop). Objects entering AND closing, or dead?
-3. Every trigger — does cadence match what it actually produces?
-4. Recent human feedback — get_comments on bets and other objects updated in the last 24h. Is the user pointing at something an agent should be doing differently?
-
-Consolidate findings into **at most a handful** of coaching insights (one per theme, not one per micro-issue — and zero is fine). Every insight MUST set \`metadata.tags\` to \`workspace-improvements\` plus one category tag (workspace-sweep, wasted-tokens, user-feedback-signal, retire-candidate, or skill-candidate as appropriate). Run the duplicate check before filing — update existing open insights with new evidence rather than filing near-duplicates. Link each insight to its target via a relates_to or informs relationship.
-
-If nothing worth flagging today, file nothing — silence is a valid outcome.`,
-		targetActor$id: 'workspace_coach',
-		enabled: true,
-	},
 ]
 
 /**
@@ -1259,23 +1180,12 @@ export interface SeedLoop {
 	triggerNames: string[]
 }
 
-export const DEFAULT_WORKSPACE_LOOPS: SeedLoop[] = [
-	{
-		$id: 'workspace_improvements',
-		name: 'Workspace improvements',
-		content:
-			"Turns Workspace Coach's coaching insights into actionable, clustered recommendations for the user. Coach files [workspace-improvements] insights (from onboarding reviews and daily sweeps); Chief of Staff clusters them daily by theme and posts a single consolidated recommendation comment on this flow object; Coach captures outcomes when an insight closes, so future coaching learns from what got applied vs. rejected.",
-		entryCondition:
-			'An insight is created with title starting `[workspace-improvements]` (status=new).',
-		closeCondition: 'The insight reaches status scored, parked, or discarded.',
-		triggerNames: [
-			'Workspace Coach — daily sweep',
-			'Workspace Coach — session completed (onboarding)',
-			'Cluster & recommend',
-			'Capture outcome',
-		],
-	},
-]
+/**
+ * Empty: Workspace improvements is no longer seeded by hand. Every new workspace installs it from
+ * the marketplace (see DEFAULT_MARKETPLACE_LOOP_SLUGS in workspace-bootstrap), so later versions
+ * reach it. The seeding path stays for the next default flow that needs it.
+ */
+export const DEFAULT_WORKSPACE_LOOPS: SeedLoop[] = []
 
 /**
  * Knowledge objects auto-seeded into every new Maskin workspace at bootstrap.

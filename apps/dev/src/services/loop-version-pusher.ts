@@ -43,9 +43,12 @@ import {
 	findProvisionedSkillBySourceItem,
 	findWorkspaceSkillByName,
 	installMetadata,
+	isRoleActorId,
 	partitionProvisionedActors,
 	partitionProvisionedSkills,
+	resolveRoleActors,
 	rewriteWiring,
+	roleIdsOfItems,
 } from './loop-provisioning'
 import {
 	type ViewSyncCounts,
@@ -303,6 +306,14 @@ export class LoopVersionPusher {
 		for (const row of installed) {
 			if (row.sourceItemId) sourceToLocal.set(row.sourceItemId, row.id)
 		}
+		// Agents the bundle names by role instead of shipping: bound to the workspace's own agent.
+		for (const [roleId, localId] of await resolveRoleActors(
+			this.db,
+			install.workspaceId,
+			roleIdsOfItems(loopItems),
+		)) {
+			sourceToLocal.set(roleId, localId)
+		}
 
 		// The cron has no request actor, so provisioned rows — and the audit event
 		// below — are attributed to a workspace actor (system actor if present,
@@ -360,6 +371,13 @@ export class LoopVersionPusher {
 			for (const item of loopItems) {
 				const existing = installedBySourceId.get(item.sourceItemId)
 				const rewritten = rewriteWiring(item.itemSnapshot, sourceToLocal)
+				// A trigger for a role the workspace has no agent for stays out, as at install.
+				if (
+					item.itemType === 'trigger' &&
+					isRoleActorId(rewritten.targetActorId ?? rewritten.target_actor_id)
+				) {
+					continue
+				}
 				const metadata = installMetadata(install.id, item.sourceItemId, rewritten)
 				if (item.itemType === 'skill') {
 					const attachedActorIds = Array.isArray(item.itemSnapshot.attachedActorIds)

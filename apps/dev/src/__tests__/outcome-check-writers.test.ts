@@ -69,6 +69,11 @@ const WRITERS: Record<string, Writer> = {
 		via: 'not-an-agent-route',
 		note: 'The hourly marketplace update renaming an installed flow and adding its Setup section. The patch only carries title and content (loopIdentityPatch), never a status.',
 	},
+	'services/loop-install.ts :: { metadata: { ...meta, ...loopSettingsPatch(settings, meta), installed_from_marketplace_loop_id: loopId, trigger_ids: [...provisionedTriggerIds, ...keptIds], ...(replacedIds.length > 0 ? { replaced_trigger_ids: replacedIds } : {}), }, updatedAt: new Date(), }':
+		{
+			via: 'not-an-agent-route',
+			note: 'Installing a marketplace flow into a workspace that already has a hand-made one of the same name links it in place. It only sets metadata (the install link, trigger ids and flow settings), never a status.',
+		},
 }
 
 function sourceFiles(dir: string): string[] {
