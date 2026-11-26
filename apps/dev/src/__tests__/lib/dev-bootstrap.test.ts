@@ -103,7 +103,7 @@ describe('maybeBootstrapDev', () => {
 		mockResults.selectQueue = [[]] // findExistingCredentials returns no rows
 		// Unqueued selects fall through to [] — that's how seedDefaultAgentActors'
 		// per-agent "already a member?" check reads as "not present" here, so each
-		// of the five default agents takes the insert branch below.
+		// of the four default agents takes the insert branch below.
 		mockResults.insertQueue = [
 			[{ id: 'actor-1', name: 'You', email: 'dev@local' }],
 			[], // api_keys insert for the human's primary key
@@ -115,8 +115,6 @@ describe('maybeBootstrapDev', () => {
 			[{ workspaceId: 'ws-1', actorId: 'coach-1', role: 'member' }],
 			[{ id: 'chief-1', name: 'Chief of Staff', isSystem: true }],
 			[{ workspaceId: 'ws-1', actorId: 'chief-1', role: 'member' }],
-			[{ id: 'driver-1', name: 'Driver' }],
-			[{ workspaceId: 'ws-1', actorId: 'driver-1', role: 'member' }],
 			[{ id: 'signal-1', name: 'Signal Analyst' }],
 			[{ workspaceId: 'ws-1', actorId: 'signal-1', role: 'member' }],
 			[{ id: 'researcher-1', name: 'Researcher' }],
@@ -152,15 +150,10 @@ describe('maybeBootstrapDev', () => {
 		const insertedNames = calls.inserts
 			.filter((v): v is { name?: string } => typeof v === 'object' && v !== null && 'name' in v)
 			.map((v) => v.name)
-		for (const name of [
-			'Workspace Coach',
-			'Chief of Staff',
-			'Driver',
-			'Signal Analyst',
-			'Researcher',
-		]) {
+		for (const name of ['Workspace Coach', 'Chief of Staff', 'Signal Analyst', 'Researcher']) {
 			expect(insertedNames).toContain(name)
 		}
+		expect(insertedNames).not.toContain('Driver')
 
 		const settingsUpdate = calls.updates.find(
 			(u): u is { settings: { default_agent_id: string } } =>
