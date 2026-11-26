@@ -124,11 +124,11 @@ describe('Product Delivery flow definition', () => {
 		expect(merge.length).toBe(2)
 		for (const t of merge) {
 			expect(t.actionPrompt).toContain('merge-gate')
-			expect(t.actionPrompt).toMatch(/Never update a pull request branch|never update/i)
 		}
 		const gate = PRODUCT_DELIVERY_SKILL_IDS.map(getSkillData).find((s) => s.name === 'merge-gate')
 		expect(gate?.content).toMatch(/default branch/)
 		expect(gate?.content).toMatch(/auto-merge/)
+		expect(gate?.content).toMatch(/Never update a pull request branch/)
 	})
 
 	it('has the code host and analytics fallbacks in the prompts', () => {
