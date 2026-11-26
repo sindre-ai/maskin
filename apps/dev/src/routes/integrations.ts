@@ -2320,10 +2320,12 @@ app.openapi(callbackRoute, (async (c) => {
 			ownerLogin,
 		})
 	} else {
-		// A second Gmail account is usually a personal inbox. It starts with no agent access, so
-		// the first account's open default never reaches it; a person grants each agent in Settings.
+		// A second Gmail or Calendar account is usually a personal one. It starts with no agent
+		// access, so the first account's open default never reaches it; a person grants each
+		// agent in Settings.
 		const keepOffForAgents =
-			providerName === 'gmail' && (await hasOtherActiveRow(pendingIntegration.id))
+			(providerName === 'gmail' || providerName === 'google-calendar') &&
+			(await hasOtherActiveRow(pendingIntegration.id))
 		await db
 			.update(integrations)
 			.set({

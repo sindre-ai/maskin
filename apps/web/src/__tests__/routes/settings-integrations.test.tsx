@@ -703,6 +703,50 @@ describe('IntegrationsPage', () => {
 		})
 	})
 
+	describe('google calendar accounts', () => {
+		const calendarProvider = {
+			name: 'google-calendar',
+			displayName: 'Google Calendar',
+			authType: 'oauth2',
+			events: [],
+			externalIdDisplay: 'email' as const,
+		}
+		const calendarRow = (id: string, externalId: string) =>
+			buildIntegrationResponse({ id, provider: 'google-calendar', status: 'active', externalId })
+
+		it('lists each connected account by its address, each with its own Disconnect', async () => {
+			const user = userEvent.setup()
+			mockUseIntegrations.mockReturnValue({
+				data: [calendarRow('gc-1', 'a@meshfirm.com'), calendarRow('gc-2', 'b@gmail.com')],
+				isLoading: false,
+			})
+			mockUseProviders.mockReturnValue({ data: [calendarProvider], isLoading: false })
+
+			render(<IntegrationsPage />)
+			await user.click(screen.getByRole('button', { name: /Google Calendar · 2/ }))
+
+			expect(screen.getByText('2 connected accounts')).toBeInTheDocument()
+			expect(screen.getByText('a@meshfirm.com')).toBeInTheDocument()
+			expect(screen.getByText('b@gmail.com')).toBeInTheDocument()
+			expect(screen.getAllByRole('button', { name: 'Disconnect' })).toHaveLength(2)
+		})
+
+		it('"Connect another account" starts the Google sign-in for google-calendar', async () => {
+			const user = userEvent.setup()
+			mockUseIntegrations.mockReturnValue({
+				data: [calendarRow('gc-1', 'a@meshfirm.com')],
+				isLoading: false,
+			})
+			mockUseProviders.mockReturnValue({ data: [calendarProvider], isLoading: false })
+
+			render(<IntegrationsPage />)
+			await user.click(screen.getByRole('button', { name: /Google Calendar · 1/ }))
+			await user.click(screen.getByRole('button', { name: 'Connect another account' }))
+
+			expect(mockConnect).toHaveBeenCalledWith({ provider: 'google-calendar' })
+		})
+	})
+
 	it('offers "Add existing" only when a GitHub installation is bindable', async () => {
 		// GitHub installs its App once per org, so a workspace that wants an org
 		// already connected elsewhere binds the existing installation instead of
