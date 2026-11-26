@@ -31,10 +31,12 @@ export const config: ProviderConfig = {
 			pkce: true,
 			// access_type=offline + prompt=consent are the documented way to force
 			// Google to issue a refresh_token. Without them only the first connect
-			// for a given (user, client) pair gets one.
+			// for a given (user, client) pair gets one. select_account makes Google show the
+			// account chooser even when only one Google session is open, so "Connect another
+			// account" can reach a second calendar (same as Gmail).
 			extraAuthParams: {
 				access_type: 'offline',
-				prompt: 'consent',
+				prompt: 'select_account consent',
 				include_granted_scopes: 'true',
 			},
 			clientIdEnv: 'GOOGLE_CALENDAR_CLIENT_ID',

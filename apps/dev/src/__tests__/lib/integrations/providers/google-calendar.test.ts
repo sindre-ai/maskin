@@ -22,7 +22,7 @@ describe('Google Calendar provider config', () => {
 			expect(config.auth.config.pkce).toBe(true)
 			expect(config.auth.config.extraAuthParams).toMatchObject({
 				access_type: 'offline',
-				prompt: 'consent',
+				prompt: 'select_account consent',
 			})
 		}
 	})
@@ -68,7 +68,7 @@ describe('Google Calendar provider config', () => {
 				].join(' '),
 			)
 			expect(url.searchParams.get('access_type')).toBe('offline')
-			expect(url.searchParams.get('prompt')).toBe('consent')
+			expect(url.searchParams.get('prompt')).toBe('select_account consent')
 			expect(url.searchParams.get('code_challenge_method')).toBe('S256')
 			expect(url.searchParams.get('client_id')).toBe('test-client-id')
 		} finally {

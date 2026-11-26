@@ -1645,6 +1645,89 @@ describe('Integrations Routes', () => {
 			)
 			expect(promoteCalls).toHaveLength(0)
 		})
+
+		it('connecting a second Google Calendar account adds a row under its own email, with no agent access', async () => {
+			// Two accounts are two rows only because each carries its own externalId (the
+			// Google email). The second connect must promote its pending row to that email,
+			// not refresh the first account, and start with no agent access like a second Gmail.
+			const providerName = 'google-calendar'
+			const secondEmail = 'second@meshfirm.com'
+
+			const testProvider: ResolvedProvider = {
+				config: {
+					name: providerName,
+					displayName: 'Google Calendar',
+					auth: {
+						type: 'oauth2',
+						config: {
+							authorizationUrl: 'http://example.test/auth',
+							tokenUrl: 'http://example.test/token',
+							scopes: [],
+							clientIdEnv: 'TEST_CLIENT_ID',
+							clientSecretEnv: 'TEST_CLIENT_SECRET',
+						},
+					},
+				},
+				customAuth: {
+					getInstallUrl: () => 'http://example.test/auth',
+					handleCallback: async () => ({ accessToken: 'test-token' }),
+					getAccessToken: async () => 'test-token',
+				},
+				resolveExternalId: async () => secondEmail,
+			}
+			vi.mocked(getProvider).mockReturnValueOnce(testProvider)
+
+			const { encrypt } = await import('../../lib/crypto')
+			const nonce = 'second-calendar-nonce'
+			const state = encrypt(
+				JSON.stringify({
+					workspaceId: wsId,
+					actorId: 'test-actor-id',
+					ts: Date.now(),
+					nonce,
+				}),
+			)
+			const pendingIntegration = buildIntegration({
+				workspaceId: wsId,
+				provider: providerName,
+				status: 'pending',
+				externalId: nonce,
+			})
+			const firstAccount = buildIntegration({
+				workspaceId: wsId,
+				provider: providerName,
+				status: 'active',
+				externalId: 'first@meshfirm.com',
+				config: { system_actor_id: 'system-actor-id' },
+			})
+			const member = buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })
+			const systemActor = { id: 'system-actor-id', type: 'system', name: 'Google Calendar' }
+			const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.selectQueue = [
+				[pendingIntegration], // pending integration lookup
+				[member], // membership check
+				[systemActor], // system actor lookup
+				[{ workspaceId: wsId, actorId: systemActor.id }], // existing member check
+				[], // no row for this email yet: a new account, not a reconnect
+				[firstAccount], // another active row exists, so this is an extra account
+			]
+
+			const res = await app.request(
+				callbackGet(
+					`/api/integrations/${providerName}/callback?state=${encodeURIComponent(state)}`,
+					nonce,
+					providerName,
+				),
+			)
+
+			expect(res.status).toBe(302)
+			const promoteCall = calls.updates.find(
+				(u) => u && typeof u === 'object' && 'externalId' in (u as Record<string, unknown>),
+			) as { externalId?: string; status?: string; defaultAgentAccess?: string } | undefined
+			expect(promoteCall?.externalId).toBe(secondEmail)
+			expect(promoteCall?.status).toBe('active')
+			expect(promoteCall?.defaultAgentAccess).toBe('none')
+		})
 	})
 
 	describe('DELETE /api/integrations/:id', () => {
