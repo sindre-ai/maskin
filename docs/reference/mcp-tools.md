@@ -194,11 +194,13 @@ No registered tool description is over 1,500 characters; **packages/mcp/src/__te
 
 ### delete_agent: a person approves first
 
-An agent may delete another agent only after a person says yes on a decision card.
+An agent may delete another agent only after a person says yes, on a decision card or in a chat the agent is in.
 
 1. The agent posts **create_comment** on a relevant object with a **decision**, mentions the person, and puts **delete_agent: { actor_id }** on the destructive option that approves it. The API refuses a card that names itself, a person, a system agent, an agent of another workspace, or more than one agent.
 2. The person taps that option. Their reply records a **deletion_approved** event on the agent, naming the asking agent. Nothing is deleted by the tap. Replies from an agent, or sent through MCP, never approve.
 3. The reply wakes the asking agent, which calls **delete_agent** with the same **id**. **DELETE /api/actors/:id** from an agent is allowed only while an approval from the last 24 hours names that agent as the asker and that target. Otherwise it is a 403 that says how to ask. An agent cannot delete itself.
+
+**A yes in a chat works too.** The agent links the agent to delete in a message in a chat it is in, and the person says yes there. The agent then calls **delete_agent** with the **id** and **chat_message_id** set to the id of that yes message. The server reads the message itself and accepts it only when a person who can write in the workspace wrote it, in a chat the agent is in, as their newest message there, within the last 24 hours, after an earlier message in that chat named the agent (and that earlier message was not edited after the yes). It records the same **deletion_approved** event as a tap, with **via: chat** and the message id. A yes written as a comment on an object does not count yet: comments do not record whether a person's own app or an AI tool sent them.
 
 A person deleting an agent from the app is unchanged and needs no approval.
 
