@@ -1,5 +1,5 @@
 import type { IntegrationResponse, ProviderInfo } from '@/lib/api'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
@@ -115,7 +115,7 @@ describe('IntegrationsPage — resend', () => {
 		mockUseProviders.mockReset()
 	})
 
-	it('shows the Resend provider card AND surfaces a Finish setup affordance for awaiting_secret rows', async () => {
+	it('shows the Resend provider card AND surfaces a Finish setup affordance for awaiting_secret rows', () => {
 		mockUseProviders.mockReturnValue({ data: [RESEND_PROVIDER], isLoading: false })
 		mockUseIntegrations.mockReturnValue({
 			data: [AWAITING_SECRET_RESEND_ROW],
@@ -128,14 +128,18 @@ describe('IntegrationsPage — resend', () => {
 			</TestWrapper>,
 		)
 
-		expect(screen.getByRole('button', { name: /finish setup/i })).toBeInTheDocument()
-		expect(screen.getByText(/mail\.example\.com/)).toBeInTheDocument()
-		// The provider itself is not connected yet, so its card is under Discover.
-		await userEvent.click(screen.getByRole('button', { name: /^Discover/ }))
-		expect(screen.getByText('Resend')).toBeInTheDocument()
+		const strip = within(screen.getByRole('region', { name: 'Needs attention' }))
+		expect(strip.getByRole('button', { name: /finish setup/i })).toBeInTheDocument()
+		expect(
+			strip.getByText("Resend setup isn't finished. It's waiting for the webhook signing secret."),
+		).toBeInTheDocument()
+		// The provider itself is not connected yet, so its row is in All integrations.
+		expect(
+			within(screen.getByRole('region', { name: 'All integrations' })).getByText('Resend'),
+		).toBeInTheDocument()
 	})
 
-	describe('awaiting-secret block and the Connected filters', () => {
+	describe('the needs-attention strip while searching and filtering', () => {
 		beforeEach(() => {
 			mockUseProviders.mockReturnValue({ data: [RESEND_PROVIDER], isLoading: false })
 			mockUseIntegrations.mockReturnValue({
@@ -151,10 +155,11 @@ describe('IntegrationsPage — resend', () => {
 				</TestWrapper>,
 			)
 
-		it('hides when the search does not match Resend', async () => {
+		// A half-finished setup is not hidden by a search or a pill: it is the thing to fix.
+		it('stays when the search is for another tool', async () => {
 			renderPage()
 			await userEvent.type(screen.getByRole('searchbox', { name: /Search integrations/ }), 'slack')
-			expect(screen.queryByRole('button', { name: /finish setup/i })).not.toBeInTheDocument()
+			expect(screen.getByRole('button', { name: /finish setup/i })).toBeInTheDocument()
 		})
 
 		it('stays when the search matches Resend', async () => {
@@ -163,11 +168,9 @@ describe('IntegrationsPage — resend', () => {
 			expect(screen.getByRole('button', { name: /finish setup/i })).toBeInTheDocument()
 		})
 
-		it('hides under a category chip Resend is not in, and shows under its own', async () => {
+		it('stays under any pill', async () => {
 			renderPage()
 			await userEvent.click(screen.getByRole('button', { name: 'Code' }))
-			expect(screen.queryByRole('button', { name: /finish setup/i })).not.toBeInTheDocument()
-			await userEvent.click(screen.getByRole('button', { name: 'Email & calendar' }))
 			expect(screen.getByRole('button', { name: /finish setup/i })).toBeInTheDocument()
 		})
 	})

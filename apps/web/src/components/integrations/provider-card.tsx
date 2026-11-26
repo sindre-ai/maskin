@@ -32,6 +32,9 @@ interface ProviderCardProps {
 	chip?: string
 	/** Start with the chevron section open, e.g. when focus is being returned to a button inside it. */
 	defaultOpen?: boolean
+	/** `row` draws a tool that is not connected yet as the compact borderless row of the shelves
+	 *  on Settings → Integrations: logo, name, one line, action. Connected tools keep the card. */
+	layout?: 'card' | 'row'
 }
 
 /**
@@ -54,8 +57,25 @@ export function ProviderCard({
 	logo,
 	chip,
 	defaultOpen = false,
+	layout = 'card',
 }: ProviderCardProps) {
 	const [open, setOpen] = useState(defaultOpen)
+	if (logo && layout === 'row' && tone === 'available') {
+		return (
+			<div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border-subtle py-3">
+				{logo}
+				<div className="min-w-0 flex-1 basis-28">
+					<div className="flex items-center gap-2">
+						<p className="truncate text-[15px] font-semibold text-foreground">{name}</p>
+						{badge}
+					</div>
+					{subtitle && <p className="truncate text-[13px] text-muted-foreground">{subtitle}</p>}
+					{notes}
+				</div>
+				{actions}
+			</div>
+		)
+	}
 	if (logo) {
 		const expandable = tone !== 'available'
 		const dot = tone === 'warning' ? 'bg-warning' : tone === 'connected' ? 'bg-success' : undefined

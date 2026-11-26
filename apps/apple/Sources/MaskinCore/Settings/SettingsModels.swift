@@ -139,10 +139,12 @@ public struct ConnectedIntegration: Identifiable, Sendable, Hashable {
 	/// A line the provider keeps on its own row (Microsoft: what it covers, or that the company's
 	/// IT admin has not turned on transcript access). Written by the server; shown as is.
 	public var note: String?
+	/// The scopes the token lacks, by the provider's own names. Only the Slack line reads them.
+	public var missingScopeNames: [String]
 
 	public init(
 		id: String, provider: String, state: State, externalId: String? = nil, displayName: String? = nil,
-		note: String? = nil
+		note: String? = nil, missingScopeNames: [String] = []
 	) {
 		self.id = id
 		self.provider = provider
@@ -150,11 +152,13 @@ public struct ConnectedIntegration: Identifiable, Sendable, Hashable {
 		self.externalId = externalId
 		self.displayName = displayName
 		self.note = note
+		self.missingScopeNames = missingScopeNames
 	}
 
 	public init(
 		id: String, provider: String, status: String, externalId: String?, missingScopes: Int,
-		needsReconnect: Bool, displayName: String? = nil, note: String? = nil
+		needsReconnect: Bool, displayName: String? = nil, note: String? = nil,
+		missingScopeNames: [String] = []
 	) {
 		let state: State
 		switch status {
@@ -164,7 +168,7 @@ public struct ConnectedIntegration: Identifiable, Sendable, Hashable {
 		}
 		self.init(
 			id: id, provider: provider, state: state, externalId: externalId, displayName: displayName,
-			note: note)
+			note: note, missingScopeNames: missingScopeNames)
 	}
 }
 

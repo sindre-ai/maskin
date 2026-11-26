@@ -134,6 +134,19 @@ describe('ToolsSection', () => {
 		expect(screen.queryByText('Docs search')).not.toBeInTheDocument()
 	})
 
+	it('opens the form when the page asks, and tells the page when it closes', async () => {
+		const user = userEvent.setup()
+		const onAddingChange = vi.fn()
+		const { rerender } = render(
+			<ToolsSection workspaceId="ws-1" adding={false} onAddingChange={onAddingChange} />,
+		)
+		expect(screen.queryByLabelText('Name')).not.toBeInTheDocument()
+		rerender(<ToolsSection workspaceId="ws-1" adding onAddingChange={onAddingChange} />)
+		expect(screen.getByLabelText('Name')).toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: 'Cancel' }))
+		expect(onAddingChange).toHaveBeenCalledWith(false)
+	})
+
 	it('saves a new http server from the form', async () => {
 		const user = userEvent.setup()
 		render(<ToolsSection workspaceId="ws-1" />)

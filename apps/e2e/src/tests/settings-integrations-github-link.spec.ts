@@ -34,8 +34,9 @@ async function gotoIntegrations(page: Page, workspaceId: string) {
 	// /api/events, so networkidle never fires. Brief settle after `load`.
 	await page.waitForLoadState('load')
 	await page.waitForTimeout(300)
-	// GitHub is not connected on a fresh account, so its card sits under Discover.
-	await openDiscover(page)
+	// GitHub is not connected on a fresh account, so its row is in All integrations. Popular
+	// repeats it on purpose, so lookups go through the full list.
+	return openDiscover(page)
 }
 
 test.describe('Settings — Integrations — add an existing GitHub org', () => {
@@ -46,11 +47,11 @@ test.describe('Settings — Integrations — add an existing GitHub org', () => 
 		}) => {
 			await mockLinkable(page)
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
-			await gotoIntegrations(page, account.workspaceId)
+			const list = await gotoIntegrations(page, account.workspaceId)
 
 			// toBeVisible() checks opacity + visibility, so a hover-only reveal
 			// (unreachable on touch) fails here rather than passing silently.
-			const addExisting = page.getByRole('button', { name: 'Add existing' })
+			const addExisting = list.getByRole('button', { name: 'Add existing' })
 			await expect(addExisting).toBeVisible()
 
 			await addExisting.click()
@@ -90,8 +91,8 @@ test.describe('Settings — Integrations — add an existing GitHub org', () => 
 			})
 		})
 
-		await gotoIntegrations(page, account.workspaceId)
-		await page.getByRole('button', { name: 'Add existing' }).click()
+		const list = await gotoIntegrations(page, account.workspaceId)
+		await list.getByRole('button', { name: 'Add existing' }).click()
 		await page.getByRole('button', { name: 'Add', exact: true }).click()
 
 		await expect(page.getByText('GitHub organization added to this workspace')).toBeVisible()
@@ -102,8 +103,8 @@ test.describe('Settings — Integrations — add an existing GitHub org', () => 
 		await mockLinkable(page)
 		for (const colorScheme of ['light', 'dark'] as const) {
 			await page.emulateMedia({ colorScheme })
-			await gotoIntegrations(page, account.workspaceId)
-			await expect(page.getByRole('button', { name: 'Add existing' })).toBeVisible()
+			const list = await gotoIntegrations(page, account.workspaceId)
+			await expect(list.getByRole('button', { name: 'Add existing' })).toBeVisible()
 		}
 	})
 

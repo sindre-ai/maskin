@@ -86,9 +86,19 @@ test.describe('Settings — Integrations scope-drift reconnect prompt', () => {
 
 			// Reachable on touch: toBeVisible() also fails on opacity:0 / hover-only
 			// reveals, which is the failure mode this assertion is guarding.
-			const reconnect = page.getByRole('button', { name: 'Reconnect' })
+			const reconnect = page.getByRole('button', { name: 'Reconnect', exact: true })
 			await expect(reconnect).toBeVisible()
 			await expect(reconnect).toBeEnabled()
+
+			// The same fix is also one line in the needs-attention strip above the shelves, so a
+			// broken tool is seen without opening its row.
+			const strip = page.getByRole('region', { name: 'Needs attention' })
+			await expect(
+				strip.getByText(
+					"Slack needs to be reconnected. Agents can't read channel history until you do.",
+				),
+			).toBeVisible()
+			await expect(strip.getByRole('button', { name: 'Reconnect Slack' })).toBeEnabled()
 
 			// Disconnect must survive alongside it — reconnecting and disconnecting
 			// are different intents and the row still needs both.
@@ -139,7 +149,7 @@ test.describe('Settings — Integrations scope-drift reconnect prompt', () => {
 			expect(color).not.toBe(background)
 			expect(color).not.toMatch(/rgba\(.*,\s*0\)$/)
 
-			await expect(page.getByRole('button', { name: 'Reconnect' })).toBeVisible()
+			await expect(page.getByRole('button', { name: 'Reconnect', exact: true })).toBeVisible()
 		})
 	}
 
@@ -158,7 +168,7 @@ test.describe('Settings — Integrations scope-drift reconnect prompt', () => {
 
 		await expect(page.getByText(/Update needed/)).toHaveCount(0)
 		await expect(page.getByText(/Slack agents need history access/)).toHaveCount(0)
-		await expect(page.getByRole('button', { name: 'Reconnect' })).toHaveCount(0)
+		await expect(page.getByRole('button', { name: /^Reconnect/ })).toHaveCount(0)
 		// Still connected, so Disconnect remains.
 		await expect(page.getByRole('button', { name: 'Disconnect' })).toBeVisible()
 	})

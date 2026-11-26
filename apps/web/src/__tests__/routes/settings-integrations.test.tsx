@@ -108,10 +108,15 @@ vi.mock('@/hooks/use-actors', () => ({
 }))
 
 vi.mock('@/components/shared/empty-state', () => ({
-	EmptyState: ({ title, description }: { title: string; description?: string }) => (
+	EmptyState: ({
+		title,
+		description,
+		action,
+	}: { title: string; description?: string; action?: React.ReactNode }) => (
 		<div>
 			<div>{title}</div>
 			{description && <div>{description}</div>}
+			{action}
 		</div>
 	),
 }))
@@ -128,9 +133,9 @@ import { Route } from '@/routes/_authed/$workspaceId/settings/integrations'
 
 const IntegrationsPage = (Route as unknown as { component: React.FC }).component
 
-/** Providers nobody has connected live on the Discover tab. */
-async function openDiscover() {
-	await userEvent.click(screen.getByRole('button', { name: /^Discover/ }))
+/** The full list of tools nobody has connected. Popular and New repeat some of them on purpose. */
+function allIntegrations() {
+	return within(screen.getByRole('region', { name: 'All integrations' }))
 }
 
 /** A connected provider is a collapsed card on the Connected tab; its actions sit inside. */
@@ -162,6 +167,17 @@ describe('IntegrationsPage', () => {
 		expect(screen.getByTestId('list-skeleton')).toBeInTheDocument()
 	})
 
+	it('keeps search and pills usable while loading', async () => {
+		mockUseIntegrations.mockReturnValue({ data: undefined, isLoading: true })
+		mockUseProviders.mockReturnValue({ data: undefined, isLoading: true })
+		render(<IntegrationsPage />)
+		const search = screen.getByRole('searchbox', { name: 'Search integrations and tools' })
+		await userEvent.type(search, 'sla')
+		expect(search).toHaveValue('sla')
+		expect(screen.getByRole('group', { name: 'Filter integrations' })).toBeInTheDocument()
+		expect(screen.getByTestId('list-skeleton')).toBeInTheDocument()
+	})
+
 	it('shows empty state when no providers available', () => {
 		mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
 		mockUseProviders.mockReturnValue({ data: [], isLoading: false })
@@ -179,9 +195,8 @@ describe('IntegrationsPage', () => {
 			isLoading: false,
 		})
 		render(<IntegrationsPage />)
-		await openDiscover()
-		expect(screen.getByText('Slack')).toBeInTheDocument()
-		expect(screen.getByText('GitHub')).toBeInTheDocument()
+		expect(allIntegrations().getByText('Slack')).toBeInTheDocument()
+		expect(allIntegrations().getByText('GitHub')).toBeInTheDocument()
 	})
 
 	it('shows Connect for disconnected and Disconnect for connected providers', async () => {
@@ -200,8 +215,7 @@ describe('IntegrationsPage', () => {
 		render(<IntegrationsPage />)
 		await expandCard('Slack')
 		expect(screen.getByRole('button', { name: 'Disconnect' })).toBeInTheDocument()
-		await openDiscover()
-		expect(screen.getByRole('button', { name: 'Connect' })).toBeInTheDocument()
+		expect(allIntegrations().getByRole('button', { name: 'Connect' })).toBeInTheDocument()
 	})
 
 	describe('Skjald connect dialog', () => {
@@ -216,7 +230,6 @@ describe('IntegrationsPage', () => {
 			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
 			mockUseProviders.mockReturnValue({ data: [skjaldProvider], isLoading: false })
 			render(<IntegrationsPage />)
-			await openDiscover()
 		}
 
 		it('tells the person where to tap in the Skjald app, without creating a webhook', async () => {
@@ -280,7 +293,6 @@ describe('IntegrationsPage', () => {
 			isLoading: false,
 		})
 		render(<IntegrationsPage />)
-		await openDiscover()
 
 		await user.click(screen.getByRole('button', { name: 'Connect' }))
 		expect(screen.getByRole('dialog')).toBeInTheDocument()
@@ -400,9 +412,11 @@ describe('IntegrationsPage', () => {
 			await user.click(within(sindreRow).getByRole('button', { name: 'Disconnect' }))
 			expect(mockDisconnect).not.toHaveBeenCalled()
 
-			const dialog = screen.getByRole('dialog', { name: 'Disconnect GitHub?' })
-			expect(within(dialog).getByText(/This removes sindre-ai\./)).toBeInTheDocument()
-			await user.click(within(dialog).getByRole('button', { name: 'Disconnect' }))
+			// The question is on the row, not a dialog.
+			expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+			const confirm = screen.getByRole('group', { name: 'Disconnect GitHub (sindre-ai)' })
+			expect(within(confirm).getByText(/Agents lose access/)).toBeInTheDocument()
+			await user.click(within(confirm).getByRole('button', { name: 'Disconnect' }))
 
 			expect(mockDisconnect).toHaveBeenCalledTimes(1)
 			expect(mockDisconnect).toHaveBeenCalledWith('gh-2', expect.anything())
@@ -444,10 +458,9 @@ describe('IntegrationsPage', () => {
 			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
 			mockUseProviders.mockReturnValue({ data: [githubProvider], isLoading: false })
 			render(<IntegrationsPage />)
-			await openDiscover()
 
 			expect(screen.queryByText(/GitHub · /)).not.toBeInTheDocument()
-			expect(screen.getByRole('button', { name: 'Connect' })).toBeInTheDocument()
+			expect(allIntegrations().getByRole('button', { name: 'Connect' })).toBeInTheDocument()
 		})
 
 		it('does not group non-github providers even when multiple integrations exist for them', async () => {
@@ -498,17 +511,24 @@ describe('IntegrationsPage', () => {
 			expect(screen.queryByText(/Installation /)).not.toBeInTheDocument()
 
 			await user.click(screen.getByRole('button', { name: 'Disconnect' }))
-			// Nothing is disconnected until the person confirms.
+			// Nothing is disconnected until the person confirms, and the question sits on the row.
 			expect(mockDisconnect).not.toHaveBeenCalled()
-			const dialog = screen.getByRole('dialog', { name: 'Disconnect Google Calendar?' })
-			expect(within(dialog).getByText(/This removes magnus@example\.com\./)).toBeInTheDocument()
+			expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+			expect(
+				screen.getByText('Disconnect Google Calendar? Agents lose access.'),
+			).toBeInTheDocument()
 
-			await user.click(within(dialog).getByRole('button', { name: 'Disconnect' }))
+			await user.click(
+				within(screen.getByRole('group', { name: 'Disconnect Google Calendar' })).getByRole(
+					'button',
+					{ name: 'Disconnect' },
+				),
+			)
 			expect(mockDisconnect).toHaveBeenCalledTimes(1)
 			expect(mockDisconnect).toHaveBeenCalledWith('gc-1', expect.anything())
 		})
 
-		it('closes the Disconnect confirm on Cancel without disconnecting', async () => {
+		it('keeps the connection when the person presses Keep', async () => {
 			const user = userEvent.setup()
 			const integration = buildIntegrationResponse({
 				id: 'gc-1',
@@ -523,20 +543,23 @@ describe('IntegrationsPage', () => {
 			await expandCard('Google Calendar')
 
 			await user.click(screen.getByRole('button', { name: 'Disconnect' }))
-			await user.click(screen.getByRole('button', { name: 'Cancel' }))
+			await user.click(screen.getByRole('button', { name: 'Keep' }))
 
-			expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+			expect(screen.queryByText(/Agents lose access/)).not.toBeInTheDocument()
+			expect(screen.getByRole('button', { name: 'Disconnect' })).toHaveFocus()
 			expect(mockDisconnect).not.toHaveBeenCalled()
 		})
 
-		it('shows "Available to connect" when not connected (no event types defined yet)', async () => {
+		it('shows the category, not an event count, when a tool has no description', async () => {
 			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
 			mockUseProviders.mockReturnValue({ data: [googleCalendarProvider], isLoading: false })
 
 			render(<IntegrationsPage />)
-			await openDiscover()
 
-			expect(screen.getByText('Available to connect')).toBeInTheDocument()
+			// Popular shows the category under a tool with no written description.
+			expect(
+				within(screen.getByRole('region', { name: 'Popular' })).getByText('Email & calendar'),
+			).toBeInTheDocument()
 			expect(screen.queryByText(/event types available/)).not.toBeInTheDocument()
 		})
 	})
@@ -561,11 +584,10 @@ describe('IntegrationsPage', () => {
 			})
 
 			render(<IntegrationsPage />)
-			await openDiscover()
 
-			expect(screen.getByText('Google Drive')).toBeInTheDocument()
-			expect(screen.getByText('Gmail')).toBeInTheDocument()
-			expect(screen.getAllByRole('button', { name: 'Connect' })).toHaveLength(2)
+			expect(allIntegrations().getByText('Google Drive')).toBeInTheDocument()
+			expect(allIntegrations().getByText('Gmail')).toBeInTheDocument()
+			expect(allIntegrations().getAllByRole('button', { name: 'Connect' })).toHaveLength(2)
 		})
 
 		it('shows the New pill, description, meta line and a Details link on the Drive card', async () => {
@@ -573,14 +595,15 @@ describe('IntegrationsPage', () => {
 			mockUseProviders.mockReturnValue({ data: [googleDriveProvider], isLoading: false })
 
 			render(<IntegrationsPage />)
-			await openDiscover()
 
-			expect(screen.getByLabelText('New')).toBeInTheDocument()
+			expect(allIntegrations().getByLabelText('New')).toBeInTheDocument()
 			expect(
-				screen.getByText('File bytes, Docs, Sheets, search, folder watch, write, comments.'),
+				allIntegrations().getByText(
+					'File bytes, Docs, Sheets, search, folder watch, write, comments.',
+				),
 			).toBeInTheDocument()
-			expect(screen.getByText('Free · Piggybacks on Google auth')).toBeInTheDocument()
-			expect(screen.getByRole('link', { name: 'Details' })).toBeInTheDocument()
+			expect(allIntegrations().getByText('Free · Piggybacks on Google auth')).toBeInTheDocument()
+			expect(allIntegrations().getByRole('link', { name: 'Details' })).toBeInTheDocument()
 		})
 
 		it('keeps the Details link on a connected Drive card', async () => {
@@ -612,7 +635,6 @@ describe('IntegrationsPage', () => {
 			})
 
 			render(<IntegrationsPage />)
-			await openDiscover()
 
 			expect(screen.queryByLabelText('New')).not.toBeInTheDocument()
 			expect(screen.queryByRole('link', { name: 'Details' })).not.toBeInTheDocument()
@@ -670,9 +692,8 @@ describe('IntegrationsPage', () => {
 
 			const secondRow = screen.getByText('krumhausen@gmail.com').closest('div.flex') as HTMLElement
 			await user.click(within(secondRow).getByRole('button', { name: 'Disconnect' }))
-			const dialog = screen.getByRole('dialog', { name: 'Disconnect Gmail?' })
-			expect(within(dialog).getByText(/This removes krumhausen@gmail\.com\./)).toBeInTheDocument()
-			await user.click(within(dialog).getByRole('button', { name: 'Disconnect' }))
+			const confirm = screen.getByRole('group', { name: 'Disconnect Gmail (krumhausen@gmail.com)' })
+			await user.click(within(confirm).getByRole('button', { name: 'Disconnect' }))
 			expect(mockDisconnect).toHaveBeenCalledWith('gm-2', expect.anything())
 		})
 
@@ -696,10 +717,9 @@ describe('IntegrationsPage', () => {
 			mockUseProviders.mockReturnValue({ data: [gmailProvider], isLoading: false })
 
 			render(<IntegrationsPage />)
-			await openDiscover()
 
 			expect(screen.queryByText(/Gmail · /)).not.toBeInTheDocument()
-			expect(screen.getByRole('button', { name: 'Connect' })).toBeInTheDocument()
+			expect(allIntegrations().getByRole('button', { name: 'Connect' })).toBeInTheDocument()
 		})
 	})
 
@@ -718,9 +738,8 @@ describe('IntegrationsPage', () => {
 			isLoading: false,
 		})
 		render(<IntegrationsPage />)
-		await openDiscover()
 
-		await user.click(screen.getByRole('button', { name: /Add existing/ }))
+		await user.click(allIntegrations().getByRole('button', { name: /Add existing/ }))
 		expect(screen.getByRole('dialog')).toBeInTheDocument()
 		expect(screen.getByText('acme-org')).toBeInTheDocument()
 
@@ -739,7 +758,6 @@ describe('IntegrationsPage', () => {
 			isLoading: false,
 		})
 		render(<IntegrationsPage />)
-		await openDiscover()
 
 		expect(screen.queryByRole('button', { name: /Add existing/ })).not.toBeInTheDocument()
 	})
@@ -986,7 +1004,6 @@ describe('IntegrationsPage', () => {
 				isLoading: false,
 			})
 			render(<IntegrationsPage />)
-			await openDiscover()
 		}
 
 		it('states the per-identity price on a non-enterprise plan', async () => {
@@ -1077,7 +1094,7 @@ describe('IntegrationsPage', () => {
 	})
 })
 
-describe('IntegrationsPage tabs, search and categories', () => {
+describe('IntegrationsPage shelves, search and pills', () => {
 	const providers = [
 		{ name: 'slack', displayName: 'Slack', authType: 'oauth2', events: [] },
 		{ name: 'gmail', displayName: 'Gmail', authType: 'oauth2', events: [] },
@@ -1092,84 +1109,123 @@ describe('IntegrationsPage tabs, search and categories', () => {
 		mockUseProviders.mockReturnValue({ data: providers, isLoading: false })
 	})
 
-	it('counts connected and unconnected providers on the tabs', () => {
+	const searchbox = () => screen.getByRole('searchbox', { name: /Search integrations/ })
+
+	it('puts connected tools first and the rest in the shelves below, with no tabs', () => {
 		render(<IntegrationsPage />)
-		expect(screen.getByRole('button', { name: 'Connected (1)' })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'Discover (2)' })).toBeInTheDocument()
+		const yours = within(screen.getByRole('region', { name: 'Your integrations' }))
+		expect(yours.getByText('Slack')).toBeInTheDocument()
+		expect(yours.queryByText('Gmail')).not.toBeInTheDocument()
+		expect(allIntegrations().getByText('Gmail')).toBeInTheDocument()
+		expect(allIntegrations().queryByText('Slack')).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /^Discover/ })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /^Connected/ })).not.toBeInTheDocument()
 	})
 
-	it('shows only connected providers first, and the rest under Discover', async () => {
+	it('shows Popular for tools in the editorial list that are not connected, and repeats them in All integrations', () => {
 		render(<IntegrationsPage />)
-		expect(screen.getByText('Slack')).toBeInTheDocument()
-		expect(screen.queryByText('Gmail')).not.toBeInTheDocument()
-		await openDiscover()
-		expect(screen.getByText('Gmail')).toBeInTheDocument()
-		expect(screen.queryByText('Slack')).not.toBeInTheDocument()
+		const popular = within(screen.getByRole('region', { name: 'Popular' }))
+		// Slack is connected, so it is in Your integrations and not on the shelf.
+		expect(popular.getByText('Gmail')).toBeInTheDocument()
+		expect(popular.getByText('GitHub')).toBeInTheDocument()
+		expect(popular.queryByText('Slack')).not.toBeInTheDocument()
+		expect(allIntegrations().getByText('Gmail')).toBeInTheDocument()
+		// Nothing in the fixture is new, so the shelf is not drawn.
+		expect(screen.queryByRole('region', { name: 'New' })).not.toBeInTheDocument()
 	})
 
-	it('filters Discover by what is typed in the search field', async () => {
+	it('divides All integrations into the category groups, each with a count', () => {
 		render(<IntegrationsPage />)
-		await openDiscover()
-		await userEvent.type(screen.getByRole('searchbox', { name: /Search integrations/ }), 'git')
-		expect(screen.getByText('GitHub')).toBeInTheDocument()
-		expect(screen.queryByText('Gmail')).not.toBeInTheDocument()
+		expect(allIntegrations().getByRole('heading', { name: /Email & calendar/ })).toBeInTheDocument()
+		expect(allIntegrations().getByRole('heading', { name: /Code/ })).toBeInTheDocument()
+		// Slack is connected, so Chat & social has no tool left and the group is not drawn.
+		expect(
+			allIntegrations().queryByRole('heading', { name: /Chat & social/ }),
+		).not.toBeInTheDocument()
+	})
+
+	it('turns the page into one filtered list when something is typed', async () => {
+		render(<IntegrationsPage />)
+		await userEvent.type(searchbox(), 'git')
+		const results = within(screen.getByRole('region', { name: 'Results for “git”' }))
+		expect(results.getByText('GitHub')).toBeInTheDocument()
+		expect(results.queryByText('Gmail')).not.toBeInTheDocument()
+		expect(screen.queryByRole('region', { name: 'Popular' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('region', { name: 'All integrations' })).not.toBeInTheDocument()
+	})
+
+	it('keeps only matching connected tools in Your integrations while searching', async () => {
+		render(<IntegrationsPage />)
+		await userEvent.type(searchbox(), 'git')
+		expect(screen.queryByRole('region', { name: 'Your integrations' })).not.toBeInTheDocument()
+		await userEvent.clear(searchbox())
+		await userEvent.type(searchbox(), 'sla')
+		expect(
+			within(screen.getByRole('region', { name: 'Your integrations' })).getByText('Slack'),
+		).toBeInTheDocument()
 	})
 
 	it('clears the search text on Esc, then leaves the field on a second Esc', async () => {
 		render(<IntegrationsPage />)
-		await openDiscover()
-		const field = screen.getByRole('searchbox', { name: /Search integrations/ })
+		const field = searchbox()
 		await userEvent.type(field, 'git')
 		expect(field).toHaveValue('git')
 
 		await userEvent.keyboard('{Escape}')
 		expect(field).toHaveValue('')
 		expect(field).toHaveFocus()
-		expect(screen.getByText('Gmail')).toBeInTheDocument()
+		expect(allIntegrations().getByText('Gmail')).toBeInTheDocument()
 
 		await userEvent.keyboard('{Escape}')
 		expect(field).not.toHaveFocus()
 	})
 
-	it('filters Discover by category chip', async () => {
+	it('filters by category pill and titles the list with the pill name', async () => {
 		render(<IntegrationsPage />)
-		await openDiscover()
 		await userEvent.click(screen.getByRole('button', { name: 'Code' }))
-		expect(screen.getByText('GitHub')).toBeInTheDocument()
-		expect(screen.queryByText('Gmail')).not.toBeInTheDocument()
+		const results = within(screen.getByRole('region', { name: 'Code' }))
+		expect(results.getByText('GitHub')).toBeInTheDocument()
+		expect(results.queryByText('Gmail')).not.toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Code' })).toHaveAttribute('aria-pressed', 'true')
 	})
 
-	it('says so when nothing matches', async () => {
+	it('filters by vendor pill, across categories', async () => {
+		mockUseProviders.mockReturnValue({
+			data: [
+				...providers,
+				{ name: 'google-drive', displayName: 'Google Drive', authType: 'oauth2', events: [] },
+				{ name: 'microsoft', displayName: 'Microsoft', authType: 'oauth2', events: [] },
+			],
+			isLoading: false,
+		})
 		render(<IntegrationsPage />)
-		await openDiscover()
-		await userEvent.type(screen.getByRole('searchbox', { name: /Search integrations/ }), 'zzz')
-		expect(screen.getByText('Nothing to discover')).toBeInTheDocument()
+		await userEvent.click(screen.getByRole('button', { name: 'Google' }))
+		const results = within(screen.getByRole('region', { name: 'Google' }))
+		// Gmail is in Email & calendar and Google Drive is in Files: one vendor, two categories.
+		expect(results.getByText('Gmail')).toBeInTheDocument()
+		expect(results.getByText('Google Drive')).toBeInTheDocument()
+		expect(results.queryByText('Microsoft')).not.toBeInTheDocument()
+		expect(results.queryByText('GitHub')).not.toBeInTheDocument()
+	})
+
+	it('says so, with a way out, when a search matches nothing', async () => {
+		render(<IntegrationsPage />)
+		await userEvent.type(searchbox(), 'zzz')
 		expect(screen.getByText('No integration matches that search')).toBeInTheDocument()
-	})
-
-	it('says so on Connected when the search matches nothing', async () => {
-		render(<IntegrationsPage />)
-		await userEvent.type(screen.getByRole('searchbox', { name: /Search integrations/ }), 'zzz')
-		expect(screen.getByText('Nothing connected here')).toBeInTheDocument()
-		expect(screen.getByText('No integration matches that search')).toBeInTheDocument()
-	})
-
-	it('says nothing matches the filter, not that everything is connected, for the Custom chip', async () => {
-		render(<IntegrationsPage />)
-		await openDiscover()
-		await userEvent.click(screen.getByRole('button', { name: 'Custom' }))
-		expect(screen.getByText('No integration matches that filter')).toBeInTheDocument()
-		expect(screen.queryByText('Everything is connected')).not.toBeInTheDocument()
+		await userEvent.click(screen.getByRole('button', { name: 'Clear search' }))
+		expect(searchbox()).toHaveValue('')
+		expect(screen.getByRole('region', { name: 'All integrations' })).toBeInTheDocument()
 	})
 
 	it('says nothing matches the filter for a category with no providers in it', async () => {
 		render(<IntegrationsPage />)
-		await openDiscover()
 		await userEvent.click(screen.getByRole('button', { name: 'Sales & payments' }))
 		expect(screen.getByText('No integration matches that filter')).toBeInTheDocument()
+		await userEvent.click(screen.getByRole('button', { name: 'Clear filter' }))
+		expect(screen.getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'true')
 	})
 
-	it('files the bookkeeping providers under the Accounting chip, not Sales & payments', async () => {
+	it('files the bookkeeping providers under the Accounting pill, not Sales & payments', async () => {
 		mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
 		mockUseProviders.mockReturnValue({
 			data: [
@@ -1181,43 +1237,204 @@ describe('IntegrationsPage tabs, search and categories', () => {
 			isLoading: false,
 		})
 		render(<IntegrationsPage />)
-		await openDiscover()
 		await userEvent.click(screen.getByRole('button', { name: 'Accounting' }))
-		expect(screen.getByText('Numina')).toBeInTheDocument()
-		expect(screen.getByText('Dinero')).toBeInTheDocument()
-		expect(screen.getByText('Uniconta')).toBeInTheDocument()
-		expect(screen.queryByText('Stripe')).not.toBeInTheDocument()
+		const results = within(screen.getByRole('region', { name: 'Accounting' }))
+		expect(results.getByText('Numina')).toBeInTheDocument()
+		expect(results.getByText('Dinero')).toBeInTheDocument()
+		expect(results.getByText('Uniconta')).toBeInTheDocument()
+		expect(results.queryByText('Stripe')).not.toBeInTheDocument()
 	})
 
-	it('still says everything is connected when nothing is filtered', async () => {
+	it('shows a dashed Nothing connected yet card when nothing is connected', () => {
+		mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+		render(<IntegrationsPage />)
+		expect(screen.getByText('Nothing connected yet')).toBeInTheDocument()
+		expect(allIntegrations().getByText('Slack')).toBeInTheDocument()
+	})
+
+	it('hides the shelves it has nothing for when every tool is connected', () => {
 		mockUseIntegrations.mockReturnValue({
 			data: providers.map((p) => buildIntegrationResponse({ provider: p.name, status: 'active' })),
 			isLoading: false,
 		})
 		render(<IntegrationsPage />)
-		await openDiscover()
-		expect(screen.getByText('Everything is connected')).toBeInTheDocument()
+		expect(screen.queryByRole('region', { name: 'Popular' })).not.toBeInTheDocument()
+		expect(allIntegrations().queryByRole('button', { name: 'Connect' })).not.toBeInTheDocument()
+	})
+
+	it('says it could not load, and Try again asks again', async () => {
+		const refetch = vi.fn()
+		mockUseIntegrations.mockReturnValue({
+			data: undefined,
+			isLoading: false,
+			isError: true,
+			refetch,
+		})
+		mockUseProviders.mockReturnValue({ data: undefined, isLoading: false, isError: false, refetch })
+		render(<IntegrationsPage />)
+		expect(screen.getByText("Couldn't load integrations")).toBeInTheDocument()
+		await userEvent.click(screen.getByRole('button', { name: 'Try again' }))
+		expect(refetch).toHaveBeenCalled()
+	})
+})
+
+describe('IntegrationsPage Your integrations list', () => {
+	const names = ['slack', 'github', 'gmail', 'linear', 'notion', 'posthog', 'stripe']
+	const providers = names.map((name) => ({
+		name,
+		displayName: name.charAt(0).toUpperCase() + name.slice(1),
+		authType: 'oauth2',
+		events: [],
+	}))
+
+	it('shows five at first and expands in place with Show all, then Show fewer', async () => {
+		mockUseIntegrations.mockReturnValue({
+			data: names.map((n) => buildIntegrationResponse({ id: n, provider: n, status: 'active' })),
+			isLoading: false,
+		})
+		mockUseProviders.mockReturnValue({ data: providers, isLoading: false })
+		render(<IntegrationsPage />)
+		const yours = within(screen.getByRole('region', { name: 'Your integrations' }))
+		// Seven connected tools: five rows and a button that says how many there are.
+		expect(
+			yours.getAllByRole('button', { name: /^(Slack|Github|Gmail|Linear|Notion|Posthog|Stripe)/ }),
+		).toHaveLength(5)
+		await userEvent.click(yours.getByRole('button', { name: 'Show all 7' }))
+		expect(
+			yours.getAllByRole('button', { name: /^(Slack|Github|Gmail|Linear|Notion|Posthog|Stripe)/ }),
+		).toHaveLength(7)
+		await userEvent.click(yours.getByRole('button', { name: 'Show fewer' }))
+		expect(yours.getByRole('button', { name: 'Show all 7' })).toBeInTheDocument()
+	})
+
+	it('lists a broken tool first', () => {
+		mockUseIntegrations.mockReturnValue({
+			data: names.map((n) =>
+				buildIntegrationResponse({
+					id: n,
+					provider: n,
+					status: 'active',
+					...(n === 'stripe' ? { needsReconnect: true, missingScopes: ['read'] } : {}),
+				}),
+			),
+			isLoading: false,
+		})
+		mockUseProviders.mockReturnValue({ data: providers, isLoading: false })
+		render(<IntegrationsPage />)
+		const yours = within(screen.getByRole('region', { name: 'Your integrations' }))
+		expect(yours.getAllByRole('button', { expanded: false })[0]).toHaveTextContent(/^Stripe/)
+	})
+})
+
+describe('IntegrationsPage needs attention strip', () => {
+	it('names a tool that needs reconnecting, with a Reconnect that starts its sign-in', async () => {
+		mockUseIntegrations.mockReturnValue({
+			data: [
+				buildIntegrationResponse({
+					provider: 'slack',
+					status: 'active',
+					needsReconnect: true,
+					missingScopes: ['channels:history'],
+				}),
+			],
+			isLoading: false,
+		})
+		mockUseProviders.mockReturnValue({
+			data: [{ name: 'slack', displayName: 'Slack', authType: 'oauth2', events: [] }],
+			isLoading: false,
+		})
+		render(<IntegrationsPage />)
+		const strip = within(screen.getByRole('region', { name: 'Needs attention' }))
+		expect(
+			strip.getByText(
+				"Slack needs to be reconnected. Agents can't read channel history until you do.",
+			),
+		).toBeInTheDocument()
+		await userEvent.click(strip.getByRole('button', { name: 'Reconnect Slack' }))
+		expect(mockConnect).toHaveBeenCalledWith({ provider: 'slack' })
+	})
+
+	it('names an unfinished Resend setup, with Finish setup', () => {
+		mockUseIntegrations.mockReturnValue({
+			data: [
+				buildIntegrationResponse({
+					id: 'rs-1',
+					provider: 'resend',
+					status: 'awaiting_secret',
+					config: {
+						resend: {
+							receive_subdomain: 'in.acme.test',
+							webhook_url: 'https://acme.test/hook',
+							dns_records: [],
+							verification_status: 'pending',
+						},
+					},
+				}),
+			],
+			isLoading: false,
+		})
+		mockUseProviders.mockReturnValue({
+			data: [{ name: 'resend', displayName: 'Resend', authType: 'api_key', events: [] }],
+			isLoading: false,
+		})
+		render(<IntegrationsPage />)
+		const strip = within(screen.getByRole('region', { name: 'Needs attention' }))
+		expect(
+			strip.getByText("Resend setup isn't finished. It's waiting for the webhook signing secret."),
+		).toBeInTheDocument()
+		expect(strip.getByRole('button', { name: 'Finish setup Resend' })).toBeInTheDocument()
+	})
+
+	it('is not drawn when everything is fine', () => {
+		mockUseIntegrations.mockReturnValue({
+			data: [buildIntegrationResponse({ provider: 'slack', status: 'active' })],
+			isLoading: false,
+		})
+		mockUseProviders.mockReturnValue({
+			data: [{ name: 'slack', displayName: 'Slack', authType: 'oauth2', events: [] }],
+			isLoading: false,
+		})
+		render(<IntegrationsPage />)
+		expect(screen.queryByRole('region', { name: 'Needs attention' })).not.toBeInTheDocument()
 	})
 })
 
 describe('IntegrationsPage ordering', () => {
-	it('lists providers alphabetically by name', async () => {
+	it('lists providers alphabetically by name inside a category group', async () => {
 		mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
 		mockUseProviders.mockReturnValue({
 			data: [
-				{ name: 'slack', displayName: 'Slack', authType: 'oauth2', events: [] },
-				{ name: 'github', displayName: 'GitHub', authType: 'oauth2', events: [] },
 				{ name: 'linear', displayName: 'Linear', authType: 'oauth2', events: [] },
+				{ name: 'github', displayName: 'GitHub', authType: 'oauth2', events: [] },
+				{ name: 'cloudflare', displayName: 'Cloudflare', authType: 'oauth2', events: [] },
 			],
 			isLoading: false,
 		})
 		render(<IntegrationsPage />)
-		await openDiscover()
 
-		const gh = screen.getByText('GitHub', { exact: false })
-		const li = screen.getByText('Linear', { exact: false })
-		const sl = screen.getByText('Slack', { exact: false })
+		// All three are in the Code group.
+		const all = allIntegrations()
+		const cf = all.getByText('Cloudflare', { exact: false })
+		const gh = all.getByText('GitHub', { exact: false })
+		const li = all.getByText('Linear', { exact: false })
+		expect(cf.compareDocumentPosition(gh) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 		expect(gh.compareDocumentPosition(li) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-		expect(li.compareDocumentPosition(sl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+	})
+
+	it('orders the groups as the pills are ordered', () => {
+		mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+		mockUseProviders.mockReturnValue({
+			data: [
+				{ name: 'github', displayName: 'GitHub', authType: 'oauth2', events: [] },
+				{ name: 'gmail', displayName: 'Gmail', authType: 'oauth2', events: [] },
+			],
+			isLoading: false,
+		})
+		render(<IntegrationsPage />)
+		const headings = allIntegrations()
+			.getAllByRole('heading', { level: 3 })
+			.map((h) => h.textContent)
+		expect(headings[0]).toMatch(/^Email & calendar/)
+		expect(headings[1]).toMatch(/^Code/)
 	})
 })
