@@ -318,6 +318,9 @@ export async function installLoopInTransaction(
 				title: loop.name,
 				loopId,
 				provisionedTriggerIds,
+				boundActorIds: new Set(
+					[...sourceToLocal].filter(([source]) => isRoleActorId(source)).map(([, local]) => local),
+				),
 				settings: shippedSettings,
 			})
 		: null
@@ -415,11 +418,13 @@ export async function installLoopInTransaction(
 
 /**
  * Links a hand-made flow the workspace already has, with the same title, to this install instead of
- * creating a second one. Only a flow that is not yet marketplace-linked is taken. Its content, status,
+ * creating a second one. Only taken when exactly one flow with that title is not yet marketplace-linked;
+ * with none or several nothing is adopted and the install creates its own flow. Its content, status,
  * comments and tabs stay as they are; a tab with the same name as a shipped one is kept (the view
- * sync skips a taken name). The triggers it ran before are switched off, not deleted, and their ids
- * are kept on the flow as `replaced_trigger_ids`, so the install's own triggers are the only set
- * that runs and the old ones can be switched back on. Returns null when there is nothing to adopt.
+ * sync skips a taken name). Of the triggers it ran before, only those the bundle replaces (named in
+ * `replacesTriggerNames`, running on an agent this install bound) are switched off, not deleted, and
+ * their ids are kept on the flow as `replaced_trigger_ids` so they can be switched back on. Any other
+ * trigger on the flow is left running and named in the log. Returns null when there is nothing to adopt.
  */
 async function adoptExistingLoopObject(
 	tx: Transaction,
@@ -428,11 +433,12 @@ async function adoptExistingLoopObject(
 		title: string
 		loopId: string
 		provisionedTriggerIds: string[]
+		boundActorIds: Set<string>
 		settings: LoopSettings
 	},
 ): Promise<typeof objects.$inferSelect | null> {
-	const { workspaceId, title, loopId, provisionedTriggerIds, settings } = params
-	const [existing] = await tx
+	const { workspaceId, title, loopId, provisionedTriggerIds, boundActorIds, settings } = params
+	const candidates = await tx
 		.select()
 		.from(objects)
 		.where(
@@ -443,21 +449,51 @@ async function adoptExistingLoopObject(
 				sql`coalesce(${objects.metadata}->>'installed_from_marketplace_loop_id', '') = ''`,
 			),
 		)
-		.orderBy(objects.createdAt)
-		.limit(1)
-	if (!existing) return null
+		.limit(2)
+	const [existing] = candidates
+	if (candidates.length !== 1 || !existing) {
+		if (candidates.length > 1) {
+			logger.warn('Marketplace flow not adopted: several unlinked flows share its title', {
+				workspaceId,
+				title,
+			})
+		}
+		return null
+	}
 
 	const meta = (existing.metadata as Record<string, unknown> | null) ?? {}
 	const oldTriggerIds = Array.isArray(meta.trigger_ids)
 		? (meta.trigger_ids as unknown[]).filter((id): id is string => typeof id === 'string')
 		: []
+	const replaces = new Set(settings.replacesTriggerNames ?? [])
+	const replacedIds: string[] = []
+	const keptNames: string[] = []
 	if (oldTriggerIds.length > 0) {
+		const oldTriggers = await tx
+			.select({ id: triggers.id, name: triggers.name, targetActorId: triggers.targetActorId })
+			.from(triggers)
+			.where(and(eq(triggers.workspaceId, workspaceId), inArray(triggers.id, oldTriggerIds)))
+		for (const t of oldTriggers) {
+			if (replaces.has(t.name) && boundActorIds.has(t.targetActorId)) replacedIds.push(t.id)
+			else keptNames.push(t.name)
+		}
+	}
+	if (replacedIds.length > 0) {
 		await tx
 			.update(triggers)
 			.set({ enabled: false, updatedAt: new Date() })
-			.where(and(eq(triggers.workspaceId, workspaceId), inArray(triggers.id, oldTriggerIds)))
+			.where(and(eq(triggers.workspaceId, workspaceId), inArray(triggers.id, replacedIds)))
 	}
+	logger.info('Marketplace flow adopted', {
+		workspaceId,
+		title,
+		flowId: existing.id,
+		switchedOffTriggers: replacedIds.length,
+		leftRunningTriggers: keptNames,
+	})
 
+	// The install's triggers replace the old ones in the flow's list. A trigger left running stays in it.
+	const keptIds = oldTriggerIds.filter((id) => !replacedIds.includes(id))
 	const [updated] = await tx
 		.update(objects)
 		.set({
@@ -465,8 +501,8 @@ async function adoptExistingLoopObject(
 				...meta,
 				...loopSettingsPatch(settings, meta),
 				installed_from_marketplace_loop_id: loopId,
-				trigger_ids: provisionedTriggerIds,
-				...(oldTriggerIds.length > 0 ? { replaced_trigger_ids: oldTriggerIds } : {}),
+				trigger_ids: [...provisionedTriggerIds, ...keptIds],
+				...(replacedIds.length > 0 ? { replaced_trigger_ids: replacedIds } : {}),
 			},
 			updatedAt: new Date(),
 		})

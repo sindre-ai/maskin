@@ -16,6 +16,7 @@ import {
 	WORKSPACE_IMPROVEMENTS_ROLE_COACH,
 } from '@maskin/shared'
 import { and, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm'
+import { logger } from '../lib/logger'
 import { LLM_CONFIG_ALLOWLIST, dropLegacyBrowserFlag } from '../lib/marketplace-loops/loop-snapshot'
 
 /**
@@ -74,8 +75,9 @@ export function isRoleActorId(id: unknown): id is string {
 
 /**
  * Resolves each role id to the workspace's own system agent of that name, as a role id to local
- * actor id map. A role whose agent is missing (or is not a system agent) is left out, so its
- * triggers are skipped by the caller and its skills simply bind to nobody.
+ * actor id map. A role is bound only when exactly one agent matches. With none or several it is
+ * left out (and logged), so its triggers are skipped by the caller, its skills bind to nobody, and
+ * an agent is never picked from several.
  */
 export async function resolveRoleActors(
 	db: DbHandle,
@@ -86,7 +88,7 @@ export async function resolveRoleActors(
 	for (const roleId of new Set(roleIds)) {
 		const name = ROLE_AGENT_NAMES[roleId]
 		if (!name) continue
-		const [row] = await db
+		const rows = await db
 			.select({ id: actors.id })
 			.from(actors)
 			.innerJoin(workspaceMembers, eq(workspaceMembers.actorId, actors.id))
@@ -97,8 +99,17 @@ export async function resolveRoleActors(
 					eq(actors.isSystem, true),
 				),
 			)
-			.limit(1)
-		if (row) resolved.set(roleId, row.id)
+			.limit(2)
+		const [row] = rows
+		if (rows.length === 1 && row) {
+			resolved.set(roleId, row.id)
+		} else {
+			logger.warn('Marketplace role not bound: expected exactly one matching agent', {
+				workspaceId,
+				roleId,
+				matches: rows.length,
+			})
+		}
 	}
 	return resolved
 }

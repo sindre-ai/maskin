@@ -31,6 +31,9 @@ export const loopSettingsSchema = z.object({
 	// A workspace that already has a hand-made flow with this name keeps it: install links that flow
 	// to the marketplace instead of creating a second one (see services/loop-install.ts).
 	adoptExisting: z.boolean().optional(),
+	// With adoptExisting: names of the adopted flow's old triggers this bundle replaces. Only a trigger
+	// with one of these names, running on an agent the install bound, is switched off.
+	replacesTriggerNames: z.array(z.string().min(1)).optional(),
 })
 export type LoopSettings = z.infer<typeof loopSettingsSchema>
 

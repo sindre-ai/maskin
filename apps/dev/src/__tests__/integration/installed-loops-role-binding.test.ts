@@ -3,6 +3,7 @@ import type { Database } from '@maskin/db'
 import {
 	actors,
 	agentSkills,
+	marketplaceLoopItems,
 	marketplaceLoops,
 	objects,
 	triggers,
@@ -16,6 +17,7 @@ import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { seedMarketplaceLoops } from '../../lib/dev-bootstrap'
 import { createApiError, formatZodError } from '../../lib/errors'
 import { AgentStorageManager } from '../../services/agent-storage'
+import { LoopVersionPusher } from '../../services/loop-version-pusher'
 import { bootstrapDefaultAgents, seedDefaultAgentActors } from '../../services/workspace-bootstrap'
 import { insertWorkspace } from '../factories'
 import { jsonRequest } from '../helpers'
@@ -243,6 +245,19 @@ describe('Marketplace install — Workspace improvements binds to the workspace 
 				createdBy: actorId,
 			})
 			.returning({ id: triggers.id })
+		const [keptTrigger] = await db
+			.insert(triggers)
+			.values({
+				workspaceId: ws.id,
+				name: 'Workspace Coach — session completed (onboarding)',
+				type: 'event',
+				config: { action: 'status_changed', entity_type: 'session' },
+				actionPrompt: 'Review.',
+				targetActorId: coachId,
+				enabled: true,
+				createdBy: actorId,
+			})
+			.returning({ id: triggers.id })
 		const [handMade] = await db
 			.insert(objects)
 			.values({
@@ -254,11 +269,13 @@ describe('Marketplace install — Workspace improvements binds to the workspace 
 				createdBy: actorId,
 				metadata: {
 					entry_condition: 'Our own entry condition.',
-					trigger_ids: [oldTrigger?.id],
+					trigger_ids: [oldTrigger?.id, keptTrigger?.id],
 				},
 			})
 			.returning({ id: objects.id })
-		if (!handMade || !oldTrigger) throw new Error('hand-made flow insert returned no row')
+		if (!handMade || !oldTrigger || !keptTrigger) {
+			throw new Error('hand-made flow insert returned no row')
+		}
 
 		const body = await install(actorId, ws.id)
 
@@ -294,7 +311,9 @@ describe('Marketplace install — Workspace improvements binds to the workspace 
 		expect(meta.entry_condition).toBe('Our own entry condition.')
 		expect(meta.close_condition).toBeTruthy()
 		expect(meta.replaced_trigger_ids).toEqual([oldTrigger.id])
-		expect(meta.trigger_ids).toHaveLength(2)
+		// The flow lists the install's two triggers and the one it left alone, not the replaced one.
+		expect(meta.trigger_ids).toHaveLength(3)
+		expect(meta.trigger_ids).toContain(keptTrigger.id)
 		expect(meta.trigger_ids).not.toContain(oldTrigger.id)
 
 		// Only the install's triggers run: the old one is off, the new two are on.
@@ -304,7 +323,9 @@ describe('Marketplace install — Workspace improvements binds to the workspace 
 			.where(eq(triggers.workspaceId, ws.id))
 		const enabledIds = rows.filter((r) => r.enabled).map((r) => r.id)
 		expect(enabledIds).not.toContain(oldTrigger.id)
+		// Only what the bundle replaces is off: the onboarding review trigger it does not ship keeps running.
 		for (const id of meta.trigger_ids ?? []) expect(enabledIds).toContain(id)
+		expect(enabledIds).toContain(keptTrigger.id)
 
 		// An adopted flow is already running: no first-day checklist, and the shipped Results tab is
 		// still added because the hand-made flow had no tab of that name.
@@ -335,5 +356,139 @@ describe('Marketplace install — Workspace improvements binds to the workspace 
 
 		const body = await install(actorId, ws.id)
 		expect(body.objectId).not.toBe(linked?.id)
+	})
+
+	it('adopts nothing when several unlinked flows share the title, and creates its own', async () => {
+		const { ws, actorId } = await workspaceWithAgents(true)
+		const mine = await db
+			.insert(objects)
+			.values(
+				['One', 'Two'].map((content) => ({
+					workspaceId: ws.id,
+					type: 'loop' as const,
+					title: 'Workspace improvements',
+					content,
+					status: 'live',
+					createdBy: actorId,
+					metadata: {},
+				})),
+			)
+			.returning({ id: objects.id })
+
+		const body = await install(actorId, ws.id)
+		expect(mine.map((m) => m.id)).not.toContain(body.objectId)
+		const flows = await db
+			.select({ id: objects.id })
+			.from(objects)
+			.where(
+				and(
+					eq(objects.workspaceId, ws.id),
+					eq(objects.type, 'loop'),
+					eq(objects.title, 'Workspace improvements'),
+				),
+			)
+		expect(flows).toHaveLength(3)
+	})
+
+	it('binds a role only when exactly one agent matches', async () => {
+		const { ws, actorId } = await workspaceWithAgents(true)
+		// A second system agent under the Coach name: the role is ambiguous, so its trigger is skipped.
+		const [twin] = await db
+			.insert(actors)
+			.values({ type: 'agent', name: 'Workspace Coach', isSystem: true, createdBy: actorId })
+			.returning({ id: actors.id })
+		await db.insert(workspaceMembers).values({
+			workspaceId: ws.id,
+			actorId: twin?.id as string,
+			role: 'member',
+		})
+
+		await install(actorId, ws.id)
+
+		const names = (
+			await db.select({ name: triggers.name }).from(triggers).where(eq(triggers.workspaceId, ws.id))
+		).map((t) => t.name)
+		expect(names).toContain('Owner heartbeat (daily 08:10 UTC)')
+		expect(names).not.toContain('Coach sweep (Mon, Wed, Fri 23:15 UTC)')
+	})
+
+	it('leaves both agents untouched and changes nothing on a repeated version push', async () => {
+		const { ws, actorId } = await workspaceWithAgents(true)
+		const coachId = await agentIdByName(ws.id, 'Workspace Coach')
+		const chiefId = await agentIdByName(ws.id, 'Chief of Staff')
+		const agentRows = () =>
+			db
+				.select({
+					id: actors.id,
+					systemPrompt: actors.systemPrompt,
+					description: actors.description,
+					updatedAt: actors.updatedAt,
+				})
+				.from(actors)
+				.where(inArray(actors.id, [coachId, chiefId]))
+		const before = await agentRows()
+		const installed = await install(actorId, ws.id)
+		expect(await agentRows()).toEqual(before)
+
+		// A new version with an edited sweep prompt, pushed by the same job the hourly tick runs.
+		const items = await db
+			.select()
+			.from(marketplaceLoopItems)
+			.where(eq(marketplaceLoopItems.loopId, loopId))
+		const sweep = items.find(
+			(i) =>
+				i.itemType === 'trigger' &&
+				String((i.itemSnapshot as { name?: string }).name).startsWith('Coach sweep'),
+		)
+		if (!sweep) throw new Error('sweep item not found')
+		await db
+			.update(marketplaceLoopItems)
+			.set({
+				itemSnapshot: {
+					...(sweep.itemSnapshot as Record<string, unknown>),
+					actionPrompt: 'Edited sweep prompt.',
+				},
+			})
+			.where(eq(marketplaceLoopItems.id, sweep.id))
+		await db
+			.update(marketplaceLoops)
+			.set({ version: '9.9.9' })
+			.where(eq(marketplaceLoops.id, loopId))
+		const storage = createMemoryStorage()
+		const pusher = new LoopVersionPusher(db, new AgentStorageManager(storage, db), 60_000, storage)
+
+		const snapshotState = async () => ({
+			triggers: await db
+				.select({
+					id: triggers.id,
+					name: triggers.name,
+					targetActorId: triggers.targetActorId,
+					actionPrompt: triggers.actionPrompt,
+					enabled: triggers.enabled,
+					updatedAt: triggers.updatedAt,
+				})
+				.from(triggers)
+				.where(eq(triggers.workspaceId, ws.id))
+				.orderBy(triggers.name),
+			flow: (
+				await db
+					.select({ metadata: objects.metadata, updatedAt: objects.updatedAt })
+					.from(objects)
+					.where(eq(objects.id, installed.objectId))
+			)[0],
+		})
+
+		await pusher.tick()
+		const afterFirst = await snapshotState()
+		const sweepRow = afterFirst.triggers.find((t) => t.name.startsWith('Coach sweep'))
+		expect(sweepRow?.actionPrompt).toBe('Edited sweep prompt.')
+		expect(sweepRow?.targetActorId).toBe(coachId)
+		// The push never touched either agent, prompt included.
+		expect(await agentRows()).toEqual(before)
+
+		// Running it again changes nothing.
+		await pusher.tick()
+		expect(await snapshotState()).toEqual(afterFirst)
+		expect(await agentRows()).toEqual(before)
 	})
 })

@@ -67,6 +67,14 @@ const WORKSPACE_IMPROVEMENTS_CHECKLIST: LoopChecklist = {
 const WORKSPACE_IMPROVEMENTS_SETTINGS: LoopSettings = {
 	checklist: WORKSPACE_IMPROVEMENTS_CHECKLIST,
 	adoptExisting: true,
+	// The hand-made flow's own triggers this bundle replaces: the sweep (with the clustering and the
+	// outcome steps now folded in) and the owner heartbeat. Any other trigger on it keeps running.
+	replacesTriggerNames: [
+		'Workspace Coach — daily sweep',
+		'Cluster & recommend',
+		'Capture outcome',
+		'Owner heartbeat (daily, permanent)',
+	],
 	entryCondition:
 		'An insight is created with title starting `[workspace-improvements]` (status=new).',
 	closeCondition: 'The insight reaches status scored, parked, or discarded.',
