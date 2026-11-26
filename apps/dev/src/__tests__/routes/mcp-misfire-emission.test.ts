@@ -19,6 +19,8 @@ const { mockConnect, mockHandleRequest, MockTransport, mockCreateMcpServer } = v
 vi.mock('@maskin/mcp', () => ({
 	createMcpServer: mockCreateMcpServer,
 	READ_TOOL_NAMES: new Set<string>(),
+	isToolGroupsEnabled: () => false,
+	readGrantedToolGroups: () => undefined,
 }))
 
 vi.mock('@modelcontextprotocol/sdk/server/streamableHttp.js', () => ({
