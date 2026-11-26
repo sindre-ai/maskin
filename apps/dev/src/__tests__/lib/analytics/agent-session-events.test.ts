@@ -8,9 +8,9 @@ vi.mock('../../../lib/analytics/posthog', () => ({
 }))
 
 import {
-	analyticsStartReason,
 	PERSONA_PROMPT_WARN_BYTES,
 	START_PROMPT_WARN_BYTES,
+	analyticsStartReason,
 	approximatePromptTokens,
 	trackAgentSessionCompletedWithSkills,
 	trackAgentSessionStartedWithPrompt,
