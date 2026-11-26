@@ -183,8 +183,13 @@ final class MustKeepTests: XCTestCase {
 		if !item.waitForExistence(timeout: 5) { dumpScreen("mk03-menu") }
 		XCTAssertTrue(item.exists, "a message's menu offers 'Reply in thread'")
 		item.tap()
-		let field = app.textFields.matching(NSPredicate(format: "label == 'Reply' OR placeholderValue == 'Reply'")).firstMatch
-		XCTAssertTrue(field.waitForExistence(timeout: 10), "the thread screen opens with a Reply field")
+		// The thread's composer reads "Reply in thread" (its placeholder is its label), and is a text view or a text field.
+		let kinds = [XCUIElement.ElementType.textField.rawValue, XCUIElement.ElementType.textView.rawValue]
+		let field = app.descendants(matching: .any).matching(
+			NSPredicate(format: "(elementType == %d OR elementType == %d) AND label BEGINSWITH 'Reply in thread'", kinds[0], kinds[1])
+		).firstMatch
+		if !field.waitForExistence(timeout: 10) { dumpScreen("mk03-thread") }
+		XCTAssertTrue(field.exists, "the thread screen opens with a Reply field")
 	}
 
 	// MARK: MK-03b Select text from the message menu
