@@ -259,6 +259,13 @@ function uploadVisibilityLine(payload: Record<string, unknown>): string {
 
 /** Lines the card shows above the raw request, read from the stored request and nothing else. */
 export function describeStoredRequest(kind: string, payload: Record<string, unknown>): string[] {
+	if (kind === 'moderate_comment') {
+		return [
+			`New status: ${String(payload.moderationStatus ?? 'unknown')}${payload.banAuthor === true ? ' (and ban the author from the channel)' : ''}`,
+			`Comment by: ${String(payload.commentAuthor ?? 'unknown')}`,
+			`Comment text: ${String(payload.commentText ?? 'unknown')}`,
+		]
+	}
 	if (kind === 'upload_video') {
 		const size = typeof payload.sizeBytes === 'number' ? payload.sizeBytes : null
 		return [

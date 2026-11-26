@@ -28,6 +28,7 @@ const KIND_PHRASES: Record<string, string> = {
 	post_comment: 'post a comment',
 	reply_to_comment: 'reply to a comment',
 	like: 'like a video or a comment',
+	moderate_comment: 'change the moderation status of a comment',
 	upload_video: 'upload a video',
 	publish_video: 'change who can watch a video',
 	upload_caption: 'add a caption track to a video',
@@ -44,6 +45,10 @@ const KIND_TITLES: Record<string, string> = {
 }
 
 const APPROVE_CONSEQUENCES: Record<string, string[]> = {
+	moderate_comment: [
+		'The comment changes status on YouTube',
+		'Rejected comments are hidden from viewers',
+	],
 	publish_video: [
 		'The video changes visibility on YouTube',
 		'Viewers can see it once it is public',

@@ -25,7 +25,12 @@ import {
 import { getOwnCaptions } from './captions'
 import { parseChannelRef } from './channel-ref'
 import { type YoutubeClientContext, youtubeRead } from './client'
-import { COMMENTS_MAX_PAGES, COMMENTS_MAX_PER_PAGE, listComments } from './comments'
+import {
+	COMMENTS_MAX_PAGES,
+	COMMENTS_MAX_PER_PAGE,
+	listComments,
+	listHeldComments,
+} from './comments'
 import { YoutubeError, type YoutubeErrorCode, isYoutubeError } from './errors'
 import {
 	prepareUpload,
@@ -353,6 +358,28 @@ function registerTools(server: McpServer, ctx: YoutubeMcpContext): void {
 			page_token: z.string().optional().describe('The next_page_token of an earlier call.'),
 		},
 		(args, client) => listComments(client, args),
+	)
+
+	registerTool(
+		server,
+		ctx,
+		'list_held_comments',
+		`List the comments on the connected channel that wait for a decision, as the YouTube Data API returns the threads: status held_for_review (held by the channel's settings) or likely_spam (flagged by YouTube). Each thread's top-level comment id is what youtube__moderate_comment takes. Costs 1 quota unit a call, up to ${COMMENTS_MAX_PER_PAGE} threads. If next_page_token is not null, pass it as page_token to read on. Never cached and never stored by Maskin.`,
+		{
+			status: z
+				.enum(['held_for_review', 'likely_spam'])
+				.default('held_for_review')
+				.describe('Which waiting comments to list.'),
+			max_results: z
+				.number()
+				.int()
+				.min(1)
+				.max(COMMENTS_MAX_PER_PAGE)
+				.default(50)
+				.describe('Threads on this page.'),
+			page_token: z.string().optional().describe('The next_page_token of an earlier call.'),
+		},
+		(args, client) => listHeldComments(client, args),
 	)
 
 	registerTool(
@@ -745,6 +772,30 @@ function registerCaptionTools(server: McpServer, ctx: YoutubeMcpContext): void {
 		},
 		({ object_id, note, ...args }, client) =>
 			propose(client, { object_id, note }, { tool: 'delete_caption', args }),
+		write,
+	)
+
+	registerTool(
+		server,
+		ctx,
+		'moderate_comment',
+		`Ask to set the moderation status of one comment on your own channel: published (approve it), held_for_review (hide it until someone decides) or rejected (hide it for good). There is no separate spam call in YouTube: to treat a comment as spam, reject it, and set ban_author to also bar its author from commenting on the channel (only with rejected). The card shows the comment's author and text as YouTube has them now. ${held}`,
+		{
+			object_id: objectIdField,
+			comment_id: z
+				.string()
+				.min(1)
+				.max(128)
+				.describe('The id of the comment, for example from youtube__list_held_comments.'),
+			status: z.enum(['published', 'held_for_review', 'rejected']),
+			ban_author: z
+				.boolean()
+				.optional()
+				.describe('Also ban the comment author from the channel. Only with status rejected.'),
+			note: noteField,
+		},
+		({ object_id, note, ...args }, client) =>
+			propose(client, { object_id, note }, { tool: 'moderate_comment', args }),
 		write,
 	)
 }

@@ -139,6 +139,20 @@ export interface RemoveFromPlaylistInput {
 	video_id: string
 }
 
+export interface ModerateCommentInput {
+	comment_id: string
+	status: 'published' | 'held_for_review' | 'rejected'
+	ban_author?: boolean
+}
+
+const MODERATION_STATUS_BY_INPUT = {
+	published: 'published',
+	held_for_review: 'heldForReview',
+	rejected: 'rejected',
+} as const
+/** How much of the comment the card shows. The card is for a quick read, not the whole thread. */
+const MODERATED_COMMENT_TEXT_MAX = 1_000
+
 interface ChannelRead {
 	items?: Array<{ id?: string; snippet?: { title?: string } }>
 }
@@ -630,6 +644,41 @@ async function buildDeleteCaption(
 	return { kind: 'delete_caption', payload: { ...payload }, targetVideoId: input.video_id }
 }
 
+/**
+ * The comment's author and text are read by the server and stored in the request, so the card shows
+ * the real comment and not what the agent says it is. The executor sends only the id, the status and
+ * the ban flag; the rest is there for the person deciding, and is covered by the approval hash.
+ */
+async function buildModerateComment(
+	ctx: YoutubeClientContext,
+	input: ModerateCommentInput,
+): Promise<Built> {
+	if (input.ban_author && input.status !== 'rejected') {
+		throw invalid('ban_author only works together with status rejected.')
+	}
+	const read = await youtubeRead<CommentRead>(ctx, {
+		tool: 'youtube__moderate_comment',
+		path: 'comments',
+		params: { part: 'snippet', id: input.comment_id, textFormat: 'plainText' },
+		units: 1,
+		// The card must show the comment as it is now, and comment text is never kept in the cache.
+		cache: false,
+	})
+	const snippet = read.items?.[0]?.snippet
+	if (!snippet) throw new YoutubeError({ code: 'NOT_FOUND', message: 'No comment with that id.' })
+	return {
+		kind: 'moderate_comment',
+		payload: {
+			id: input.comment_id,
+			moderationStatus: MODERATION_STATUS_BY_INPUT[input.status],
+			...(input.ban_author ? { banAuthor: true } : {}),
+			commentAuthor: snippet.authorDisplayName ?? 'unknown',
+			commentText: (snippet.textDisplay ?? '').slice(0, MODERATED_COMMENT_TEXT_MAX),
+		},
+		...(snippet.videoId ? { targetVideoId: snippet.videoId } : {}),
+	}
+}
+
 /** The people who may decide a change: the human owners and admins of the workspace. */
 export async function findApprovers(db: Database, workspaceId: string): Promise<string[]> {
 	const rows = await db
@@ -670,6 +719,7 @@ export type ProposeInput =
 	| { tool: 'delete_comment'; args: DeleteCommentInput }
 	| { tool: 'delete_playlist'; args: DeletePlaylistInput }
 	| { tool: 'remove_from_playlist'; args: RemoveFromPlaylistInput }
+	| { tool: 'moderate_comment'; args: ModerateCommentInput }
 
 export interface ProposeCommon {
 	/** The object the approval card is posted on: the task, bet or flow the change is for. */
@@ -750,6 +800,9 @@ export async function proposeYoutubeWrite(
 			break
 		case 'remove_from_playlist':
 			built = await buildRemoveFromPlaylist(ctx, request.args, channel.id)
+			break
+		case 'moderate_comment':
+			built = await buildModerateComment(ctx, request.args)
 			break
 	}
 

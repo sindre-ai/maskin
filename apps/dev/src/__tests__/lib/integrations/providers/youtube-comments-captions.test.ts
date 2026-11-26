@@ -189,6 +189,45 @@ describe('youtube__list_comments', () => {
 	})
 })
 
+describe('youtube__list_held_comments', () => {
+	const call = (client: Client, args: Record<string, unknown> = {}) =>
+		client.callTool({ name: 'youtube__list_held_comments', arguments: args })
+
+	it('reads the channel, then one uncached page of its held threads, 1 unit each', async () => {
+		const fetchSpy = vi
+			.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(json({ items: [{ id: 'UC_own' }] }))
+			.mockResolvedValueOnce(json({ items: [{ id: 't1' }], nextPageToken: 'next' }))
+			.mockResolvedValueOnce(json({ items: [{ id: 't1' }] }))
+		const client = await connect()
+
+		const result = await call(client)
+
+		expect(payload(result)).toEqual({ items: [{ id: 't1' }], next_page_token: 'next' })
+		const url = urlOf(fetchSpy.mock.calls[1])
+		expect(url.pathname).toBe('/youtube/v3/commentThreads')
+		expect(Object.fromEntries(url.searchParams)).toEqual({
+			part: 'snippet',
+			allThreadsRelatedToChannelId: 'UC_own',
+			moderationStatus: 'heldForReview',
+			maxResults: '50',
+			order: 'time',
+			textFormat: 'plainText',
+		})
+		expect(chargeYoutubeQuota).toHaveBeenCalledTimes(2)
+
+		// A repeat read asks Google again: the queue changes as comments are decided.
+		await call(client, { status: 'likely_spam', page_token: 'next' })
+		const again = urlOf(fetchSpy.mock.calls[2])
+		expect(again.searchParams.get('moderationStatus')).toBe('likelySpam')
+		expect(again.searchParams.get('pageToken')).toBe('next')
+	})
+
+	it('is a read', () => {
+		expect(classifyTool('youtube', 'youtube__list_held_comments')).toBe('read')
+	})
+})
+
 describe('youtube__get_own_captions', () => {
 	const call = (client: Client, args: Record<string, unknown> = {}) =>
 		client.callTool({ name: 'youtube__get_own_captions', arguments: { video_id: 'vid1', ...args } })

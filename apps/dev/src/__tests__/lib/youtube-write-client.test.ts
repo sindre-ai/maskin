@@ -79,6 +79,39 @@ describe('googleWriteClient', () => {
 		expect(fetchMock).not.toHaveBeenCalled()
 	})
 
+	it('sets a moderation status with the id, the status and the ban flag, and no body', async () => {
+		fetchMock.mockResolvedValue(new Response(null, { status: 204 }))
+		expect(
+			await run('moderate_comment', {
+				id: 'c1',
+				moderationStatus: 'rejected',
+				banAuthor: true,
+				commentAuthor: 'A',
+				commentText: 'B',
+			}),
+		).toEqual({ ok: true, code: 'ok' })
+		const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+		expect(url).toBe(
+			'https://www.googleapis.com/youtube/v3/comments/setModerationStatus?id=c1&moderationStatus=rejected&banAuthor=true',
+		)
+		expect(init.method).toBe('POST')
+		expect(init.body).toBeUndefined()
+	})
+
+	it('sends no ban flag unless the status is rejected, and refuses an unknown status', async () => {
+		fetchMock.mockResolvedValue(new Response(null, { status: 204 }))
+		await run('moderate_comment', { id: 'c1', moderationStatus: 'published', banAuthor: true })
+		expect(fetchMock.mock.calls[0]?.[0]).toBe(
+			'https://www.googleapis.com/youtube/v3/comments/setModerationStatus?id=c1&moderationStatus=published',
+		)
+		fetchMock.mockClear()
+		expect(await run('moderate_comment', { id: 'c1', moderationStatus: 'spam' })).toEqual({
+			ok: false,
+			code: 'bad_payload',
+		})
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
 	it('returns a code and never the text Google sent back', async () => {
 		fetchMock.mockResolvedValue(new Response('{"error":"quotes your comment"}', { status: 403 }))
 		const result = await run('create_playlist', { snippet: { title: 'P' } })
