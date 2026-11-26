@@ -7,8 +7,8 @@ name: Apple must-keep UI tests
 # Only runs when the tests, the demo server or the script change (or by hand). Not a required check.
 # By hand you can name one test (for example MustKeepMoreTests/testMK15b_...) to run just that row.
 #
-# Output: the step summary (pass or fail per test) and the `must-keep` artifact (xcodebuild.log, and
-# the screenshot + element tree that a failing step leaves in dump/).
+# Output: the step summary (pass or fail per test) and one `must-keep-<class>` artifact per job (xcodebuild.log,
+# and the screenshot + element tree that a failing step leaves in dump/).
 
 on:
   pull_request:
@@ -27,14 +27,21 @@ on:
 permissions:
   contents: read
 
-# A run is 30 to 40 Mac minutes: a newer push replaces the one still going for the same branch.
+# Each test class runs as its own job on its own Mac, in parallel: one runner doing both took 45 minutes and hit the
+# job limit (the build alone can take 20). A newer push replaces the run still going for the same branch.
 concurrency:
   group: apple-must-keep-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   must-keep:
-    name: must-keep
+    name: must-keep (${{ matrix.class }})
+    # A one-test run by hand (only = Class/testName) needs only the job whose class it names.
+    if: inputs.only == '' || startsWith(inputs.only, format('{0}/', matrix.class))
+    strategy:
+      fail-fast: false
+      matrix:
+        class: [MustKeepTests, MustKeepMoreTests]
     runs-on: macos-26
     timeout-minutes: 45
     env:
@@ -101,7 +108,7 @@ jobs:
           DEST: id=${{ steps.sim.outputs.udid }}
           DERIVED: ${{ github.workspace }}/maskin-must-keep-dd
           MUSTKEEP_DUMP_DIR: ${{ github.workspace }}/must-keep-out/dump
-          ONLY: ${{ inputs.only }}
+          ONLY: ${{ inputs.only || matrix.class }}
         run: |
           set -euo pipefail
           # bash, not ./: the script may reach the repo without the executable bit.
@@ -138,7 +145,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: must-keep
+          name: must-keep-${{ matrix.class }}
           path: ${{ env.OUT }}
           if-no-files-found: warn
           retention-days: 30
