@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import type { Database } from '@maskin/db'
 import { events, actors, forYouWithdrawals, objects, workspaceMembers } from '@maskin/db/schema'
 import { type CommentDecision, PILOT_REFUSAL } from '@maskin/shared'
-import { and, asc, desc, eq, gt, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, ne, sql } from 'drizzle-orm'
 import { capturePosthogEvent } from './analytics/posthog'
 import { postComment } from './comments'
 import { recordEventReturning } from './events/record-event'
@@ -229,7 +229,11 @@ async function cardState(db: Database, input: PilotHoldInput, hash: string): Pro
 	return withdrawn ? 'none' : 'waiting'
 }
 
-/** The person the card goes to: the flow's driver when a person, else the workspace owner. */
+/**
+ * The people the card goes to: the flow's driver when a person, else every person who owns or
+ * administers the workspace. Anyone of them can approve, so the card reaches whoever is there to
+ * answer, not only the longest-standing owner.
+ */
 async function cardRecipient(
 	db: Database,
 	workspaceId: string,
@@ -243,13 +247,19 @@ async function cardRecipient(
 			.limit(1)
 		if (driver && driver.type !== 'agent') return [flow.driver]
 	}
-	const [owner] = await db
+	const people = await db
 		.select({ actorId: workspaceMembers.actorId })
 		.from(workspaceMembers)
-		.where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.role, 'owner')))
+		.innerJoin(actors, eq(actors.id, workspaceMembers.actorId))
+		.where(
+			and(
+				eq(workspaceMembers.workspaceId, workspaceId),
+				inArray(workspaceMembers.role, ['owner', 'admin']),
+				ne(actors.type, 'agent'),
+			),
+		)
 		.orderBy(asc(workspaceMembers.joinedAt))
-		.limit(1)
-	return owner ? [owner.actorId] : []
+	return people.map((p) => p.actorId)
 }
 
 /**

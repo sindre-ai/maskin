@@ -145,7 +145,7 @@ describe('a flow in pilot holds sends', () => {
 	})
 
 	it('finds the flow through the source item when the trigger is in no flow', async () => {
-		const { ws, agent } = await setup()
+		const { ws, agent, trigger } = await setup()
 		const flow = await insertFlow(ws.id, 'pilot')
 		const item = await insertObject(db, ws.id, getTestActorId(), { type: 'task' })
 		await insertRelationship(db, getTestActorId(), {
@@ -158,6 +158,7 @@ describe('a flow in pilot holds sends', () => {
 		const session = await insertSession({
 			workspaceId: ws.id,
 			actorId: agent.id,
+			triggerId: trigger.id,
 			initiatedFromObjectId: item.id,
 		})
 		expect(
@@ -168,6 +169,50 @@ describe('a flow in pilot holds sends', () => {
 				sessionId: session.id,
 			}),
 		).toBe('needs_approval')
+	})
+
+	it('does not cover a session with no trigger, even when its source item is in a pilot flow', async () => {
+		const { ws, agent } = await setup()
+		const flow = await insertFlow(ws.id, 'pilot')
+		const item = await insertObject(db, ws.id, getTestActorId(), { type: 'bet' })
+		await insertRelationship(db, getTestActorId(), {
+			sourceType: 'object',
+			sourceId: flow.id,
+			targetType: 'object',
+			targetId: item.id,
+			type: 'in_loop',
+		})
+		// Started from a person's chat about the item: no trigger.
+		const chat = await insertSession({
+			workspaceId: ws.id,
+			actorId: agent.id,
+			initiatedFromObjectId: item.id,
+		})
+		// A helper that chat started, with no trigger anywhere up the chain.
+		const helper = await insertSession({
+			workspaceId: ws.id,
+			actorId: agent.id,
+			spawnedBySessionId: chat.id,
+			initiatedFromObjectId: item.id,
+		})
+		for (const session of [chat, helper]) {
+			expect(
+				await flowsOfSession(db, {
+					workspaceId: ws.id,
+					agentId: agent.id,
+					sessionId: session.id,
+				}),
+			).toEqual([])
+		}
+		await setting(ws.id, agent.id, 'always_allow')
+		expect(
+			await decideSend(db, {
+				workspaceId: ws.id,
+				agentId: agent.id,
+				kind: 'email',
+				sessionId: chat.id,
+			}),
+		).toBe('send_now')
 	})
 
 	it('lets a helper session inherit the flow of the session that started it', async () => {

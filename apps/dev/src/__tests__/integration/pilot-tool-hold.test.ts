@@ -1,6 +1,6 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, objects, sessions, triggers } from '@maskin/db/schema'
+import { events, objects, sessions, triggers, workspaceMembers } from '@maskin/db/schema'
 import { PILOT_REFUSAL } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
 import { createApiError, formatZodError } from '../../lib/errors'
@@ -153,6 +153,25 @@ describe('a flow in pilot holds outbound tools', () => {
 				.from(events)
 				.where(and(eq(events.workspaceId, s.ws.id), eq(events.action, 'commented'))),
 		).toHaveLength(2)
+	})
+
+	it('sends the card to every owner and admin who is a person, not to agents', async () => {
+		const s = await setup()
+		const admin = await insertActor(db, { type: 'human' })
+		const helperAgent = await insertActor(db, { type: 'agent' })
+		await db.insert(workspaceMembers).values([
+			{ workspaceId: s.ws.id, actorId: admin.id, role: 'admin' },
+			{ workspaceId: s.ws.id, actorId: helperAgent.id, role: 'admin' },
+		])
+		expect((await call(s)).held).toBe(true)
+		const [card] = await db
+			.select()
+			.from(events)
+			.where(and(eq(events.workspaceId, s.ws.id), eq(events.action, 'commented')))
+		const mentions = (card?.data as { mentions: string[] }).mentions
+		expect(mentions).toContain(admin.id)
+		expect(mentions).toContain(getTestActorId())
+		expect(mentions).not.toContain(helperAgent.id)
 	})
 
 	it('treats a changed argument as a new call that needs its own card', async () => {
