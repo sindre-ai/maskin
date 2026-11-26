@@ -45,6 +45,9 @@ import productUsageViewsData from './data/product-usage-views.json'
 import signalIntakeActorsData from './data/signal-intake-actors.json'
 import signalIntakeSkillsData from './data/signal-intake-skills.json'
 import signalIntakeTriggersData from './data/signal-intake-triggers.json'
+import workspaceImprovementsSkillsData from './data/workspace-improvements-skills.json'
+import workspaceImprovementsTriggersData from './data/workspace-improvements-triggers.json'
+import workspaceImprovementsViewsData from './data/workspace-improvements-views.json'
 import type { LoopSettings } from './loop-settings'
 import type {
 	ActorSnapshotSource,
@@ -91,6 +94,9 @@ export interface MarketplaceLoopSeedConfig {
 		settings?: LoopSettings
 	}
 	actorIds: readonly string[]
+	// Role ids (see ROLE_ACTOR_PREFIX) for agents the bundle does not ship: triggers and skills name
+	// them, and install binds them to the workspace's own agent of that role. Optional.
+	roleActorIds?: readonly string[]
 	triggerIds: readonly string[]
 	skillIds: readonly string[]
 	// Custom views the bundle ships, in tab order. Optional: most bundles ship none.
@@ -119,6 +125,7 @@ const triggersById: Record<string, TriggerData> = {
 	...(knowledgeWikiTriggersData as Record<string, TriggerData>),
 	...(productUsageTriggersData as Record<string, TriggerData>),
 	...(signalIntakeTriggersData as Record<string, TriggerData>),
+	...(workspaceImprovementsTriggersData as Record<string, TriggerData>),
 }
 
 const skillsById: Record<string, SkillData> = {
@@ -131,6 +138,7 @@ const skillsById: Record<string, SkillData> = {
 	...(knowledgeWikiSkillsData as Record<string, SkillData>),
 	...(productUsageSkillsData as Record<string, SkillData>),
 	...(signalIntakeSkillsData as Record<string, SkillData>),
+	...(workspaceImprovementsSkillsData as Record<string, SkillData>),
 }
 
 const viewsById: Record<string, ViewData> = {
@@ -138,6 +146,7 @@ const viewsById: Record<string, ViewData> = {
 	...(customerVoiceViewsData as Record<string, ViewData>),
 	...(knowledgeWikiViewsData as Record<string, ViewData>),
 	...(productUsageViewsData as Record<string, ViewData>),
+	...(workspaceImprovementsViewsData as Record<string, ViewData>),
 }
 
 export function getActorData(id: string): ActorData {

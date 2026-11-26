@@ -192,7 +192,9 @@ describe('Marketplace install — seeded bundle end-to-end', () => {
 							? ['Results', 'Lifecycle']
 							: slug === 'knowledge-wiki-loop'
 								? ['Results', 'Strategic context']
-								: [],
+								: slug === 'workspace-improvements-loop'
+									? ['Results']
+									: [],
 			)
 		})
 	}

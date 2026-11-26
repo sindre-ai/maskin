@@ -81,6 +81,13 @@ import {
 	SIGNAL_INTAKE_TRIGGER_IDS,
 } from './marketplace-loops/signal-intake-loop'
 import { viewSnapshot } from './marketplace-loops/view-snapshot'
+import {
+	WORKSPACE_IMPROVEMENTS_LOOP,
+	WORKSPACE_IMPROVEMENTS_ROLE_IDS,
+	WORKSPACE_IMPROVEMENTS_SKILL_IDS,
+	WORKSPACE_IMPROVEMENTS_TRIGGER_IDS,
+	WORKSPACE_IMPROVEMENTS_VIEW_IDS,
+} from './marketplace-loops/workspace-improvements-loop'
 
 const MARKETPLACE_SEED_CONFIGS: readonly MarketplaceLoopSeedConfig[] = [
 	{
@@ -140,6 +147,14 @@ const MARKETPLACE_SEED_CONFIGS: readonly MarketplaceLoopSeedConfig[] = [
 		actorIds: SIGNAL_INTAKE_ACTOR_IDS,
 		triggerIds: SIGNAL_INTAKE_TRIGGER_IDS,
 		skillIds: SIGNAL_INTAKE_SKILL_IDS,
+	},
+	{
+		loop: WORKSPACE_IMPROVEMENTS_LOOP,
+		actorIds: [],
+		roleActorIds: WORKSPACE_IMPROVEMENTS_ROLE_IDS,
+		triggerIds: WORKSPACE_IMPROVEMENTS_TRIGGER_IDS,
+		skillIds: WORKSPACE_IMPROVEMENTS_SKILL_IDS,
+		viewIds: WORKSPACE_IMPROVEMENTS_VIEW_IDS,
 	},
 ]
 
@@ -206,7 +221,10 @@ export async function seedMarketplaceLoops(db: Database): Promise<MarketplaceSyn
 			const skillRows = config.skillIds.map(getSkillData)
 			const viewRows = (config.viewIds ?? []).map(getViewData)
 
-			const publishedActorIds = new Set<string>(config.actorIds)
+			const publishedActorIds = new Set<string>([
+				...config.actorIds,
+				...(config.roleActorIds ?? []),
+			])
 			for (const t of triggerRows) {
 				if (!publishedActorIds.has(t.targetActorId)) {
 					throw new Error(

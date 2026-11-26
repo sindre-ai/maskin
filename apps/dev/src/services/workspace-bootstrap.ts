@@ -22,6 +22,7 @@ import {
 	KNOWLEDGE_WIKI_LOOP_SLUG,
 	type SeedSkill,
 	WORKSPACE_COACH_DEFAULT,
+	WORKSPACE_IMPROVEMENTS_LOOP_SLUG,
 	parseSkillMd,
 	skillNameSchema,
 	workspaceSettingsSchema,
@@ -736,7 +737,10 @@ export async function bootstrapDefaultAgents(
  * bundle's agents, triggers, skills and tabs), so the marketplace shows it as
  * installed and pushes later versions to it, rather than a hand-made copy.
  */
-const DEFAULT_MARKETPLACE_LOOP_SLUGS = [KNOWLEDGE_WIKI_LOOP_SLUG] as const
+const DEFAULT_MARKETPLACE_LOOP_SLUGS = [
+	KNOWLEDGE_WIKI_LOOP_SLUG,
+	WORKSPACE_IMPROVEMENTS_LOOP_SLUG,
+] as const
 
 /**
  * Installs the default marketplace flows into a workspace. Runs post-commit and

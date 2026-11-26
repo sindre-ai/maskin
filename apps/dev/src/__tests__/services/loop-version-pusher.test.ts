@@ -44,6 +44,18 @@ describe('rewriteWiring', () => {
 		expect(rewriteWiring(snap, map)).toEqual(snap)
 	})
 
+	it('rewrites a role id to the workspace agent it was bound to', () => {
+		const map = new Map([['role:workspace-coach', LOCAL_1]])
+		const out = rewriteWiring({ targetActorId: 'role:workspace-coach', name: 'role:other' }, map)
+		expect(out).toEqual({ targetActorId: LOCAL_1, name: 'role:other' })
+	})
+
+	it('leaves a role id as it is when the workspace has no agent for it', () => {
+		const map = new Map([[SRC_1, LOCAL_1]])
+		const snap = { targetActorId: 'role:chief-of-staff' }
+		expect(rewriteWiring(snap, map)).toEqual(snap)
+	})
+
 	it('does not rewrite non-UUID strings even if they appear in the map', () => {
 		const map = new Map([['some-label', 'other-label']])
 		const snap = { actionPrompt: 'some-label', targetActorId: SRC_1 }

@@ -12,12 +12,12 @@ const shippedTargetSchema = loopTargetSchema.omit({ ownerActorId: true })
 
 // An onboarding checklist a flow ships: one parent task and one child task per prerequisite. Install
 // creates them once in the installer's workspace (see services/loop-checklist-provisioning.ts).
-// driverSourceItemId is the template id of the bundled agent that drives them, resolved to the
-// installed agent at install. It is not copied onto the loop object.
+// driverSourceItemId is the template id of the bundled agent (or the role id of a workspace agent)
+// that drives them, resolved to the installed agent at install. It is not copied onto the loop object.
 export const loopChecklistSchema = z.object({
 	title: z.string().min(1),
 	body: z.string().min(1),
-	driverSourceItemId: z.string().uuid().optional(),
+	driverSourceItemId: z.string().min(1).optional(),
 	items: z.array(z.object({ title: z.string().min(1), body: z.string().min(1) })).min(1),
 })
 export type LoopChecklist = z.infer<typeof loopChecklistSchema>
@@ -28,6 +28,9 @@ export const loopSettingsSchema = z.object({
 	tags: z.array(z.string().min(1)).optional(),
 	targets: z.array(shippedTargetSchema).optional(),
 	checklist: loopChecklistSchema.optional(),
+	// A workspace that already has a hand-made flow with this name keeps it: install links that flow
+	// to the marketplace instead of creating a second one (see services/loop-install.ts).
+	adoptExisting: z.boolean().optional(),
 })
 export type LoopSettings = z.infer<typeof loopSettingsSchema>
 

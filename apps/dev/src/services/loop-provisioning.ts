@@ -8,6 +8,13 @@ import {
 	workspaceMembers,
 	workspaceSkills,
 } from '@maskin/db/schema'
+import {
+	CHIEF_OF_STAFF_DEFAULT,
+	ROLE_ACTOR_PREFIX,
+	WORKSPACE_COACH_DEFAULT,
+	WORKSPACE_IMPROVEMENTS_ROLE_CHIEF_OF_STAFF,
+	WORKSPACE_IMPROVEMENTS_ROLE_COACH,
+} from '@maskin/shared'
 import { and, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm'
 import { LLM_CONFIG_ALLOWLIST, dropLegacyBrowserFlag } from '../lib/marketplace-loops/loop-snapshot'
 
@@ -50,6 +57,68 @@ export async function findProvisionedActorBySourceItem(
 		)
 		.limit(1)
 	return row
+}
+
+// Role ids a bundle may use in place of an agent it does not ship, and the name of the system agent
+// every workspace seeds for each. Install and the version push bind triggers and skills that name a
+// role to that agent; the bundle never carries its prompt, so a push cannot overwrite it.
+const ROLE_AGENT_NAMES: Record<string, string> = {
+	[WORKSPACE_IMPROVEMENTS_ROLE_COACH]: WORKSPACE_COACH_DEFAULT.name,
+	[WORKSPACE_IMPROVEMENTS_ROLE_CHIEF_OF_STAFF]: CHIEF_OF_STAFF_DEFAULT.name,
+}
+
+/** True for an id that stands for a workspace agent by role, not for a bundled item. */
+export function isRoleActorId(id: unknown): id is string {
+	return typeof id === 'string' && id.startsWith(ROLE_ACTOR_PREFIX)
+}
+
+/**
+ * Resolves each role id to the workspace's own system agent of that name, as a role id to local
+ * actor id map. A role whose agent is missing (or is not a system agent) is left out, so its
+ * triggers are skipped by the caller and its skills simply bind to nobody.
+ */
+export async function resolveRoleActors(
+	db: DbHandle,
+	workspaceId: string,
+	roleIds: Iterable<string>,
+): Promise<Map<string, string>> {
+	const resolved = new Map<string, string>()
+	for (const roleId of new Set(roleIds)) {
+		const name = ROLE_AGENT_NAMES[roleId]
+		if (!name) continue
+		const [row] = await db
+			.select({ id: actors.id })
+			.from(actors)
+			.innerJoin(workspaceMembers, eq(workspaceMembers.actorId, actors.id))
+			.where(
+				and(
+					eq(workspaceMembers.workspaceId, workspaceId),
+					eq(actors.name, name),
+					eq(actors.isSystem, true),
+				),
+			)
+			.limit(1)
+		if (row) resolved.set(roleId, row.id)
+	}
+	return resolved
+}
+
+/** The role ids named by a bundle's trigger targets and skill attachments. */
+export function roleIdsOfItems(
+	items: Array<{ itemType: string; itemSnapshot: unknown }>,
+): Set<string> {
+	const roles = new Set<string>()
+	for (const item of items) {
+		const snapshot = (item.itemSnapshot as Record<string, unknown> | null) ?? {}
+		if (item.itemType === 'trigger') {
+			const target = snapshot.targetActorId ?? snapshot.target_actor_id
+			if (isRoleActorId(target)) roles.add(target)
+		}
+		if (item.itemType === 'skill' && Array.isArray(snapshot.attachedActorIds)) {
+			for (const id of snapshot.attachedActorIds) if (isRoleActorId(id)) roles.add(id)
+		}
+	}
+	return roles
 }
 
 export function sourceItemIdOf(metadata: unknown): string | null {
@@ -412,14 +481,15 @@ export function rewriteWiring(
 	return walk(snapshot, sourceToLocal) as Record<string, unknown>
 }
 
-// Only UUID-format strings are candidates for intra-loop ID rewriting.
+// Only UUID-format strings (and role ids, which stand for a workspace agent) are candidates for
+// intra-loop ID rewriting.
 // This prevents systemPrompt / actionPrompt / config text from being silently
 // rewritten if it happens to contain a string that coincides with a source ID.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 function walk(value: unknown, sourceToLocal: Map<string, string>): unknown {
 	if (typeof value === 'string') {
-		if (UUID_RE.test(value)) {
+		if (UUID_RE.test(value) || value.startsWith(ROLE_ACTOR_PREFIX)) {
 			const local = sourceToLocal.get(value)
 			return local ?? value
 		}
