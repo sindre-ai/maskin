@@ -35,7 +35,7 @@ describe('Accounting loop definition', () => {
 		expect(ACCOUNTING_LOOP.slug).toBe('accounting-loop')
 		expect(ACCOUNTING_LOOP.name).toBe('Accounting')
 		expect(ACCOUNTING_LOOP.useCase).toBe('Finance')
-		expect(ACCOUNTING_LOOP.version).toBe('1.4.2')
+		expect(ACCOUNTING_LOOP.version).toBe('1.5.0')
 		expect(ACCOUNTING_LOOP.description.length).toBeGreaterThan(0)
 	})
 
@@ -234,9 +234,10 @@ describe('Accounting loop definition', () => {
 			/the connection itself limits the Dinero tools to reading and saving drafts/,
 		)
 		expect(check).toMatch(/Accept that set: do not stop because a tool is not on the 18-name list/)
-		// A tool that books, pays or sends still stops the check, and is never called.
+		// A tool that books, pays or sends still stops the check, and is never called, except the
+		// booking tools that appear only after a person has switched booking on.
 		expect(check).toMatch(
-			/offers a tool that books or finalises a voucher, registers a payment or sends anything to a customer/,
+			/offers any other tool that books or finalises a voucher, registers a payment or sends anything to a customer/,
 		)
 		expect(check).toMatch(/say so and stop\. Never call such a tool/)
 		expect(check).not.toMatch(/steps 1 to 4/)
@@ -304,6 +305,80 @@ describe('Accounting loop definition', () => {
 		expect(check).toMatch(/a tool that books, changes or deletes is offered, or a Dinero tool/)
 		// get_vat_report is the gateway's own read, not a Dinero tool, so the check must not count it.
 		expect(check).toMatch(/get_vat_report is not a Dinero tool and does not count here/)
+	})
+
+	// Booking is the owner's switch. With it off the flow behaves as before, so the draft text stays
+	// and the booking steps are written as conditional on the switch, the booking tools and a period
+	// request. The tools are named in the skill, never in the prompt or the listing text.
+	it('describes the booking steps behind the switch, with the log and the super-user line', () => {
+		const method =
+			skillTexts().find((t) => t.startsWith('---\nname: bookkeeping-draft-method')) ?? ''
+		const check =
+			skillTexts().find((t) => t.startsWith('---\nname: accounting-connection-check')) ?? ''
+		const prompt = actorTexts().join('\n')
+		expect(method).toMatch(/## Period run \(only when booking is on/)
+		for (const name of ['BookVoucher', 'add_purchase_payment', 'add_invoice_payment']) {
+			expect(method).toContain(name)
+			expect(prompt).not.toContain(name)
+			expect(ACCOUNTING_LOOP.description).not.toContain(name)
+		}
+		expect(method).toMatch(/Never book without a timestamp/)
+		expect(method).toMatch(/leave it to Dinero/)
+		expect(method).toMatch(/stays a draft, gets a flag/)
+		expect(method).toMatch(/the rule check shows the entry clear/)
+		expect(method).toMatch(/Put the reason on every line/)
+		expect(method).toMatch(/is logged for you/)
+		expect(method).toMatch(/The owner has approved the books: stop at once/)
+		expect(method).toMatch(/file anything with SKAT or Erhvervsstyrelsen/)
+		expect(prompt).toMatch(/Booking is the owner's switch, never yours/)
+		expect(prompt).toMatch(/the owner has asked you in this chat to work a period/)
+		expect(prompt).toMatch(/Draft only unless booking is switched on/)
+		expect(check).toMatch(/Booking is off until a person switches it on/)
+		expect(check).toMatch(/must be a super-user in Dinero/)
+		expect(check).toMatch(/never add a booking tool to it/)
+		expect(ACCOUNTING_LOOP.description).toMatch(/must be a super-user in Dinero/)
+	})
+
+	// A signed-in connection offers more than the 18 names, and with booking on it also offers the
+	// booking and email tools, so the check must say which may be called, or it would stop the
+	// Bookkeeper on them. The prompt points to the check instead of naming them.
+	it('names the booking and email tools of the connection in the connection check', () => {
+		const check =
+			skillTexts().find((t) => t.startsWith('---\nname: accounting-connection-check')) ?? ''
+		const prompt = actorTexts().join('\n')
+		expect(check).toMatch(
+			/CreateFinanceVoucher, which you call only with its book option set to false/,
+		)
+		expect(check).toMatch(
+			/When a person has switched booking on, it also offers the three booking tools/,
+		)
+		for (const name of [
+			'send_invoice_email',
+			'add_invoice_reminder',
+			'book_invoice_reminder',
+			'send_invoice_reminder_email',
+		]) {
+			expect(check).toContain(name)
+		}
+		expect(check).toMatch(/You use a booking tool only in a period run the owner asked for/)
+		expect(check).toMatch(/only when the owner asks in the chat for exactly that one/)
+		expect(prompt).toMatch(/the gateway sets the tool list itself and offers a few more tools/)
+		expect(prompt).toMatch(/accounting-connection-check says which of them you may call and when/)
+	})
+
+	it('leaves the allowed list for a custom server and the draft path as they were', () => {
+		const check =
+			skillTexts().find((t) => t.startsWith('---\nname: accounting-connection-check')) ?? ''
+		expect(check).toMatch(/keep its allowed list exactly as in step 3/)
+		expect(check).toMatch(/with exactly these 18 names/)
+		expect(ACCOUNTING_LOOP.description).toMatch(/exactly these 18 names/)
+		expect(ACCOUNTING_LOOP.settings.closeCondition).toMatch(/With booking off, nothing is booked/)
+	})
+
+	it('never says reconcile: a payment is registered and a line is matched', () => {
+		const all = [ACCOUNTING_LOOP.description, ...actorTexts(), ...skillTexts()].join('\n')
+		expect(all).not.toMatch(/reconcil/i)
+		expect(all).toMatch(/payment registered/)
 	})
 
 	it('has no key-based install step left', () => {

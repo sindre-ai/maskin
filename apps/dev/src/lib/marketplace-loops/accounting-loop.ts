@@ -33,7 +33,7 @@ const ACCOUNTING_CHECKLIST: LoopChecklist = {
 		},
 		{
 			title: 'Run the first connection check',
-			body: 'Needed: the connection check from the skill accounting-connection-check run once with no receipt. It must read the right company and offer no tool that books, pays or sends. If Dinero was added as a custom tool, it must also show only Dinero tools on the allowed list. Do it as soon as Dinero is connected. If it fails, say the line that fits the failure and what the owner must do.',
+			body: 'Needed: the connection check from the skill accounting-connection-check run once with no receipt. It must read the right company and offer no tool that books, pays or sends, unless a person has switched booking on. If Dinero was added as a custom tool, it must also show only Dinero tools on the allowed list. Do it as soon as Dinero is connected. If it fails, say the line that fits the failure and what the owner must do.',
 		},
 		{
 			title: 'Say which Dinero plan you have',
@@ -59,9 +59,9 @@ const ACCOUNTING_CHECKLIST: LoopChecklist = {
 const ACCOUNTING_LOOP_SETTINGS: LoopSettings = {
 	checklist: ACCOUNTING_CHECKLIST,
 	entryCondition:
-		"A person uploads a receipt, a photo or a PDF, in the flow's chat, and Dinero is connected.",
+		"A person uploads a receipt, a photo or a PDF, in the flow's chat, and Dinero is connected. With booking switched on, the owner can also ask the flow to work a period.",
 	closeCondition:
-		'The receipt is saved as a draft voucher in Dinero, or it is on the owner list with the reason. Nothing is booked, changed or deleted by the flow.',
+		'The receipt is saved as a draft voucher in Dinero, or it is on the owner list with the reason. With booking off, nothing is booked, changed or deleted by the flow. With booking on, a clear item is booked and logged, and a doubtful one stays a flagged draft.',
 	tags: ['Finance'],
 }
 
