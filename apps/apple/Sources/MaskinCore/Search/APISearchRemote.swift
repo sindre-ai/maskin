@@ -6,7 +6,7 @@ import OpenAPIRuntime
 /// `URLSession`, not the generated client: the checked-in client is older than that route (same
 /// reason as `APIChatSearch`). Files and the @ menu's people use the generated client. Responses are
 /// re-decoded into the small DTOs below so generated payload types never leak.
-public struct APISearchRemote: SearchRemote {
+public struct APISearchRemote: SearchRemote, PageSearchRanking {
 	private let client: Client
 	private let baseURL: URL
 	private let clientSource: String
@@ -14,6 +14,9 @@ public struct APISearchRemote: SearchRemote {
 	private let session: URLSession
 	/// The most rows the server search returns (`limit` in its query).
 	private static let maxLimit = 150
+	/// A search hides archived rows unless Archived is asked for. The list pages show every row, so
+	/// all five status groups go along (the web's STATUS_GROUP_KEYS).
+	private static let everyStatus = ["needs_you", "in_progress", "new", "done", "archived"]
 
 	public init(
 		client: Client, baseURL: URL, clientSource: String, credentials: @escaping MaskinCredentialsProvider,
@@ -30,6 +33,18 @@ public struct APISearchRemote: SearchRemote {
 
 	public func search(query: String, participants: [String], limit: Int) async throws -> SearchAnswer {
 		let request = await makeRequest(query: query, participants: participants, limit: limit)
+		return try await answer(for: request)
+	}
+
+	/// The Agents and Flows pages' order: the same server search for one type, with every status
+	/// asked for (the pages list archived rows too), best match first. Only the ids are kept.
+	public func rankedIDs(query: String, type: PageSearchType) async throws -> [String] {
+		let request = await makeRequest(
+			query: query, participants: [], limit: Self.maxLimit, types: [type.rawValue], statuses: Self.everyStatus)
+		return try await answer(for: request).results.map(\.entityId)
+	}
+
+	private func answer(for request: URLRequest) async throws -> SearchAnswer {
 		let data: Data
 		let status: Int
 		do {
@@ -44,13 +59,18 @@ public struct APISearchRemote: SearchRemote {
 		return try Self.decode(data)
 	}
 
-	/// Built apart from sending so tests can read the URL and headers. No statuses are sent, so the
-	/// server applies its default, the same as the web Search page (archived chats stay out).
-	func makeRequest(query: String, participants: [String], limit: Int) async -> URLRequest {
+	/// Built apart from sending so tests can read the URL and headers. Unless asked for, no types or
+	/// statuses are sent, so the server applies its defaults, the same as the web Search page
+	/// (every group, archived chats stay out).
+	func makeRequest(
+		query: String, participants: [String], limit: Int, types: [String] = [], statuses: [String] = []
+	) async -> URLRequest {
 		let url = baseURL.appendingPathComponent("api/search")
 		var parts = URLComponents(url: url, resolvingAgainstBaseURL: false)
 		var items = [URLQueryItem(name: "limit", value: String(min(limit, Self.maxLimit)))]
 		if !query.isEmpty { items.append(URLQueryItem(name: "q", value: query)) }
+		if !types.isEmpty { items.append(URLQueryItem(name: "types", value: types.joined(separator: ","))) }
+		if !statuses.isEmpty { items.append(URLQueryItem(name: "statuses", value: statuses.joined(separator: ","))) }
 		if !participants.isEmpty { items.append(URLQueryItem(name: "participants", value: participants.joined(separator: ","))) }
 		parts?.queryItems = items
 		var request = URLRequest(url: parts?.url ?? url)

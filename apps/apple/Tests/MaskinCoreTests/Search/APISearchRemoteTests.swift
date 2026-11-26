@@ -47,6 +47,17 @@ struct APISearchRemoteTests {
 		#expect(items.first { $0.name == "limit" }?.value == "150")
 	}
 
+	@Test("the page ranking asks for one type with every status, so archived rows are ranked too")
+	func pageRankingRequest() async throws {
+		let request = await remote().makeRequest(
+			query: "cco", participants: [], limit: 150, types: ["agent"],
+			statuses: ["needs_you", "in_progress", "new", "done", "archived"])
+		let items = URLComponents(url: try #require(request.url), resolvingAgainstBaseURL: false)?.queryItems ?? []
+		#expect(items.first { $0.name == "types" }?.value == "agent")
+		#expect(items.first { $0.name == "statuses" }?.value == "needs_you,in_progress,new,done,archived")
+		#expect(items.first { $0.name == "q" }?.value == "cco")
+	}
+
 	@Test("keeps the server's order across groups and maps each group to its kind")
 	func decodes() throws {
 		let json = """

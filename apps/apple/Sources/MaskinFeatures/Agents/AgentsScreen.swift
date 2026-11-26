@@ -48,6 +48,8 @@ public struct AgentDetailScreen: View {
 private struct AgentsContainer: View {
 	let environment: AppEnvironment
 	@State private var store: AgentsStore
+	/// Orders the search results by the server's best match while words are typed.
+	@State private var rank: PageSearchRank
 	@State private var selection: String?
 	@State private var search = ""
 	/// The Display choices (sort, group, filters, shown lines). The chips above the list write
@@ -63,11 +65,18 @@ private struct AgentsContainer: View {
 			initialValue: AgentsStore(
 				api: APIAgentsSource(client: environment.client, workspaceID: workspaceID),
 				events: environment.events, cache: environment.snapshotCache))
+		_rank = State(
+			initialValue: PageSearchRank(
+				remote: APISearchRemote(
+					client: environment.client, baseURL: environment.baseURL, clientSource: environment.clientSource,
+					credentials: environment.auth.credentialsProvider),
+				type: .agent))
 	}
 
 	var body: some View {
 		Group { if pushed { pushedBody } else { splitBody } }
 			.sheet(isPresented: $showDisplay) { AgentsDisplaySheet(store: store, display: $display) }
+			.onChange(of: search) { _, text in rank.update(text: text) }
 	}
 
 	/// Pushed onto the profile sheet's stack: the list, with an agent's detail pushed on top.
@@ -75,7 +84,7 @@ private struct AgentsContainer: View {
 		AgentListView(
 			store: store, selection: $selection, search: $search, display: $display,
 			isLive: environment.events.connection != .failed, zoomNamespace: zoom,
-			onDisplay: displayAction
+			onDisplay: displayAction, rank: rank
 		)
 		.shellToolbar(environment: environment, title: "Agents", actions: ShellActions())
 		.navigationDestination(item: $selection) { id in
@@ -96,7 +105,7 @@ private struct AgentsContainer: View {
 			AgentListView(
 				store: store, selection: $selection, search: $search, display: $display,
 				isLive: environment.events.connection != .failed, zoomNamespace: zoom,
-				onDisplay: displayAction, showsChevron: false
+				onDisplay: displayAction, showsChevron: false, rank: rank
 			)
 			.shellToolbar(environment: environment, title: "Agents", actions: ShellActions())
 			.navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 440)

@@ -18,9 +18,11 @@ struct AgentListView: View {
 	var onDisplay: (() -> Void)?
 	/// Rows show a chevron when tapping pushes the detail (iPhone), not in a split sidebar.
 	var showsChevron = true
+	/// The server's best-match order while words are typed. Nil keeps the Display order.
+	var rank: PageSearchRank?
 
 	var body: some View {
-		let sections = store.sections(query: search, display: display)
+		let sections = store.sections(query: search, display: display, rank: rank?.order)
 		List(selection: $selection) {
 			if !isLive {
 				OfflineBanner(message: "Live updates paused. Reconnecting…")

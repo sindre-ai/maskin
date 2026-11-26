@@ -112,8 +112,12 @@ public final class AgentsStore {
 		return chips
 	}
 
-	/// The list: filtered by search, status and team, ordered, then grouped.
-	public func sections(query: String = "", display: AgentsDisplay = .default) -> [AgentSection] {
+	/// The list: filtered by search, status and team, ordered, then grouped. While words are typed,
+	/// `rank` (the server's best-match order) wins over the Display sort and the grouping, so the
+	/// best match is the first row. Without it the Display order stands.
+	public func sections(
+		query: String = "", display: AgentsDisplay = .default, rank: [String: Int]? = nil
+	) -> [AgentSection] {
 		let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
 		var rows = agents.filter { agent in
 			(display.status == nil || agent.status == display.status)
@@ -136,6 +140,9 @@ public final class AgentsStore {
 		}
 		if display.reversed { rows.reverse() }
 		guard !rows.isEmpty else { return [] }
+		if let rank {
+			return [AgentSection(id: "all", title: nil, items: PageSearchRank.sort(rows, by: rank, id: \.id))]
+		}
 
 		// One team picked: its header would say what the chip already does.
 		let grouping = display.grouping == .team && display.team != nil ? AgentsGrouping.none : display.grouping

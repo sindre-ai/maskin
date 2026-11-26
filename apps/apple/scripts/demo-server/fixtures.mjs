@@ -784,7 +784,11 @@ export function overrides({ method, path, params, query, body, base, item }) {
 	// back best match first, so a name hit sits above a hit only in a message. Chats only here.
 	if (method === 'get' && path === '/api/search') {
 		const words = (query.get('q') ?? '').toLowerCase().split(/\s+/).filter(Boolean)
-		const results = rooms
+		// Chats only: a page asking for one other type (the Agents and Flows pages do) gets no rows,
+		// so those pages keep their own order on the demo data.
+		const types = (query.get('types') ?? '').split(',').filter(Boolean)
+		const rows = types.length > 0 && !types.includes('chat') ? [] : rooms
+		const results = rows
 			.map((r) => {
 				const names = r.with
 					.map((id) => actors.find((a) => a.id === id)?.name ?? '')
