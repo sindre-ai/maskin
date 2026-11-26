@@ -36,12 +36,11 @@ concurrency:
 jobs:
   must-keep:
     name: must-keep (${{ matrix.class }})
-    # A one-test run by hand (only = Class/testName) needs only the job whose class it names.
-    if: inputs.only == '' || startsWith(inputs.only, format('{0}/', matrix.class))
     strategy:
       fail-fast: false
       matrix:
-        class: [MustKeepTests, MustKeepMoreTests]
+        # A one-test run by hand (only = Class/testName) needs only the job for the class it names.
+        class: ${{ fromJSON(inputs.only == '' && '["MustKeepTests","MustKeepMoreTests"]' || startsWith(inputs.only, 'MustKeepMoreTests/') && '["MustKeepMoreTests"]' || '["MustKeepTests"]') }}
     runs-on: macos-26
     timeout-minutes: 45
     env:
