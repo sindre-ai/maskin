@@ -1,0 +1,146 @@
+{
+	"2f70ced0-9a08-5edc-8a73-0d62c7f7ac21": {
+		"id": "2f70ced0-9a08-5edc-8a73-0d62c7f7ac21",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Shape success criteria",
+		"type": "event",
+		"config": {
+			"action": "status_changed",
+			"filter": {
+				"status": "define"
+			},
+			"entity_type": "bet"
+		},
+		"actionPrompt": "**Flow hygiene, first step:** make sure this bet is linked into the flow named Product Delivery (find it with list_loops) through an **in_loop** relationship (source = the flow, target = this bet). Check with **list_relationships** (source_id = the flow, type = **in_loop**). If the edge is missing, create it through **update_objects.edges**. Skip only when it already exists.\n\nA bet just moved to define. Run your success-criteria routine: read the bet and its spec, find which events and measures the connected analytics tool actually records for this surface, and propose concrete won, lost and inconclusive criteria in numbers that can be read. If a dedicated measurement owner exists for this surface, find it with **list_actors** and align with its thresholds instead of inventing a second standard. Flag any measure the criteria need that nothing records as a decision for the person who owns that surface (match on their description, not on a remembered name). Post ONE comment on the bet with the recommended criteria. If the criteria change the spec, @mention the agent that writes specs. Leave the spec, the sizing and the go decision to the agents and people who own them: this step only sets the criteria. If no analytics tool is connected, say so in the comment and write the criteria in the measures you can name.\n",
+		"targetActorId": "7a1f3c52-5b0e-4d6a-9c1e-2f8b6a0d4e11",
+		"enabled": true
+	},
+	"568fdefe-4dca-501a-8e7c-e40f2b010448": {
+		"id": "568fdefe-4dca-501a-8e7c-e40f2b010448",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Validate live bet",
+		"type": "event",
+		"config": {
+			"action": "status_changed",
+			"filter": {
+				"status": "live"
+			},
+			"entity_type": "bet"
+		},
+		"actionPrompt": "**Flow hygiene, first step:** make sure this bet is linked into the flow named Product Delivery (find it with list_loops) through an **in_loop** relationship (source = the flow, target = this bet). Check with **list_relationships** (source_id = the flow, type = **in_loop**). If the edge is missing, create it through **update_objects.edges**. Skip only when it already exists.\n\nA bet just reached live. Decide whether it is customer-facing (customers or users see or use a change). Agent plumbing and internal tooling are not: for those the live date is the customer date, say so in one line. For a customer-facing bet, the customer date is the day customers could first use it in production. Read it from a comment on the bet that starts with \"Customers had this on\". If there is none and you can read the date yourself, write that comment. If you cannot yet, post \"Customer date pending\" and give the call once the date exists.\n\nSet **metadata.check_date** on the bet to the day its won or lost call is due, read from the bet body (the latest date if two are given), counted from the customer date. If the body names no date, say so in your comment.\n\nThen reconstruct the bet's success criteria from its body, spec and history, read the relevant numbers over the window since the customer date from the connected analytics tool, and post ONE evidence-backed won, lost or inconclusive call on the bet. If a dedicated measurement owner has already ruled, add your data point as a corroborating comment instead of a competing call. If inconclusive, say what would close it and by when. If the bet is about the workspace's own product, add one short line on what customer and internal feedback since it went live says: agrees with the data, contradicts it, or is silent. The call feeds a person's decision to promote or demote the bet, so never move the bet's status yourself. If no analytics tool is connected, say so once and give the call on what you can read.\n",
+		"targetActorId": "7a1f3c52-5b0e-4d6a-9c1e-2f8b6a0d4e11",
+		"enabled": true
+	},
+	"c64b7301-ec26-5176-b66a-522c540492ac": {
+		"id": "c64b7301-ec26-5176-b66a-522c540492ac",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Daily product sweep (08:17 UTC)",
+		"type": "cron",
+		"config": {
+			"expression": "17 8 * * *"
+		},
+		"actionPrompt": "Run the daily product-data sweep for the flow named Product Delivery (find it with list_loops). Read the connected analytics tool for error spikes, funnel drop-offs and unusual adoption or activation trends. File each distinct pattern as ONE insight (type insight, status new) with a sharp title and specific evidence, so whoever triages insights can cluster it. Then post exactly ONE comment on the flow saying what you filed and what you deliberately skipped and why. Use attention 2 for the routine pass and 4 only for a genuine anomaly worth a person's look today.\n\nIf no analytics tool is connected, post one comment on the flow saying the sweep is off until one is connected (check get_comments first so you never post it twice), then disable this trigger with **update_trigger** and stop. Nothing new since the last sweep: write nothing.\n",
+		"targetActorId": "7a1f3c52-5b0e-4d6a-9c1e-2f8b6a0d4e11",
+		"enabled": true
+	},
+	"c459a77f-548c-510a-ac39-1adf84b7d6bb": {
+		"id": "c459a77f-548c-510a-ac39-1adf84b7d6bb",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Review the task",
+		"type": "event",
+		"config": {
+			"action": "status_changed",
+			"filter": {
+				"status": "in_review"
+			},
+			"entity_type": "task"
+		},
+		"actionPrompt": "**Flow hygiene, first step:** make sure this task is linked into the flow named Product Delivery (find it with list_loops) through an **in_loop** relationship (source = the flow, target = this task). Check with **list_relationships** (source_id = the flow, type = **in_loop**). If the edge is missing, create it through **update_objects.edges**. Skip only when it already exists.\n\nA task just moved to in_review. Review it.\n\n**Race and repeat guard, do this first.** Read the task with **get_objects**. If its status is no longer in_review, stop quietly. Run **list_sessions** for your own agent with status pending, starting or running, ignoring your own session. If a different session already names this task, stop quietly: you are already on it.\n\n**Scope guard.** If the task has no pull request (no **metadata.pr_url**, no link in the body) and no approved done-when list, there is nothing to review: stop quietly. If it has an approved done-when list and no pull request, review the finished work against each line instead of a diff: confirm every line from the source itself (the page, the file, the object), never from the driver's comment alone, and leave lines marked for a person to that person. If every line you can check holds, set the task to done in one update. If a line fails, comment, @mention the driver, name the open lines and set the task to in_progress.\n\nOtherwise review the pull request against the task's acceptance criteria as your instructions describe. Do not wait for CI to finish: post your verdict at the current head commit, stating which checks were green, red or still running when you looked. Always post a verdict (pass in substance, changes needed, or a stated hold with the reason) and move the task status before you finish. If the task was sent back by the delivery lead naming a failed condition on the pull request, that comment is your work order.\n",
+		"targetActorId": "9b4d2e61-7c3a-4a18-b5f0-6e1d8c3a7f33",
+		"enabled": true
+	},
+	"24e77eb3-4a29-5581-ba50-d629b18c9617": {
+		"id": "24e77eb3-4a29-5581-ba50-d629b18c9617",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Drive the task",
+		"type": "event",
+		"config": {
+			"action": "status_changed",
+			"filter": {
+				"status": "todo"
+			},
+			"entity_type": "task"
+		},
+		"actionPrompt": "**Flow hygiene, first step:** make sure this task is linked into the flow named Product Delivery (find it with list_loops) through an **in_loop** relationship (source = the flow, target = this task). Check with **list_relationships** (source_id = the flow, type = **in_loop**). If the edge is missing, create it through **update_objects.edges**. Skip only when it already exists.\n\nA task just entered todo. You are the Developer.\n\n**Sanity checks first.** Read the task with **get_objects** (include relationships). If its driver is not you, stop quietly: it belongs to another agent and their own dispatch handles it. Read the parent bet through its **breaks_into** edge. If the bet exists and is not active, stop quietly: do not work on tasks whose bet has not been given the go.\n\n**Claim the task first.** As your very first change, move the task from todo to in_progress. This tells everyone someone is on it and prevents a second dispatch. It is cheap to undo if the checks fail.\n\n**Read the spec.** Find the spec file attached to the parent bet (list_relationships on the bet, then get_file) and read it end to end. If none is attached, read the bet body and every insight that informs it. Never start from the acceptance criteria alone.\n\n**Audit first.** Walk each acceptance criterion against reality (the live page, the repository, prior comments). If a criterion is already met, note the evidence and skip it; build only the difference. If everything is already done, move the task straight to in_review with a comment saying why.\n\n**Build and hand off.** Work as your instructions describe. When the pull request is ready, move the task to in_review and post ONE completion comment with the pull request link and a one-line summary (attention 1, no mention: the reviewer's trigger fires on the status change). If you are blocked, retry once, then post an attention 4 comment naming the blocker and who can clear it. If this trigger fires on a task you are already working, read the recent comments, claim it again and carry on instead of starting over. If no code host is connected, say so once on the task and stop.\n",
+		"targetActorId": "3c9e8d47-1a2b-4f65-8e03-b7d5c4a91f22",
+		"enabled": true
+	},
+	"cf6df4c0-d638-5bf4-bddf-b6021561fe98": {
+		"id": "cf6df4c0-d638-5bf4-bddf-b6021561fe98",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Merge when a task passes review",
+		"type": "event",
+		"config": {
+			"action": "status_changed",
+			"filter": {
+				"status": "validated"
+			},
+			"entity_type": "task"
+		},
+		"actionPrompt": "Load the **merge-gate** skill first: it holds the merge ladder and the send-back routine.\n\n**Flow hygiene, first step:** make sure this task is linked into the flow named Product Delivery (find it with list_loops) through an **in_loop** relationship (source = the flow, target = this task). Check with **list_relationships** (source_id = the flow, type = **in_loop**). If the edge is missing, create it through **update_objects.edges**. Skip only when it already exists.\n\nA task just reached validated. Route by its shape:\n\n**A. A task pull request into the default branch** (the pull request base is the default branch and its body links this task): verify the conditions in the merge-gate skill against the live pull request and merge it, or turn on auto-merge if CI is still running. After a successful merge, move the task from validated to done. If a condition fails, send it back as the skill describes.\n\n**B. A bet's final review pull request** (the aggregate review task for a bet, which opens the bet's branch into the default branch): verify every other task of the bet has a merged pull request, then apply the same conditions and merge.\n\n**C. No pull request, change already live.** The task has no pull request and no parent bet, and the reviewer's latest comment passes it and says the change is already live (a page or setting changed directly and checked). Nothing is left to merge: move the task to done. Do not do this when the review says high risk or a person's check is pending.\n\n**D. No pull request, approved done-when list.** If the reviewer has not yet posted a comment that reads the list, move the task back to in_review once and @mention the reviewer. If the reviewer's reading says every line holds, move the task to done in one update.\n\n**Anything else** (a task pull request into a bet branch, a task with a parent bet and no pull request of its own): stop quietly. The reviewer merges those, and the bet's final review picks up the rest. If no code host is connected, say so once on the task and stop.\n",
+		"targetActorId": "7a1f3c52-5b0e-4d6a-9c1e-2f8b6a0d4e11",
+		"enabled": true
+	},
+	"ae3a8a71-fb06-5cd1-8622-60d00356a0ff": {
+		"id": "ae3a8a71-fb06-5cd1-8622-60d00356a0ff",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Merge sweep (every 3 hours, UTC)",
+		"type": "cron",
+		"config": {
+			"expression": "0 */3 * * *"
+		},
+		"actionPrompt": "Load the **merge-gate** skill first. Safety-net sweep for the flow named Product Delivery (find it with list_loops). List the open pull requests on the connected code host whose base is the default branch and either are a bet's branch or link a driving task in their body. Skip pull requests with no task link and no bet branch.\n\nWhy this matters: a reviewer re-passing a pull request at a new head does not change the task status again, so this sweep is the only thing that picks such a pull request up.\n\nTake them one at a time, oldest passing review first. For each unmerged one, run the merge-gate conditions and merge, or turn on auto-merge if CI is still running. Never update a pull request branch from the default branch: a pull request that is only behind merges as it is. Only a real conflict goes back to the reviewer. A head that moved only because of a merge-from-default commit does not void the verdict if the pull request's own files and line counts match the review; a head that moved because its own files changed does, so send it back for a fresh verdict. Read the live checks on the current head every time.\n\n**Held pull requests.** For each open pull request with no passing review, or a held one, read the latest review and the driving task. Skip anything marked do not merge or on a person's hold, and anything with a reviewer or developer session pending, starting or running on its task. If the hold has cleared (the red check it named is green on the default branch, the pull request it waited on is merged, or the head changed since the review), send it back once per head commit: one task comment @mentioning the reviewer, and move the task to in_review. A pull request with no review at all and older than 6 hours gets one @mention of the reviewer. A pull request stacked on another open pull request whose parent has not passed waits: say so once on the task.\n\nOn a successful merge of a task pull request, move its driving task from validated to done. If you find a pull request already merged whose task is not done, move it too.\n\n**Merged bets with unfinished tasks.** For each bet branch pull request merged in the last 14 days, list the bet's tasks. For each open task (todo, in_progress, backlog) that has no declared gate in its body and is not a duplicate of another open task, start its driver with **create_sub_chat** (it returns at once), unless a session is already on it or one was started in the last 2 hours. Post one comment on the bet naming the merged pull request and each task you started. Never claim a start you did not see succeed, and do not change the bet's status.\n\nStay silent unless you merged something that needs a person, are blocked, or sent a pull request back. If no code host is connected, post one comment on the flow saying so (check get_comments first), disable this trigger with **update_trigger** and stop.\n",
+		"targetActorId": "7a1f3c52-5b0e-4d6a-9c1e-2f8b6a0d4e11",
+		"enabled": true
+	},
+	"24e3b338-b1b4-5e7f-9566-2f96ea8274c3": {
+		"id": "24e3b338-b1b4-5e7f-9566-2f96ea8274c3",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Dispatch the final review",
+		"type": "event",
+		"config": {
+			"action": "status_changed",
+			"filter": {
+				"status": "validated"
+			},
+			"entity_type": "task"
+		},
+		"actionPrompt": "**Flow hygiene, first step:** make sure this task is linked into the flow named Product Delivery (find it with list_loops) through an **in_loop** relationship (source = the flow, target = this task). Check with **list_relationships** (source_id = the flow, type = **in_loop**). If the edge is missing, create it through **update_objects.edges**. Skip only when it already exists.\n\nA task just reached validated. Your one job: once the LAST substantive sibling under its parent bet has validated, make sure the bet's aggregate-review task is dispatched to its driver, the reviewer. Otherwise stay silent.\n\n1. Read the triggering task and walk **breaks_into** back to its parent bet. No parent bet: stop quietly.\n2. If the triggering task is itself the aggregate-review task (its title contains \"Aggregate review\"), stop quietly.\n3. List every sibling task under the bet (list_relationships, source = the bet, type **breaks_into**). Ignore archived or discarded tasks and the aggregate-review task.\n4. If any substantive sibling is not yet validated (backlog, todo, in_progress or in_review), stop quietly. Do not dispatch early and do not post a hold comment: this trigger fires on every validation and must stay quiet until the last one lands.\n5. Otherwise find the aggregate-review task and branch on its status. todo, in_review, validated, done or discarded: stop quietly. backlog: set it to todo, which wakes its driver. in_progress: it was dispatched early and is held. Check **list_sessions** for its driver in pending, starting or running and look for a session naming this task. If one exists, stop quietly. Otherwise set it to todo to re-dispatch.\n6. Stay silent on success. Comment only if the flip fails or the parent bet cannot be resolved. Never merge anything.\n",
+		"targetActorId": "e5a7c910-2d4b-4b8e-a6c3-0f9e1b5d2a44",
+		"enabled": true
+	},
+	"0c0d2cfc-bc7f-5394-9e0b-27abcf7071d2": {
+		"id": "0c0d2cfc-bc7f-5394-9e0b-27abcf7071d2",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Weekly delivery briefing (Mon 08:30 UTC)",
+		"type": "cron",
+		"config": {
+			"expression": "30 8 * * 1"
+		},
+		"actionPrompt": "Every Monday, even a quiet one, rewrite the living briefing page for the flow named Product Delivery (find it with list_loops): a knowledge object titled \"Delivery briefing: what shipped and what it means\". Create it the first time and link it to the flow with an **in_loop** relationship. You are its only owner.\n\nRead the page first, keep what is still true, replace what is stale and never append a second copy. Inputs from the last 7 days: bets that changed status, tasks that reached done or validated and the pull requests merged, tasks stuck, bets that went live and your call on them, and insights filed by the daily sweep (link them, do not re-research them). \"Shipped\" means merged and live for users, not a task moved to done: say what changed for a user. \"Stuck\" means a task in in_review or validated for more than 3 days, or a bet waiting on a go: name who unblocks it. \"Win or lose\" uses the success criteria and your call on live bets, and says inconclusive with a date when the window has not closed.\n\nSections in order: Quick read (at most 8 lines, readable in 30 seconds), Act now (only what needs a reaction this week, with who reacts and by when, otherwise \"Nothing urgent\"), This week's moves (Shipped and Stuck, one line each, dated and linked), Watch next (two to four concrete things), Last four weeks at a glance (one line per week; move last week's verdict down and drop the oldest). Each section opens with one bold takeaway line and none runs past about 12 lines. Plain words a non-technical reader gets in two minutes, every object named is a link. Put the date of the update in the intro line.\n\nThen post ONE comment on the flow: line 1 a headline of at most 20 words with a link to the page, line 2 the ask or \"No ask\". Use attention 4 and mention a person only if an Act now item needs their decision this week, otherwise attention 2 and no mention. If nothing moved all week, skip the comment but still rewrite the page.\n",
+		"targetActorId": "7a1f3c52-5b0e-4d6a-9c1e-2f8b6a0d4e11",
+		"enabled": true
+	},
+	"4bd1295c-14c1-5966-947b-4d252b2b2057": {
+		"id": "4bd1295c-14c1-5966-947b-4d252b2b2057",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Owner check (daily, 09:17 UTC)",
+		"type": "cron",
+		"config": {
+			"expression": "17 9 * * *"
+		},
+		"actionPrompt": "You are the accountable owner of the flow named Product Delivery (find it with list_loops). Once a day, check whether it is moving toward its entry and close conditions and act on what is stuck, so nobody has to ask for status or re-kick work by hand.\n\n1. Read the flow and the objects in it.\n2. Find stuck items: an open task with an agent driver where for 24 hours nothing changed (status, comment, session, linked object), no session is running, no live card waits on a person and no step is dated in the future. Tasks in validated are left out, but a task pull request into the default branch that sits passed for over 24 hours is a merge failure: handle it with the merge-gate skill. Split stuck items into waiting on a person (a card or ask exists) and waiting on nobody.\n3. For each item waiting on nobody, do exactly one of: unblock it yourself, start the right agent now (check **list_sessions** for pending, starting and running first so you never double-start), or ask the agent that owns the missing piece. For each item waiting on a person, make sure one card or ask exists and add no second.\n4. Passed pull requests that are unmerged: follow the merge-gate skill. Never update a branch from the default branch.\n5. Check the agents of this flow can run: **list_sessions** for each, newest first. If the newest sessions fail with a login or key error, say so and ask the agent that owns that credential.\n6. Be silent when all is well. Post one short comment on the flow only if something changed or a person is needed, at most one a day, with one line each for stuck items found and items acted on.\n\nAct on at most 10 items per run.\n",
+		"targetActorId": "7a1f3c52-5b0e-4d6a-9c1e-2f8b6a0d4e11",
+		"enabled": true
+	}
+}

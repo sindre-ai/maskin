@@ -16,6 +16,7 @@ import {
 import { KNOWLEDGE_WIKI_LOOP } from '../../lib/marketplace-loops/knowledge-wiki-loop'
 import { MARKET_WATCH_LOOP } from '../../lib/marketplace-loops/market-watch-loop'
 import { MEETING_LOOP } from '../../lib/marketplace-loops/meeting-loop'
+import { PRODUCT_DELIVERY_LOOP } from '../../lib/marketplace-loops/product-delivery-loop'
 import { PRODUCT_RELEASE_LOOP } from '../../lib/marketplace-loops/product-release-loop'
 import { PRODUCT_USAGE_LOOP } from '../../lib/marketplace-loops/product-usage-loop'
 import { SIGNAL_INTAKE_LOOP } from '../../lib/marketplace-loops/signal-intake-loop'
@@ -27,6 +28,7 @@ const ALL_PACKAGES = [
 	DISCOVERY_LOOP,
 	MEETING_LOOP,
 	PRODUCT_RELEASE_LOOP,
+	PRODUCT_DELIVERY_LOOP,
 	CUSTOMER_VOICE_LOOP,
 	KNOWLEDGE_WIKI_LOOP,
 	PRODUCT_USAGE_LOOP,
