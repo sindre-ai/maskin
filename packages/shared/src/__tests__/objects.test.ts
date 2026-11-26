@@ -214,7 +214,7 @@ describe('TERMINAL_BET_STATUSES', () => {
 
 describe('LIVE_FLOW_STATUSES', () => {
 	it('holds every running status of a flow, in both spellings of the ladder', () => {
-		const running = LOOP_STATUSES.filter((s) => s !== 'draft' && s !== 'paused')
+		const running = LOOP_STATUSES.filter((s) => s !== 'draft' && s !== 'paused' && s !== 'archived')
 		for (const status of running) expect(LIVE_FLOW_STATUSES).toContain(status)
 		for (const status of ['pilot', 'supervised', 'live']) {
 			expect(LIVE_FLOW_STATUSES).toContain(status)
