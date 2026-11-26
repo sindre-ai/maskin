@@ -145,12 +145,6 @@ export interface ModerateCommentInput {
 	ban_author?: boolean
 }
 
-interface CommentRead {
-	items?: Array<{
-		snippet?: { videoId?: string; authorDisplayName?: string; textDisplay?: string }
-	}>
-}
-
 const MODERATION_STATUS_BY_INPUT = {
 	published: 'published',
 	held_for_review: 'heldForReview',
