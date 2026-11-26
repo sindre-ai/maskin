@@ -120,7 +120,7 @@ export const decisionOptionSchema = z.object({
 		})
 		.optional()
 		.describe(
-			'On the option that approves deleting another agent; mark it destructive. The tap only records approval: the reply wakes you, then call delete_agent with the same id within 24 hours. A plain yes in a chat the agent is in also works (delete_agent with chat_message_id). All delete_agent options name the same agent.',
+			'On the option that approves deleting another agent; mark it destructive. The tap only records approval: the reply wakes you, then call delete_agent with the same id within 24 hours. All delete_agent options name the same agent.',
 		),
 })
 
