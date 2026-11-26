@@ -46,7 +46,9 @@ public final class PageSearchRank {
 				try await Task.sleep(for: debounce)
 				let ids = try await remote.rankedIDs(query: typed, type: type)
 				guard !Task.isCancelled else { return }
-				self?.order = Dictionary(ids.enumerated().map { ($0.element, $0.offset) }, uniquingKeysWith: { first, _ in first })
+				var places: [String: Int] = [:]
+				for (place, id) in ids.enumerated() where places[id] == nil { places[id] = place }
+				self?.order = places
 			} catch {
 				// A failed search leaves the Display order, the same as before the answer arrives.
 			}
@@ -57,9 +59,14 @@ public final class PageSearchRank {
 	/// place after them. With no ranking the rows come back as given.
 	public nonisolated static func sort<Row>(_ rows: [Row], by order: [String: Int]?, id: (Row) -> String) -> [Row] {
 		guard let order else { return rows }
-		return rows.enumerated()
-			.map { (index: $0.offset, row: $0.element, place: order[id($0.element)] ?? Int.max) }
-			.sorted { $0.place == $1.place ? $0.index < $1.index : $0.place < $1.place }
-			.map(\.row)
+		// Each row's place, then the index as the tiebreak so unranked rows keep their given order.
+		var places: [Int] = []
+		for row in rows { places.append(order[id(row)] ?? Int.max) }
+		let indices: [Int] = Array(rows.indices)
+		let sorted: [Int] = indices.sorted { (a: Int, b: Int) -> Bool in
+			if places[a] != places[b] { return places[a] < places[b] }
+			return a < b
+		}
+		return sorted.map { rows[$0] }
 	}
 }
