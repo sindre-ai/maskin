@@ -49,12 +49,17 @@ import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'driz
 import { maskLlmConfigSecrets, restoreMaskedLlmConfig } from '../lib/actor-llm-config-redaction'
 import { toActorWithKeyResponse } from '../lib/actor-response'
 import { redactActorToolsForCaller, restoreMaskedToolValues } from '../lib/actor-tools-redaction'
-import { hasAgentDeletionApproval } from '../lib/agent-deletion-approval'
+import {
+	DELETION_APPROVAL_TTL_MS,
+	hasAgentDeletionApproval,
+	recordChatAgentDeletionApproval,
+} from '../lib/agent-deletion-approval'
 import { checkAgentModelForWorkspace } from '../lib/agent-model-check'
 import { withHumanPauseMarker, withoutHumanPauseMarker } from '../lib/agent-pause'
 import { CLIENT_SOURCE_HEADER } from '../lib/analytics/knowledge-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { resolveBearerCaller } from '../lib/bearer-caller'
+import { verifyChatYes } from '../lib/chat-yes'
 import {
 	buildCreatedAtCursorConditions,
 	msCreatedAt,
@@ -1963,6 +1968,16 @@ const deleteActorRoute = createRoute({
 	request: {
 		params: idParamSchema,
 		headers: workspaceIdHeader,
+		query: z.object({
+			chat_message_id: z.coerce
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe(
+					'Agent callers only: the id of a person’s chat message that says yes to deleting this agent, instead of a decision card.',
+				),
+		}),
 	},
 	responses: {
 		200: {
@@ -1972,7 +1987,7 @@ const deleteActorRoute = createRoute({
 		403: {
 			content: { 'application/json': { schema: errorSchema } },
 			description:
-				'Cannot delete human actors or system agents, and an agent caller needs a person’s approval (a delete_agent option tapped on a decision card)',
+				'Cannot delete human actors or system agents, and an agent caller needs a person’s approval (a delete_agent option tapped on a decision card, or a yes in a chat the agent is in)',
 		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
@@ -1991,6 +2006,7 @@ app.openapi(deleteActorRoute, (async (c) => {
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { chat_message_id: chatMessageId } = c.req.valid('query')
 
 	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
@@ -2014,24 +2030,47 @@ app.openapi(deleteActorRoute, (async (c) => {
 		return c.json(createApiError('FORBIDDEN', 'Only agent actors can be deleted'), 403)
 	}
 
-	// An agent may delete another agent only after a person said yes on a decision card
-	// (a `delete_agent` option), for this agent and this target. People need no approval.
+	// An agent may delete another agent only after a person said yes, on a decision card (a
+	// `delete_agent` option) or in a chat the agent is in (the agent names that message). Either
+	// way it is for this agent and this target. People need no approval.
 	if (c.get('actorType') === 'agent') {
 		if (id === actorId) {
 			return c.json(createApiError('FORBIDDEN', 'An agent cannot delete itself'), 403)
 		}
-		const approved = await hasAgentDeletionApproval(db, {
+		let approved = await hasAgentDeletionApproval(db, {
 			workspaceId,
 			agentId: id,
 			requestedBy: actorId,
 		})
+		if (!approved && chatMessageId !== undefined) {
+			const yes = await verifyChatYes(db, {
+				workspaceId,
+				callerId: actorId,
+				messageId: chatMessageId,
+				targetId: id,
+				maxAgeMs: DELETION_APPROVAL_TTL_MS,
+			})
+			if (!yes.ok) {
+				const { status, code, message, suggestion } = yes.failure
+				return c.json(createApiError(code, message, undefined, suggestion), status)
+			}
+			await recordChatAgentDeletionApproval(db, {
+				workspaceId,
+				approverId: yes.personId,
+				agentId: id,
+				requestedBy: actorId,
+				messageId: yes.messageId,
+				conversationId: yes.conversationId,
+			})
+			approved = true
+		}
 		if (!approved) {
 			return c.json(
 				createApiError(
 					'FORBIDDEN',
 					'A person has not approved deleting this agent.',
 					undefined,
-					'Post a create_comment decision whose option carries delete_agent: { actor_id }, mention a person, and call delete_agent again after they choose it.',
+					'Either post a create_comment decision whose option carries delete_agent: { actor_id }, mention a person, and call delete_agent again after they choose it; or link the agent in a chat you are in, ask the person there, and call delete_agent with chat_message_id set to their yes message.',
 				),
 				403,
 			)

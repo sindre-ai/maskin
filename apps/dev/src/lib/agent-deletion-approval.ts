@@ -128,6 +128,36 @@ export async function recordAgentDeletionApproval(
 	})
 }
 
+/**
+ * A person's yes in a chat, recorded after the server checked the message (chat-yes.ts). Same
+ * event a card tap writes, with the chat message kept so it can be audited.
+ */
+export async function recordChatAgentDeletionApproval(
+	db: Database,
+	params: {
+		workspaceId: string
+		approverId: string
+		agentId: string
+		requestedBy: string
+		messageId: number
+		conversationId: string
+	},
+) {
+	return recordEventReturning(db, {
+		workspaceId: params.workspaceId,
+		actorId: params.approverId,
+		action: DELETION_APPROVED_ACTION,
+		entityType: 'actor',
+		entityId: params.agentId,
+		data: {
+			requested_by: params.requestedBy,
+			via: 'chat',
+			chat_message_id: params.messageId,
+			conversation_id: params.conversationId,
+		},
+	})
+}
+
 /** Whether a person has said yes, within the last day, to this agent deleting that one. */
 export async function hasAgentDeletionApproval(
 	db: Database,

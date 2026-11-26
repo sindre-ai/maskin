@@ -6415,7 +6415,9 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const result = await apiCall(config, 'DELETE', `/api/actors/${args.id}`, undefined, {
+			const query =
+				args.chat_message_id === undefined ? '' : `?chat_message_id=${args.chat_message_id}`
+			const result = await apiCall(config, 'DELETE', `/api/actors/${args.id}${query}`, undefined, {
 				workspaceId: args.workspace_id,
 			})
 			return {
