@@ -493,8 +493,8 @@ describe('IntegrationsPage', () => {
 			render(<IntegrationsPage />)
 			await expandCard('Google Calendar')
 
-			expect(screen.getByText('Google Calendar')).toBeInTheDocument()
-			expect(screen.getByText('Connected as magnus@example.com')).toBeInTheDocument()
+			expect(screen.getByText('1 connected account')).toBeInTheDocument()
+			expect(screen.getByText('magnus@example.com')).toBeInTheDocument()
 			expect(screen.queryByText(/Installation /)).not.toBeInTheDocument()
 
 			await user.click(screen.getByRole('button', { name: 'Disconnect' }))
