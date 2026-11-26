@@ -45,7 +45,7 @@ afterEach(() => {
 })
 
 describe('POST /api/transcriptions', () => {
-	it('sends the WAV to the Voxtral model on OpenRouter and returns the text', async () => {
+	it('sends the WAV to the MAI-Transcribe 2 model on OpenRouter and returns the text', async () => {
 		const fetchMock = vi.fn(async () => Response.json({ text: ' hello world ' }))
 		vi.stubGlobal('fetch', fetchMock)
 
@@ -56,7 +56,7 @@ describe('POST /api/transcriptions', () => {
 		const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
 		expect(url).toBe('https://openrouter.ai/api/v1/audio/transcriptions')
 		expect(JSON.parse(String(init.body))).toEqual({
-			model: 'mistralai/voxtral-small-transcribe-3-0',
+			model: 'microsoft/mai-transcribe-2',
 			input_audio: { data: 'QUJD', format: 'wav' },
 		})
 		expect((init.headers as Record<string, string>).Authorization).toBe('Bearer test-key')

@@ -67,7 +67,7 @@ const postTranscriptionRoute = createRoute({
 	tags: ['Transcriptions'],
 	summary: 'Transcribe a short voice recording (chat dictation)',
 	description:
-		'Sends the audio to a speech-to-text model on OpenRouter (default Voxtral Small, override with MASKIN_TRANSCRIPTION_MODEL) and returns the text. Requires X-Workspace-Id; the call is billed to the operator account, so a read-only viewer is refused. Upstream failures are told apart: 429 busy, 503 provider account or key refused (401/402), 504 timeout or no answer, 502 any other provider error.',
+		'Sends the audio to a speech-to-text model on OpenRouter (default MAI-Transcribe 2, override with MASKIN_TRANSCRIPTION_MODEL) and returns the text. Requires X-Workspace-Id; the call is billed to the operator account, so a read-only viewer is refused. Upstream failures are told apart: 429 busy, 503 provider account or key refused (401/402), 504 timeout or no answer, 502 any other provider error.',
 	request: {
 		body: { content: { 'application/json': { schema: transcribeBody } }, required: true },
 	},
