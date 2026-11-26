@@ -20,11 +20,14 @@ const TIER1_EXACT = new Set([
 	'chat_session_seeded',
 	'chat_session_rotated',
 	'integration_connect_started',
+	'connect_checklist_started',
 	'integration_tool_called',
 	'driver_woken',
 	'meeting_transcript_landed',
 	'notification_sent',
 	'receipt_draft_booked',
+	'renewal_paid',
+	'refund_issued',
 ])
 const TIER1_PREFIXES = [
 	'foryou_card_',
@@ -33,6 +36,7 @@ const TIER1_PREFIXES = [
 	'workspace_',
 	'checkout_',
 	'trial_',
+	'subscription_',
 	'support_item_',
 ]
 

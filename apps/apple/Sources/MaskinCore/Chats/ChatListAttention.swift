@@ -3,11 +3,10 @@ import Foundation
 /// The attention markers, filter pills and groups of the Chats list (chat list design spec v12 and
 /// its states addendum). Pure values, so every rule is tested without a view.
 
-/// The one marker on a row's preview line. A row never shows two: error beats needs you beats
-/// working. A Later row shows none.
+/// The one marker on a row's preview line. A row never shows two: error beats working. A Later row
+/// shows none.
 public enum ChatPreviewMarker: Equatable, Sendable {
 	case error(ChatStopReason)
-	case needsYou
 	case working
 }
 
@@ -15,24 +14,17 @@ extension ConversationSummary {
 	public var previewMarker: ChatPreviewMarker? {
 		if later { return nil }
 		if let stopReason { return .error(stopReason) }
-		if needsYou { return .needsYou }
 		if !working.isEmpty { return .working }
 		return nil
 	}
-
-	/// A chat that waits on the person: an agent asks, or the last turn stopped. Both count under the
-	/// Needs you pill.
-	public var needsAttention: Bool { needsYou || stopReason != nil }
 
 	/// Agents running here, by actor id, for the "Agent is working" line and the row's first line.
 	public var workingAgentIDs: [String] { working.map(\.agentID) }
 }
 
-/// The pills above the list. All is the default (addendum: Needs you as default hides the whole list
-/// on a day nothing waits).
+/// The pills above the list. All is the default.
 public enum ChatListFilter: String, CaseIterable, Sendable, Identifiable {
 	case all
-	case needsYou = "needs_you"
 	case unread
 	case working
 	case later
@@ -42,7 +34,6 @@ public enum ChatListFilter: String, CaseIterable, Sendable, Identifiable {
 	public var label: String {
 		switch self {
 		case .all: "All"
-		case .needsYou: "Needs you"
 		case .unread: "Unread"
 		case .working: "Working"
 		case .later: "Later"
@@ -54,7 +45,6 @@ public enum ChatListFilter: String, CaseIterable, Sendable, Identifiable {
 		switch self {
 		case .later: c.later
 		case .all: !c.later
-		case .needsYou: !c.later && c.needsAttention
 		case .unread: !c.later && c.isUnread
 		case .working: !c.later && !c.working.isEmpty
 		}
@@ -64,7 +54,6 @@ public enum ChatListFilter: String, CaseIterable, Sendable, Identifiable {
 	public var emptyText: String {
 		switch self {
 		case .all: "No chats yet. Start one with an agent."
-		case .needsYou: "Nothing waits on you."
 		case .unread: "You are all caught up."
 		case .working: "No agent is working right now."
 		case .later: "Nothing is on Later. Move a chat here to hide it until it gets a new message."
@@ -150,16 +139,11 @@ public enum ChatListLayout {
 			].compactMap { $0 }
 		case .status:
 			let rest = shown.filter { !$0.pinned }
-			// Stopped chats sit at the top of Needs you.
-			let needs = rest.filter(\.needsAttention)
-			let attention = needs.filter { $0.stopReason != nil } + needs.filter { $0.stopReason == nil }
-			let remaining = rest.filter { !$0.needsAttention }
-			let working = remaining.filter { !$0.working.isEmpty }
-			let unread = remaining.filter { $0.working.isEmpty && $0.isUnread }
-			let earlier = remaining.filter { $0.working.isEmpty && !$0.isUnread }
+			let working = rest.filter { !$0.working.isEmpty }
+			let unread = rest.filter { $0.working.isEmpty && $0.isUnread }
+			let earlier = rest.filter { $0.working.isEmpty && !$0.isUnread }
 			return [
 				group("pinned", "Pinned", .pinned, shown.filter(\.pinned)),
-				group("needs_you", "Needs you", .needsYou, attention),
 				group("working", "Working", .working, working),
 				group("unread", "Unread", .unread, unread),
 				group("earlier", "Earlier", .earlier, earlier),

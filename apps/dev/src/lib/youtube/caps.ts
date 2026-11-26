@@ -5,7 +5,7 @@ import { YoutubeError } from '../integrations/providers/youtube/errors'
 import type { YoutubeActionKind } from './actions'
 
 /**
- * Extra caps on the writes that reach other people: comments and likes. They sit on top of the
+ * Extra caps on the writes that reach other people (comments and likes) and on the deletes. They sit on top of the
  * person's approval and follow the consent rule (III.I) and the spam policy. A day is the Pacific
  * calendar day, the same day the quota resets on.
  *
@@ -18,6 +18,25 @@ import type { YoutubeActionKind } from './actions'
 export const COMMENTS_PER_DAY = 10
 export const LIKES_PER_DAY = 20
 export const COMMENTS_PER_VIDEO_PER_DAY = 3
+
+/**
+ * A delete cannot be taken back, so each one has its own daily count for the workspace. A video
+ * and a playlist are far rarer to delete than a comment or a playlist entry.
+ */
+export const DELETES_PER_DAY = {
+	delete_video: 3,
+	delete_playlist: 3,
+	delete_comment: 20,
+	remove_from_playlist: 20,
+} as const satisfies Partial<Record<YoutubeActionKind, number>>
+const DELETE_NOUNS = {
+	delete_video: 'video deletes',
+	delete_playlist: 'playlist deletes',
+	delete_comment: 'comment deletes',
+	remove_from_playlist: 'playlist entry removals',
+} as const
+type DeleteKind = keyof typeof DELETES_PER_DAY
+const isDeleteKind = (kind: YoutubeActionKind): kind is DeleteKind => kind in DELETES_PER_DAY
 
 const COMMENT_KINDS: YoutubeActionKind[] = ['post_comment', 'reply_to_comment']
 const COUNTED_STATUSES = ['pending', 'approved', 'executed']
@@ -61,7 +80,7 @@ function capReached(message: string): YoutubeError {
 }
 
 /**
- * Throws CAP_REACHED when this comment or like would go over a cap. Call it inside the
+ * Throws CAP_REACHED when this comment, like or delete would go over a cap. Call it inside the
  * transaction that stores the action (see `beforeInsert` in `createPendingAction`).
  */
 export async function assertWithinYoutubeCaps(
@@ -74,12 +93,22 @@ export async function assertWithinYoutubeCaps(
 	},
 ): Promise<void> {
 	const isComment = COMMENT_KINDS.includes(params.kind)
-	if (!isComment && params.kind !== 'like') return
+	if (!isComment && params.kind !== 'like' && !isDeleteKind(params.kind)) return
 
 	// Held until this transaction ends. One lock per workspace, so only the caps wait on each other.
 	await tx.execute(
 		sql`SELECT pg_advisory_xact_lock(hashtext(${`youtube_caps:${params.workspaceId}`}))`,
 	)
+
+	if (isDeleteKind(params.kind)) {
+		const limit = DELETES_PER_DAY[params.kind]
+		if ((await countToday(tx, params.workspaceId, [params.kind])) >= limit) {
+			throw capReached(
+				`This workspace has already asked for ${limit} ${DELETE_NOUNS[params.kind]} today.`,
+			)
+		}
+		return
+	}
 
 	if (params.kind === 'like') {
 		if ((await countToday(tx, params.workspaceId, ['like'])) >= LIKES_PER_DAY) {

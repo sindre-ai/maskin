@@ -28,6 +28,15 @@
 // first step of introducing a new flag.
 export const FLAGS = {
 	/**
+	 * Gates the "Ways to send receipts" panel on an Accounting flow's page: the receiving email
+	 * address and the command key (task: Let owners send receipts three ways). Frontend only: the
+	 * flow route reads it once and mounts the panel. Off means the flow page looks as it does today.
+	 * The tables and routes behind it are additive and inert until an owner switches a way on, and
+	 * the email route does nothing until the receiving domain is set in the environment. Retire once
+	 * the panel is on for everyone.
+	 */
+	RECEIPT_INTAKE: 'receipt-intake',
+	/**
 	 * Gates the Daily budget setting in Settings, Billing (bet [A daily token budget,
 	 * spent on the right work first](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/0f3ae096-7efc-4412-aba0-7a21a91ba040),
 	 * slice 1a). UI only: the route layout reads it once and mounts the section
@@ -268,6 +277,15 @@ export const FLAGS = {
 	 */
 	UNICONTA_CONNECT: 'uniconta-connect',
 	/**
+	 * Gates connecting Business Central (task
+	 * [Connect Business Central ERP data](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/aad840e6-8785-46c0-9482-c6899cd5933d)).
+	 * Actor-scoped, read by the integrations routes: off means Business Central is missing from
+	 * GET /api/integrations/providers and its connect call is refused, so Settings shows nothing new.
+	 * A workspace that is already connected keeps working through the gateway. Retire once a real
+	 * Business Central sign-in has worked and it is on for everyone.
+	 */
+	BUSINESS_CENTRAL_CONNECT: 'business-central-connect',
+	/**
 	 * Gates the ten integrations that sign in through an app Maskin owns at the vendor, or need the
 	 * vendor to approve Maskin first: HubSpot, Asana, DocuSign, Figma, Dropbox, Intercom, Pipedrive,
 	 * Ramp, Squarespace and Xero (task
@@ -289,6 +307,23 @@ export const FLAGS = {
 	 * real sign-in has worked for each and the providers are on for everyone.
 	 */
 	WORK_INTEGRATIONS: 'work-integrations',
+	/**
+	 * Gates connecting a self-hosted WordPress site (task
+	 * [Connect self-hosted WordPress sites](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/a6f93d68-34b7-42f1-a5a9-5f9811013dc9)).
+	 * Actor-scoped, read by the integrations routes: off means WordPress (self-hosted) is missing from
+	 * GET /api/integrations/providers and its connect call is refused, so Settings shows nothing new.
+	 * A workspace that is already connected keeps working through its tool server. Retire once a real
+	 * customer site has connected and it is on for everyone.
+	 */
+	WORDPRESS_SELF_HOSTED: 'wordpress-self-hosted',
+	/**
+	 * Gates the ChatGPT tab in Settings, MCP (task
+	 * [Add ChatGPT tab to MCP settings](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/ed2ca427-6de9-46fe-8054-d42941bdab1e)).
+	 * Frontend only: read once in McpConnectionSection with useFeatureFlag. Off means Settings looks
+	 * as it does today. The sign-in behind it is merged and not gated. Retire once the tab is on for
+	 * everyone.
+	 */
+	CHATGPT_MCP_TAB: 'chatgpt-mcp-tab',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

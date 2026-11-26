@@ -20,8 +20,8 @@ public struct APIBackendDictation: SpeechTranscribing {
 		self.client = client
 	}
 
-	public func transcribe(wav: Data, language: String?) async throws -> String {
-		let body = Components.Schemas.TranscribeBody(audio: wav.base64EncodedString(), language: language)
+	public func transcribe(wav: Data) async throws -> String {
+		let body = Components.Schemas.TranscribeBody(audio: wav.base64EncodedString())
 		let output = try await client.post_sol_api_sol_transcriptions(
 			Operations.post_sol_api_sol_transcriptions.Input(body: .json(body)))
 		switch output {

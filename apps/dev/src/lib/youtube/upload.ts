@@ -1,3 +1,5 @@
+import { describeCaptionRequest } from './captions'
+
 /**
  * What a held upload or publish request is made of, and the rules it must meet before it is held.
  * Pure code, no Google and no storage: the tools use it to build the stored request, the card
@@ -48,9 +50,18 @@ export interface UploadVideoInput {
 	categoryId?: string
 	/** The requester says the video is AI generated or altered. */
 	aiGenerated?: boolean
+	/** Who can watch the video once it is uploaded. Private when left out. */
+	visibility?: 'private' | 'unlisted' | 'public'
+	/** ISO 8601 with a time zone. Only with visibility public: the video stays private until then. */
+	publishAt?: string
 }
 
-/** The exact upload request, stored and hashed. Its privacy is always private. */
+export type YoutubePrivacy = 'private' | 'unlisted' | 'public'
+
+/**
+ * The exact upload request, stored and hashed. The privacy is the one the person approves and the
+ * one that is sent. A scheduled upload is private with a publishAt time, like a scheduled publish.
+ */
 export interface UploadPayload {
 	fileId: string
 	fileName: string
@@ -61,11 +72,17 @@ export interface UploadPayload {
 	description: string
 	tags?: string[]
 	categoryId?: string
-	privacyStatus: 'private'
+	privacyStatus: YoutubePrivacy
+	/** Exact UTC instant at which YouTube makes a private upload public. */
+	publishAt?: string
 	containsSyntheticMedia?: true
 }
 
-export function buildUploadPayload(file: UploadFile, input: UploadVideoInput): UploadPayload {
+export function buildUploadPayload(
+	file: UploadFile,
+	input: UploadVideoInput,
+	now: Date = new Date(),
+): UploadPayload {
 	if (!file.mimeType.toLowerCase().startsWith('video/')) {
 		throw new YoutubeUploadRuleError(
 			'not_a_video',
@@ -114,6 +131,17 @@ export function buildUploadPayload(file: UploadFile, input: UploadVideoInput): U
 			'The category id is the number YouTube gives a category, for example 22.',
 		)
 	}
+	const visibility = input.visibility ?? 'private'
+	if (visibility !== 'private' && visibility !== 'unlisted' && visibility !== 'public') {
+		throw new YoutubeUploadRuleError('bad_visibility', 'Visibility is private, unlisted or public.')
+	}
+	if (input.publishAt !== undefined && visibility !== 'public') {
+		throw new YoutubeUploadRuleError(
+			'bad_visibility',
+			'YouTube can only schedule a video to become public. Use visibility public with a time, or leave the time out.',
+		)
+	}
+	const publishAt = input.publishAt === undefined ? undefined : parsePublishAt(input.publishAt, now)
 	return {
 		fileId: file.id,
 		fileName: file.name,
@@ -124,7 +152,9 @@ export function buildUploadPayload(file: UploadFile, input: UploadVideoInput): U
 		description,
 		...(tags.length > 0 ? { tags } : {}),
 		...(input.categoryId !== undefined ? { categoryId: input.categoryId } : {}),
-		privacyStatus: 'private',
+		// A schedule is a private upload with a time: YouTube makes it public then.
+		privacyStatus: publishAt === undefined ? visibility : 'private',
+		...(publishAt === undefined ? {} : { publishAt }),
 		...(input.aiGenerated ? { containsSyntheticMedia: true as const } : {}),
 	}
 }
@@ -194,8 +224,37 @@ export function buildPublishPayload(
 }
 
 /** True when a stored publish request carries a time that has gone by. Checked again at the run. */
-export function publishTimeHasPassed(payload: PublishPayload, now: Date = new Date()): boolean {
+export function publishTimeHasPassed(
+	payload: { publishAt?: string },
+	now: Date = new Date(),
+): boolean {
 	return payload.publishAt !== undefined && new Date(payload.publishAt).getTime() <= now.getTime()
+}
+
+/** A stored value as the card prints it: text as it is, anything else as "unknown". */
+const shown = (value: unknown) => (typeof value === 'string' && value !== '' ? value : 'unknown')
+
+/** Who can watch an upload once it is processed, as one word in capitals. A stored request with no privacy is private. */
+export function uploadVisibilityWord(
+	payload: Record<string, unknown>,
+): 'PRIVATE' | 'UNLISTED' | 'PUBLIC' | 'SCHEDULED' {
+	if (typeof payload.publishAt === 'string') return 'SCHEDULED'
+	if (payload.privacyStatus === 'public') return 'PUBLIC'
+	if (payload.privacyStatus === 'unlisted') return 'UNLISTED'
+	return 'PRIVATE'
+}
+
+function uploadVisibilityLine(payload: Record<string, unknown>): string {
+	switch (uploadVisibilityWord(payload)) {
+		case 'PUBLIC':
+			return 'Visibility: PUBLIC. The video is visible to everyone as soon as YouTube has processed it.'
+		case 'UNLISTED':
+			return 'Visibility: UNLISTED. Anyone with the link can watch it once YouTube has processed it.'
+		case 'SCHEDULED':
+			return `Visibility: PRIVATE until it goes PUBLIC at exactly: ${String(payload.publishAt)} (UTC). From then it is visible to everyone.`
+		default:
+			return 'Visibility: PRIVATE. Nobody else can watch it until a second approval makes it unlisted or public.'
+	}
 }
 
 /** Lines the card shows above the raw request, read from the stored request and nothing else. */
@@ -203,7 +262,7 @@ export function describeStoredRequest(kind: string, payload: Record<string, unkn
 	if (kind === 'upload_video') {
 		const size = typeof payload.sizeBytes === 'number' ? payload.sizeBytes : null
 		return [
-			'Visibility: PRIVATE. The server always uploads as private. Nothing is public until a second approval.',
+			uploadVisibilityLine(payload),
 			`AI generated or altered: ${payload.containsSyntheticMedia === true ? 'yes, marked by the requester' : 'not marked'}`,
 			`File: ${String(payload.fileName ?? 'unknown')}${size === null ? '' : ` (${size} bytes)`}`,
 		]
@@ -216,5 +275,35 @@ export function describeStoredRequest(kind: string, payload: Record<string, unkn
 			`Visibility changes now to: ${String(payload.privacyStatus ?? 'unknown').toUpperCase()}`,
 		]
 	}
-	return []
+	if (kind === 'delete_video') {
+		return [
+			'PERMANENT: THIS DELETES THE VIDEO FOR GOOD. IT CANNOT BE UNDONE.',
+			`Video title: ${shown(payload.title)}`,
+			`Video id: ${shown(payload.id)}`,
+		]
+	}
+	if (kind === 'delete_comment') {
+		return [
+			`Comment id: ${shown(payload.id)}`,
+			`Comment by: ${shown(payload.author)}`,
+			`Comment text: ${shown(payload.text)}`,
+		]
+	}
+	if (kind === 'delete_playlist') {
+		return [
+			`Playlist title: ${shown(payload.title)}`,
+			`Playlist id: ${shown(payload.id)}`,
+			'The videos in the playlist stay on the channel.',
+		]
+	}
+	if (kind === 'remove_from_playlist') {
+		return [
+			`Playlist title: ${shown(payload.playlistTitle)}`,
+			`Playlist id: ${shown(payload.playlistId)}`,
+			`Video title: ${shown(payload.videoTitle)}`,
+			`Playlist entry id: ${shown(payload.id)}`,
+			'Only the entry in this playlist is removed. The video stays on the channel.',
+		]
+	}
+	return describeCaptionRequest(kind, payload)
 }

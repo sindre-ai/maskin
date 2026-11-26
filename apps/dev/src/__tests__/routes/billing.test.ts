@@ -2,6 +2,13 @@ import { randomUUID } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { jsonGet } from '../helpers'
 
+vi.mock('../../lib/analytics/posthog', async () => {
+	const actual = await vi.importActual<typeof import('../../lib/analytics/posthog')>(
+		'../../lib/analytics/posthog',
+	)
+	return { ...actual, capturePosthogEvent: vi.fn(async () => 'sent' as const) }
+})
+
 vi.mock('../../lib/stripe', async () => {
 	const actual = await vi.importActual<typeof import('../../lib/stripe')>('../../lib/stripe')
 	return {
@@ -12,6 +19,7 @@ vi.mock('../../lib/stripe', async () => {
 	}
 })
 
+import { capturePosthogEvent } from '../../lib/analytics/posthog'
 import { TRIAL_HARD_CAP_DEFAULT_USD_CENTS } from '../../lib/billing-defaults'
 import { _resetBillingUsageCache } from '../../lib/billing-usage-cache'
 import { createCheckoutSession, createCreditCheckoutSession } from '../../lib/stripe'
@@ -59,6 +67,7 @@ beforeEach(() => {
 	_resetBillingUsageCache()
 	vi.mocked(createCheckoutSession).mockReset()
 	vi.mocked(createCreditCheckoutSession).mockReset()
+	vi.mocked(capturePosthogEvent).mockClear()
 	clearEnv()
 	setupEnv()
 })
@@ -98,6 +107,43 @@ describe('POST /api/billing/checkout', () => {
 			expect.objectContaining({ workspaceId, plan: 'pro', existingCustomerId: null }),
 			expect.anything(),
 		)
+	})
+
+	it('sends checkout_started with the plan, price and livemode, and no person details', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.select = [{ id: workspaceId, ...OWNER_CALLER, settings: {} }]
+
+		vi.mocked(createCheckoutSession).mockResolvedValue({
+			id: 'cs_test_started',
+			url: 'https://checkout.stripe.com/c/cs_test_started',
+			amount_total: 24900,
+			currency: 'dkk',
+			livemode: false,
+		} as Awaited<ReturnType<typeof createCheckoutSession>>)
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/checkout',
+				{
+					plan: 'pro',
+					success_url: 'https://app.test/success',
+					cancel_url: 'https://app.test/cancel',
+				},
+				{ 'X-Workspace-Id': workspaceId },
+			),
+		)
+
+		expect(res.status).toBe(200)
+		expect(capturePosthogEvent).toHaveBeenCalledWith('checkout_started', expect.any(String), {
+			workspace_id: workspaceId,
+			plan: 'pro',
+			interval: 'month',
+			amount_minor: 24900,
+			currency: 'dkk',
+			livemode: false,
+		})
 	})
 
 	it('passes existing stripe_customer_id when present on workspace settings', async () => {

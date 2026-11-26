@@ -24,8 +24,15 @@ const TOOL_PART = {
 	post_comment: 4,
 	reply_to_comment: 4,
 	like: 4,
+	upload_caption: 4,
+	replace_caption: 4,
+	delete_caption: 4,
 	upload_video: 5,
 	publish_video: 5,
+	delete_video: 4,
+	delete_comment: 4,
+	delete_playlist: 4,
+	remove_from_playlist: 4,
 	get_upload_status: 5,
 } as const
 
@@ -42,6 +49,13 @@ export type YoutubeActionKind =
 	| 'like'
 	| 'upload_video'
 	| 'publish_video'
+	| 'upload_caption'
+	| 'replace_caption'
+	| 'delete_caption'
+	| 'delete_video'
+	| 'delete_comment'
+	| 'delete_playlist'
+	| 'remove_from_playlist'
 
 /** How a tool call ended. A category, never an error string. */
 export type YoutubeOutcome =

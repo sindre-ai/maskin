@@ -90,7 +90,14 @@ export const queryKeys = {
 	dineroReview: {
 		log: (workspaceId: string, from: string, to: string) =>
 			['dinero-review', workspaceId, from, to] as const,
+		vatReport: (workspaceId: string, from: string, to: string) =>
+			['dinero-review', workspaceId, 'vat-report', from, to] as const,
+		vatCheckNote: (workspaceId: string, from: string, to: string) =>
+			['dinero-review', workspaceId, 'vat-check-note', from, to] as const,
 		all: (workspaceId: string) => ['dinero-review', workspaceId] as const,
+	},
+	dineroBooking: {
+		all: (workspaceId: string) => ['dinero-booking', workspaceId] as const,
 	},
 	sendPermissions: {
 		all: (workspaceId: string) => ['send-permissions', workspaceId] as const,
@@ -235,6 +242,10 @@ export const queryKeys = {
 		list: (filters?: { type?: string; use_case?: string; q?: string }) =>
 			['marketplace-loops', 'list', filters ?? {}] as const,
 		detail: (id: string) => ['marketplace-loops', 'detail', id] as const,
+	},
+	receiptIntake: {
+		detail: (workspaceId: string, loopId: string) =>
+			['receipt-intake', workspaceId, loopId] as const,
 	},
 	installedLoops: {
 		all: (workspaceId: string) => ['installed-loops', workspaceId] as const,

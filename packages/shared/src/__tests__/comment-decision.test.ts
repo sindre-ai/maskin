@@ -464,17 +464,25 @@ describe('default_on_silence', () => {
 	it('is refused on a destructive default', () => {
 		const decision = withDefault()
 		const [first, second] = decision.options as [CommentDecisionOption, CommentDecisionOption]
-		expect(violate({ ...decision, options: [{ ...first, destructive: true }, second] })).toEqual([
-			'options.0.default_on_silence',
-		])
+		expect(
+			violate({
+				...decision,
+				no_draft_needed: true,
+				options: [{ ...first, destructive: true }, second],
+			}),
+		).toEqual(['options.0.default_on_silence'])
 	})
 
 	it('is refused when another option is destructive', () => {
 		const decision = withDefault()
 		const [first, second] = decision.options as [CommentDecisionOption, CommentDecisionOption]
-		expect(violate({ ...decision, options: [first, { ...second, destructive: true }] })).toEqual([
-			'options.0.default_on_silence',
-		])
+		expect(
+			violate({
+				...decision,
+				no_draft_needed: true,
+				options: [first, { ...second, destructive: true }],
+			}),
+		).toEqual(['options.0.default_on_silence'])
 	})
 
 	it('is refused when another option deletes an agent', () => {
@@ -501,6 +509,67 @@ describe('default_on_silence', () => {
 		expect(
 			violate({ ...decision, options: [{ ...first, set_status: { status: 'active' } }, second] }),
 		).toEqual(['options.0.default_on_silence'])
+	})
+})
+
+describe('a destructive option needs a message to read', () => {
+	const id = '3f2b8f0e-8a47-4a58-9a0b-1c2d3e4f5a6b'
+	const sendCard = (overrides: Partial<CommentDecision> = {}) => {
+		const [first, second] = buildDecision().options as [
+			CommentDecisionOption,
+			CommentDecisionOption,
+		]
+		return buildDecision({
+			options: [{ ...first, label: 'Send it', destructive: true }, second],
+			...overrides,
+		})
+	}
+
+	it('refuses a send option with no draft, naming the option and the fix', () => {
+		const found = validateDecisionProse(sendCard())
+		expect(found.map((v) => v.path)).toEqual(['options.0.destructive'])
+		expect(found[0]?.message).toContain('"Send it"')
+		expect(found[0]?.message).toContain('draft')
+		expect(found[0]?.message).toContain('drafts')
+		expect(found[0]?.message).toContain('no_draft_needed')
+	})
+
+	it('accepts a send option with a draft', () => {
+		expect(validateDecisionProse(sendCard({ draft: { object_id: id } }))).toEqual([])
+	})
+
+	it('accepts a send option with drafts', () => {
+		expect(validateDecisionProse(sendCard({ drafts: [{ id: 'a', object_id: id }] }))).toEqual([])
+	})
+
+	it('accepts a destructive option that moves a status', () => {
+		const [first, second] = buildDecision().options as [
+			CommentDecisionOption,
+			CommentDecisionOption,
+		]
+		const decision = buildDecision({
+			options: [{ ...first, destructive: true, set_status: { status: 'done' } }, second],
+		})
+		expect(validateDecisionProse(decision)).toEqual([])
+	})
+
+	it('accepts a destructive option that deletes an agent', () => {
+		const [first, second] = buildDecision().options as [
+			CommentDecisionOption,
+			CommentDecisionOption,
+		]
+		const decision = buildDecision({
+			options: [{ ...first, destructive: true, delete_agent: { actor_id: id } }, second],
+		})
+		expect(validateDecisionProse(decision)).toEqual([])
+	})
+
+	it('accepts a spend or ship card that opts out with no_draft_needed', () => {
+		expect(validateDecisionProse(sendCard({ no_draft_needed: true }))).toEqual([])
+	})
+
+	it('does not touch a card with no destructive option', () => {
+		expect(validateDecisionProse(buildDecision())).toEqual([])
 	})
 })
 

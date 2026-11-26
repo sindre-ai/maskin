@@ -2438,9 +2438,15 @@ export const tools = {
 	},
 	gmail_send_email: {
 		description:
-			'Send an email from the connected Gmail account. Cannot be undone, never retried. Needs "Read & write" Gmail access; your email send setting decides the rest. Always allow: pass `to`, `subject`, `body` (optional `cc`) to send at once, or `object_id` of a kept email object. Ask first: create_objects with `metadata: { kind: "email", to: "...", subject: "...", cc: "..." }` and the text as `content`, mention the person with create_comment (no `decision` needed); they approve the exact text (may edit first) or say yes in chat (then call approve_draft_from_chat). Any edit withdraws approval. Files: create_file ids in `metadata.attachment_file_ids` (max 5, 20 MB total). Then call this with only `object_id`: it sends the object as it reads now, once. If refused for no approval, end your turn; you are woken after approval. Older route: pass only `approval_comment_id` of a decision comment whose `draft` holds the email, after the person chose send (plus `draft_id` for several drafts). Deny: refused. If the outcome is unknown, do not resend: tell the person to check the Sent folder.',
+			'Send an email from the connected Gmail account (with several connected, pass `account` to pick one; left out, the first). Cannot be undone, never retried. Needs "Read & write" Gmail access; your email send setting decides the rest. Always allow: pass `to`, `subject`, `body` (optional `cc`) to send at once, or `object_id` of a kept email object. Ask first: create_objects with `metadata: { kind: "email", to: "...", subject: "...", cc: "..." }` and the text as `content`, mention the person with create_comment (no `decision` needed); they approve the exact text (may edit first) or say yes in chat (then call approve_draft_from_chat). Any edit withdraws approval. Files: create_file ids in `metadata.attachment_file_ids` (max 5, 20 MB total). Then call this with only `object_id`: it sends the object as it reads now, once. If refused for no approval, end your turn; you are woken after approval. Older route: pass only `approval_comment_id` of a decision comment whose `draft` holds the email, after the person chose send (plus `draft_id` for several drafts). Deny: refused. If the outcome is unknown, do not resend: tell the person to check the Sent folder.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
+			account: z
+				.string()
+				.optional()
+				.describe(
+					'The Gmail address to use, when several accounts are connected. Left out, the first connected account.',
+				),
 			to: z
 				.string()
 				.optional()
@@ -2469,9 +2475,15 @@ export const tools = {
 	},
 	gmail_save_attachment: {
 		description:
-			'Save one Gmail attachment as a workspace file. Pass message_id, attachment_id and part_id from the message you read; attachment ids change on every read, so always pass part_id (e.g. "1"). Needs "Read" or "Read & write" Gmail access. Max 20 MB. Returns file_id, name, mime_type, size_bytes, url. To send it, put file_id in `attachment_file_ids` on an email object (metadata.kind "email"), get approval, then call gmail_send_email.',
+			'Save one Gmail attachment as a workspace file. Pass message_id, attachment_id and part_id from the message you read; attachment ids change on every read, so always pass part_id (e.g. "1"). Needs "Read" or "Read & write" Gmail access. With several Gmail accounts connected, pass `account` with the address you read the message from. Max 20 MB. Returns file_id, name, mime_type, size_bytes, url. To send it, put file_id in `attachment_file_ids` on an email object (metadata.kind "email"), get approval, then call gmail_send_email.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
+			account: z
+				.string()
+				.optional()
+				.describe(
+					'The Gmail address to use, when several accounts are connected. Left out, the first connected account.',
+				),
 			message_id: z.string().min(1).describe('The Gmail message id.'),
 			attachment_id: z.string().min(1).describe('As the message lists it (body.attachmentId).'),
 			part_id: z
@@ -2479,6 +2491,38 @@ export const tools = {
 				.min(1)
 				.optional()
 				.describe('The partId next to the attachment, e.g. "1". Stable between reads.'),
+		}),
+	},
+	gmail_search_mail: {
+		description:
+			'Search the connected Gmail with Gmail search words (e.g. "from:anna is:unread newer_than:7d"), on the normal Gmail API, which works when the hosted Gmail tools refuse the sign-in. Needs "Read" Gmail access. Returns up to 20 threads, newest first (thread_id, subject, from, date, snippet, labels, unread) and next_page_token for page_token. Open one with gmail_read_thread.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			account: z.string().optional().describe('Gmail address, when several are connected.'),
+			q: z.string().max(500).optional().describe('Gmail search words. Left out: newest threads.'),
+			max_results: z.number().int().min(1).max(20).optional().describe('Default 10.'),
+			page_token: z.string().optional().describe('next_page_token of the last result.'),
+		}),
+	},
+	gmail_read_thread: {
+		description:
+			'Read one Gmail thread: every message with from, to, cc, subject, date, labels, body text (cut at 20,000 characters) and attachments (name, mime_type, size_bytes, part_id, attachment_id; keep one with gmail_save_attachment). Normal Gmail API. Needs "Read" Gmail access.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			account: z.string().optional().describe('Gmail address, when several are connected.'),
+			thread_id: z.string().min(1).describe('From gmail_search_mail.'),
+		}),
+	},
+	gmail_change_labels: {
+		description:
+			'Archive a Gmail thread and/or add or remove labels, by label name or id (e.g. "Receipts", "UNREAD", "STARRED"). Normal Gmail API. Needs "Read & write" Gmail access. Pass thread_id and at least one of archive, add_labels, remove_labels. A missing label is refused, not created; trash, spam, sent and draft cannot be changed.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			account: z.string().optional().describe('Gmail address, when several are connected.'),
+			thread_id: z.string().min(1).describe('From gmail_search_mail.'),
+			archive: z.boolean().optional().describe('True takes it out of the inbox.'),
+			add_labels: z.array(z.string()).max(20).optional(),
+			remove_labels: z.array(z.string()).max(20).optional().describe('"UNREAD" marks it read.'),
 		}),
 	},
 	resend_send_email: {

@@ -21,6 +21,8 @@ import {
 	oauthGrants,
 	passwordResetTokens,
 	readState,
+	receiptIntakes,
+	searchOpens,
 	slackUserLinks,
 	starState,
 	subscriptions,
@@ -218,6 +220,7 @@ app.openapi(deleteRoute, async (c) => {
 		await tx.delete(readState).where(eq(readState.actorId, actorId))
 		await tx.delete(forYouDismissals).where(eq(forYouDismissals.actorId, actorId))
 		await tx.delete(starState).where(eq(starState.actorId, actorId))
+		await tx.delete(searchOpens).where(eq(searchOpens.actorId, actorId))
 		await tx.delete(notifications).where(eq(notifications.targetActorId, actorId))
 		// Personal data (timezone, quiet hours, briefing state); the actor row stays, so its cascade never fires.
 		await tx.delete(notificationPreferences).where(eq(notificationPreferences.actorId, actorId))
@@ -233,6 +236,9 @@ app.openapi(deleteRoute, async (c) => {
 		await tx.delete(deviceAuthCodes).where(eq(deviceAuthCodes.actorId, actorId))
 		// Browser push subscriptions are endpoint URLs plus keys that can reach the person's browser.
 		await tx.delete(webPushSubscriptions).where(eq(webPushSubscriptions.actorId, actorId))
+		// Receipt intakes hold the person's receiving address and allowed senders; their command keys
+		// cascade with them. Receipt files already saved stay as ordinary files of the flow.
+		await tx.delete(receiptIntakes).where(eq(receiptIntakes.createdBy, actorId))
 
 		// The row stays (records elsewhere reference it) but nothing about the person does. Every
 		// key is revoked, then its hash row erased, and the legacy plaintext column is cleared; null

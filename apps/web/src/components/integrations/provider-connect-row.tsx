@@ -9,6 +9,7 @@ import {
 	LinkGithubDialog,
 	OwnAppDialog,
 	SkjaldConnectDialog,
+	WordPressConnectDialog,
 } from '@/components/integrations/provider-dialogs'
 import { ProviderLogo } from '@/components/integrations/provider-logo'
 import { ResendConnectDialog } from '@/components/integrations/resend/resend-connect-dialog'
@@ -29,7 +30,7 @@ import type { IntegrationResponse, ProviderInfo } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { DRIVE_COPY } from '@/lib/drive-copy'
 import { DRIVE_PROVIDER } from '@/lib/drive-humans'
-import { logoDomainFor } from '@/lib/integration-catalog'
+import { descriptionFor, logoDomainFor } from '@/lib/integration-catalog'
 import type { IntegrationToolState } from '@/lib/integration-tool-state'
 import { PILL_BUTTON } from '@/lib/pill-button'
 import { MULTI_INSTALL_PROVIDERS } from '@maskin/shared'
@@ -51,19 +52,6 @@ const INTRO_SUBTITLES: Record<IntegrationToolState, string> = {
 	missing: 'Not connected yet',
 }
 
-/** What each tool is for, in a few words (mockup Settings, Integrations). */
-const PROVIDER_TAGLINES: Record<string, string> = {
-	github: 'Pull requests',
-	gmail: 'Drafts and sending',
-	'google-drive': 'Files',
-	'linkedin-unipile': 'Posting and outreach',
-	linear: 'Issues',
-	microsoft: 'Teams transcripts',
-	posthog: 'Product analytics',
-	resend: 'Email sending',
-	slack: 'Channels and triggers',
-}
-
 export function ProviderRow({
 	provider,
 	integration,
@@ -72,6 +60,7 @@ export function ProviderRow({
 	onRequestSkjaldConnect,
 	onRequestResendConnect,
 	onRequestDeepdotsConnect,
+	onRequestWordPressConnect,
 	onRequestOwnApp,
 	ownAppSaved = false,
 	linkableCount,
@@ -94,6 +83,8 @@ export function ProviderRow({
 	onRequestResendConnect?: () => void
 	/** Deepdots signs in with an email and password, so Connect opens a two-field form. */
 	onRequestDeepdotsConnect?: () => void
+	/** A self-hosted WordPress site signs in with its address and an application password. */
+	onRequestWordPressConnect?: () => void
 	/** The tool signs in with the workspace's own app (customerApp). Opens the paste form. */
 	onRequestOwnApp?: () => void
 	/** The workspace already saved that app, so Connect goes straight to the sign-in. */
@@ -140,6 +131,10 @@ export function ProviderRow({
 		}
 		if (provider.name === 'deepdots' && onRequestDeepdotsConnect) {
 			onRequestDeepdotsConnect()
+			return
+		}
+		if (provider.name === 'wordpress-self-hosted' && onRequestWordPressConnect) {
+			onRequestWordPressConnect()
 			return
 		}
 		if (onRequestOwnApp && !ownAppSaved) {
@@ -192,6 +187,8 @@ export function ProviderRow({
 			? integration.config.status_note
 			: null
 
+	const tagline = variant === 'settings' ? descriptionFor(provider.name) : undefined
+
 	const connectedLabel = isConnected
 		? needsReconnect
 			? missingSlackHistoryScopes
@@ -201,9 +198,9 @@ export function ProviderRow({
 				? `Connected as ${integration.externalId}`
 				: integration.externalId
 					? `Connected · Installation ${integration.externalId}`
-					: (variant === 'settings' && PROVIDER_TAGLINES[provider.name]) || 'Connected'
-		: variant === 'settings' && PROVIDER_TAGLINES[provider.name]
-			? PROVIDER_TAGLINES[provider.name]
+					: tagline || 'Connected'
+		: tagline
+			? tagline
 			: provider.events.length > 0
 				? `${provider.events.length} event types available`
 				: 'Available to connect'
@@ -430,9 +427,15 @@ export function GroupedProviderRow({
 	const canAdd = isActorScoped ? Boolean(currentActorId) && !hasOwnInstall : true
 	const addLabel = isActorScoped ? 'Connect your account' : 'Add another'
 	// Settings spells out what is being added; the chat card keeps the short "+ Add another".
-	const settingsAddLabel = isActorScoped ? addLabel : 'Connect another installation'
+	// A mailbox is an account, not an installation: the Gmail row is labelled by its address.
+	const isEmailAccount = provider.externalIdDisplay === 'email'
+	const settingsAddLabel = isActorScoped
+		? addLabel
+		: isEmailAccount
+			? 'Connect another account'
+			: 'Connect another installation'
 
-	const unitLabel = isActorScoped ? 'connected account' : 'active installation'
+	const unitLabel = isActorScoped || isEmailAccount ? 'connected account' : 'active installation'
 
 	// Same $49/identity disclosure ProviderRow makes, which a workspace on its
 	// second LinkedIn account would otherwise never see again.
@@ -552,6 +555,7 @@ export function GroupedProviderRow({
 							key={installation.id}
 							integration={installation}
 							actorScoped={isActorScoped}
+							emailAccount={isEmailAccount}
 							actorName={installation.actorId ? actorNames.get(installation.actorId) : undefined}
 							isOwn={Boolean(installation.actorId && installation.actorId === currentActorId)}
 							workspaceId={workspaceId}
@@ -605,6 +609,7 @@ export function GroupedProviderRow({
 function NestedInstallationRow({
 	integration,
 	actorScoped = false,
+	emailAccount = false,
 	actorName,
 	isOwn = false,
 	workspaceId,
@@ -618,6 +623,8 @@ function NestedInstallationRow({
 	integration: IntegrationResponse
 	/** True for providers whose installs belong to a member, not the workspace. */
 	actorScoped?: boolean
+	/** True when the provider's external id is the account's email address (Gmail). */
+	emailAccount?: boolean
 	/** Display name of the member who connected an actor-scoped install. */
 	actorName?: string
 	isOwn?: boolean
@@ -644,11 +651,13 @@ function NestedInstallationRow({
 	// An actor-scoped install is identified by the member who connected it —
 	// the provider gives us only an opaque account id, which is meaningless to
 	// read but is still the stable id worth showing underneath.
-	const noun = actorScoped ? 'Account' : 'Installation'
+	const noun = actorScoped || emailAccount ? 'Account' : 'Installation'
 	const label = actorScoped
 		? (actorName ?? (isOwn ? 'You' : 'Workspace member'))
-		: (ownerLogin ??
-			(integration.externalId ? `Installation ${integration.externalId}` : 'Installation'))
+		: emailAccount && integration.externalId
+			? integration.externalId
+			: (ownerLogin ??
+				(integration.externalId ? `Installation ${integration.externalId}` : 'Installation'))
 
 	return (
 		<div className="flex flex-wrap items-center gap-3 px-4 py-3.5">
@@ -659,7 +668,7 @@ function NestedInstallationRow({
 						<span className="ml-1 font-normal text-muted-foreground">(you)</span>
 					)}
 				</p>
-				{integration.externalId && (
+				{integration.externalId && integration.externalId !== label && (
 					<p className="text-[13px] text-muted-foreground truncate">
 						{noun} {integration.externalId}
 					</p>
@@ -807,6 +816,7 @@ export function ProviderConnectRow({
 	const [linkGithubOpen, setLinkGithubOpen] = useState(false)
 	const [resendOpen, setResendOpen] = useState(false)
 	const [deepdotsOpen, setDeepdotsOpen] = useState(false)
+	const [wordpressOpen, setWordpressOpen] = useState(false)
 
 	// GitHub only installs its App once per org, so a workspace that wants an org
 	// someone already connected elsewhere binds to the existing installation.
@@ -857,6 +867,9 @@ export function ProviderConnectRow({
 							onRequestDeepdotsConnect={
 								provider.name === 'deepdots' ? () => setDeepdotsOpen(true) : undefined
 							}
+							onRequestWordPressConnect={
+								provider.name === 'wordpress-self-hosted' ? () => setWordpressOpen(true) : undefined
+							}
 							{...ownApp}
 							linkableCount={linkableCount}
 							onRequestLink={() => setLinkGithubOpen(true)}
@@ -901,6 +914,13 @@ export function ProviderConnectRow({
 					workspaceId={workspaceId}
 					open={deepdotsOpen}
 					onClose={() => setDeepdotsOpen(false)}
+				/>
+			)}
+			{provider.name === 'wordpress-self-hosted' && (
+				<WordPressConnectDialog
+					workspaceId={workspaceId}
+					open={wordpressOpen}
+					onClose={() => setWordpressOpen(false)}
 				/>
 			)}
 			{provider.name === 'resend' && (

@@ -27,6 +27,15 @@ export const TITLE_PHRASE_PREFIX_BONUS = 500
 export const NAME_WHOLE_WORD_BONUS = 400
 export const NAME_WORD_PREFIX_BONUS = 200
 
+// Frecency: a result the caller opened from search earns points for a typed query. Opens are
+// kept as a count that halves every FRECENCY_HALF_LIFE_DAYS, so recent opens count most. Each
+// decayed open is worth FRECENCY_POINTS_PER_OPEN, capped at FRECENCY_MAX_BONUS. The cap sits below
+// NAME_WORD_PREFIX_BONUS, so frecency never outranks a better name match inside a tier, and the
+// tier itself is sorted before the score. It is far above 0, so it beats unread and newest.
+export const FRECENCY_HALF_LIFE_DAYS = 14
+export const FRECENCY_POINTS_PER_OPEN = 50
+export const FRECENCY_MAX_BONUS = 150
+
 /** `%token%` with LIKE wildcards in the token escaped. */
 export function tokenIlikePattern(token: string): string {
 	return `%${token.replace(/[%_\\]/g, '\\$&')}%`

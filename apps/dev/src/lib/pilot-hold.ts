@@ -103,6 +103,9 @@ export function buildGateCard(input: {
 					consequences: ['Nothing goes out', 'The agent is told it was rejected'],
 				},
 			],
+			// The card names the step in its summary. The call's arguments are never stored here, so
+			// there is no message to attach.
+			no_draft_needed: true,
 		},
 	}
 }

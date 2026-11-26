@@ -830,6 +830,9 @@ extension DecisionCardView {
 			if let drafts = card.decision?.drafts.filter({ !draftIsElsewhere($0) }), !drafts.isEmpty {
 				DraftStackView(drafts: drafts, act: actions.actOnDraft, allDone: actions.dismiss)
 			}
+			// A draft that is read under Drafts to review is pointed at here too, so the options are
+			// not the only thing on the row.
+			draftPointer
 			if let decision = card.decision { ask(decision, showsQuestion: false) } else { noDecisionRow }
 			replyArea
 		}

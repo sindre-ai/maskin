@@ -700,6 +700,7 @@ describe('every tool of the real toolkit has a write-gate decision', () => {
 		'desktop_screenshot',
 		'desktop_scroll',
 		'fork_loop',
+		'gmail_change_labels',
 		'gmail_save_attachment',
 		'install_loop',
 		'merge_file_tags',

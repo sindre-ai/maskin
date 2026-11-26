@@ -103,6 +103,9 @@ const PREFIXES: ReadonlyArray<readonly [string, FeatureArea]> = [
 	['voice_', 'voice'],
 	['checkout_', 'billing'],
 	['trial_', 'billing'],
+	['subscription_', 'billing'],
+	['renewal_', 'billing'],
+	['refund_', 'billing'],
 	['stripe_', 'billing'],
 	['vies_', 'billing'],
 ]

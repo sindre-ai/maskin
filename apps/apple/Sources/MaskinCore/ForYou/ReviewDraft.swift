@@ -27,6 +27,8 @@ public struct ReviewDraft: Identifiable, Equatable, Sendable {
 	public var contentHash: String
 	/// Required things the draft still lacks. While any is missing it cannot be approved.
 	public var missing: [String]
+	/// The message this draft answers, as the preview carried it. Read only, never sent.
+	public var context: String?
 
 	public var id: String { objectId }
 
@@ -34,7 +36,7 @@ public struct ReviewDraft: Identifiable, Equatable, Sendable {
 		objectId: String, target: DecisionTarget, draftKey: String? = nil, kind: String,
 		kindLabel: String, agentName: String? = nil, label: String, to: String? = nil,
 		recipients: [ObjectPreview.Recipient] = [], subject: String? = nil, body: String,
-		contentHash: String, missing: [String] = []
+		contentHash: String, missing: [String] = [], context: String? = nil
 	) {
 		self.objectId = objectId
 		self.target = target
@@ -49,7 +51,17 @@ public struct ReviewDraft: Identifiable, Equatable, Sendable {
 		self.body = body
 		self.contentHash = contentHash
 		self.missing = missing
+		self.context = context
 	}
+
+	/// The original message, trimmed; nil when the draft answers nothing.
+	public var originalMessage: String? {
+		let trimmed = context?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+		return trimmed.isEmpty ? nil : trimmed
+	}
+
+	/// "Mette Holm wrote", or "In reply to".
+	public var originalMessageLabel: String { ObjectPreview.originalMessageLabel(for: recipients) }
 
 	public var isEmail: Bool { kind == "email" }
 	public var isPost: Bool { kind == "linkedin_post" }
@@ -124,7 +136,7 @@ public struct ReviewDraft: Identifiable, Equatable, Sendable {
 				objectId: objectId, target: DecisionTarget(card), draftKey: draft.id, kind: preview.kind,
 				kindLabel: preview.label, agentName: agentName, label: draft.label, to: draft.to,
 				recipients: preview.recipients, subject: preview.subject, body: preview.body,
-				contentHash: preview.contentHash, missing: preview.missing)
+				contentHash: preview.contentHash, missing: preview.missing, context: preview.context)
 		}
 	}
 }

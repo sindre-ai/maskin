@@ -10,6 +10,41 @@ export function useDineroReviewLog(workspaceId: string, from: string, to: string
 	})
 }
 
+export function useDineroVatReport(workspaceId: string, from: string, to: string) {
+	return useQuery({
+		queryKey: queryKeys.dineroReview.vatReport(workspaceId, from, to),
+		queryFn: () => api.dineroReview.vatReport(workspaceId, from, to),
+	})
+}
+
+export function useDineroVatCheckNote(workspaceId: string, from: string, to: string) {
+	return useQuery({
+		queryKey: queryKeys.dineroReview.vatCheckNote(workspaceId, from, to),
+		queryFn: () => api.dineroReview.vatCheckNote(workspaceId, from, to),
+	})
+}
+
+export function useDownloadDineroVatCsv(workspaceId: string) {
+	return useMutation({
+		mutationFn: async (p: { from: string; to: string }) => {
+			const blob = await api.dineroReview.vatReportCsv(workspaceId, p.from, p.to)
+			saveBlob(blob, `vat-report-draft-${p.from}-${p.to}.csv`)
+		},
+		onError: (err: Error) => toast.error(err.message),
+	})
+}
+
+export function saveBlob(blob: Blob, filename: string) {
+	const url = URL.createObjectURL(blob)
+	const a = document.createElement('a')
+	a.href = url
+	a.download = filename
+	document.body.appendChild(a)
+	a.click()
+	document.body.removeChild(a)
+	URL.revokeObjectURL(url)
+}
+
 export function useReverseDineroItem(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
@@ -43,6 +78,27 @@ export function useDineroFilingHandoff(workspaceId: string) {
 	return useMutation({
 		mutationFn: (body: { from: string; to: string }) =>
 			api.dineroReview.filingHandoff(workspaceId, body),
+		onError: (err: Error) => toast.error(err.message),
+	})
+}
+
+export function useDineroBooking(workspaceId: string, enabled = true) {
+	return useQuery({
+		enabled,
+		queryKey: queryKeys.dineroBooking.all(workspaceId),
+		queryFn: () => api.dineroBooking.get(workspaceId),
+	})
+}
+
+export function useSetDineroBooking(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (body: { enabled: boolean; acknowledged?: boolean }) =>
+			api.dineroBooking.set(workspaceId, body),
+		onSuccess: (state) => {
+			toast.success(state.enabled ? 'Dinero booking is on' : 'Dinero booking is off')
+			queryClient.invalidateQueries({ queryKey: queryKeys.dineroBooking.all(workspaceId) })
+		},
 		onError: (err: Error) => toast.error(err.message),
 	})
 }

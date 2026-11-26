@@ -66,16 +66,25 @@ struct SearchStoreMentionTests {
 			debounce: .milliseconds(10), currentActorId: { "me" })
 	}
 
+	/// A fake server: with people picked it answers only the chats all of them are in, the way the
+	/// server search does; otherwise chats and the one item whose title holds the words.
 	private func seeded() async -> FakeSearchRemote {
 		let remote = FakeSearchRemote()
 		await remote.setPeople([marketing, sigrid, me])
-		await remote.setChats(
-			.success([
-				chat("c1", "Launch plan", people: "Product Marketing, Sigrid Larsen", ids: ["a-pm", "h-sig", "me"]),
-				chat("c2", "Copy review", people: "Product Marketing", ids: ["a-pm", "me"]),
-				chat("c3", "Standup", people: "Sigrid Larsen", ids: ["h-sig", "me"]),
-			]))
-		await remote.setObjects { _ in [object("o1", "Product marketing brief")] }
+		let chats: [(result: SearchResult, people: [String])] = [
+			(chat("c1", "Launch plan", people: "Product Marketing, Sigrid Larsen"), ["a-pm", "h-sig", "me"]),
+			(chat("c2", "Copy review", people: "Product Marketing"), ["a-pm", "me"]),
+			(chat("c3", "Standup", people: "Sigrid Larsen"), ["h-sig", "me"]),
+		]
+		let item = object("o1", "Product marketing brief")
+		await remote.setServerAnswer { query, picked in
+			let words = query.lowercased()
+			func hits(_ title: String) -> Bool { words.isEmpty || title.lowercased().contains(words) }
+			let found = chats.filter { chat in
+				picked.allSatisfy { chat.people.contains($0) } && hits(chat.result.title)
+			}.map(\.result)
+			return SearchAnswer(results: found + (picked.isEmpty && hits(item.title) ? [item] : []))
+		}
 		return remote
 	}
 
@@ -103,7 +112,6 @@ struct SearchStoreMentionTests {
 		store.setQuery("@product marketing")
 		await untilMenu(store)
 		await store.settle()
-		let askedBeforePick = await remote.objectQueries.count  // the typed text is searched while the menu is open
 		store.pick(marketing)
 		await store.settle()
 		#expect(store.participants == [marketing])
@@ -111,14 +119,13 @@ struct SearchStoreMentionTests {
 		#expect(store.phase == .results)
 		#expect(store.allResults.map(\.id) == ["chat:c1", "chat:c2"])
 		#expect(store.mentionSuggestions.isEmpty)
-		#expect(
-			await remote.objectQueries.count == askedBeforePick,
-			"other sources are not asked while people are picked")
+		#expect(await remote.serverParticipants.last == ["a-pm"], "the picked ids go to the server search")
 	}
 
 	@Test("several people narrow to chats containing all of them")
 	func pickTwo() async {
-		let store = make(await seeded())
+		let remote = await seeded()
+		let store = make(remote)
 		store.setQuery("@")
 		await untilMenu(store)
 		store.pick(marketing)
@@ -127,18 +134,21 @@ struct SearchStoreMentionTests {
 		store.pick(sigrid)
 		await store.settle()
 		#expect(store.participants == [marketing, sigrid])
+		#expect(await remote.serverParticipants.last == ["a-pm", "h-sig"])
 		#expect(store.allResults.map(\.id) == ["chat:c1"])
 	}
 
-	@Test("words typed with a pill still filter the chats")
+	@Test("words typed with a pill are sent with it")
 	func pillWithWords() async {
-		let store = make(await seeded())
+		let remote = await seeded()
+		let store = make(remote)
 		store.setQuery("@product marketing")
 		await untilMenu(store)
 		store.pick(marketing)
 		store.setQuery("copy")
 		await store.settle()
 		#expect(store.allResults.map(\.id) == ["chat:c2"])
+		#expect(await remote.serverQueries.last == "copy")
 	}
 
 	@Test("removing the last pill with no words goes back to the recents screen")
@@ -161,13 +171,14 @@ struct SearchStoreMentionTests {
 		store.setQuery("@product marketing")
 		await untilMenu(store)
 		await store.settle()
-		let askedBeforePick = await remote.objectQueries.count  // the typed text is searched while the menu is open
+		let askedBeforePick = await remote.serverQueries.count  // the typed text is searched while the menu is open
 		store.pick(marketing)
 		store.setQuery("brief")
 		await store.settle()
 		store.removeParticipant(marketing)
 		await store.settle()
-		#expect(await remote.objectQueries.dropFirst(askedBeforePick) == ["brief"])
+		#expect(await remote.serverQueries.dropFirst(askedBeforePick) == ["brief", "brief"])
+		#expect(await remote.serverParticipants.last == [], "the pill is gone, so everything is searched")
 		#expect(store.allResults.map(\.id) == ["object:o1"])
 	}
 
@@ -180,7 +191,7 @@ struct SearchStoreMentionTests {
 		#expect(store.mentionSuggestions.isEmpty)
 		await store.settle()
 		#expect(store.participants.isEmpty)
-		#expect(await remote.objectQueries == ["@zzz"])
+		#expect(await remote.serverQueries == ["@zzz"])
 	}
 
 	@Test("the same person cannot be picked twice")
@@ -191,21 +202,5 @@ struct SearchStoreMentionTests {
 		store.pick(marketing)
 		store.pick(marketing)
 		#expect(store.participants == [marketing])
-	}
-
-	@Test("ranking applies to the store's results: title, then participants, then preview")
-	func storeRanking() async {
-		let remote = FakeSearchRemote()
-		await remote.setChats(
-			.success([
-				chat("prev", "Roadmap", people: "Sigrid Larsen", snippet: "Magnus will review it"),
-				chat("part", "Weekly sync", people: "Magnus Eide, Sigrid Larsen", snippet: "ok"),
-				chat("title", "Magnus 1:1", people: "Sebastian"),
-			]))
-		let store = make(remote)
-		store.setQuery("Magnus")
-		await store.settle()
-		#expect(store.allResults.map(\.id) == ["chat:title", "chat:part", "chat:prev"])
-		#expect(store.sections.first?.results.map(\.id) == ["chat:title", "chat:part", "chat:prev"])
 	}
 }

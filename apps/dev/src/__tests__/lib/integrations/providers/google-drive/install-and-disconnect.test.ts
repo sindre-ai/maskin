@@ -26,11 +26,11 @@ describe('setupDriveInstall (postInstall)', () => {
 	})
 	afterEach(() => vi.restoreAllMocks())
 
-	it('resolves the People id and writes it to the row config', async () => {
+	it('resolves the account id from userinfo (no People API call) and writes it to the row config', async () => {
 		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
 			ok: true,
 			text: () => Promise.resolve(''),
-			json: () => Promise.resolve({ metadata: { sources: [{ type: 'PROFILE', id: '1234' }] } }),
+			json: () => Promise.resolve({ id: '1234', email: 'drive-user@example.com' }),
 		} as Response)
 		const { db, update, set, where } = fakeDb()
 
@@ -41,10 +41,10 @@ describe('setupDriveInstall (postInstall)', () => {
 			credentials: { accessToken: 'ya29.test' },
 		})
 
-		expect(fetchSpy).toHaveBeenCalledWith(
-			'https://people.googleapis.com/v1/people/me?personFields=metadata',
-			{ headers: { Authorization: 'Bearer ya29.test' } },
-		)
+		expect(fetchSpy).toHaveBeenCalledWith('https://www.googleapis.com/oauth2/v2/userinfo', {
+			headers: { Authorization: 'Bearer ya29.test' },
+		})
+		expect(fetchSpy).toHaveBeenCalledTimes(1)
 		expect(update).toHaveBeenCalledTimes(1)
 		expect(set).toHaveBeenCalledTimes(1)
 		expect(where).toHaveBeenCalledTimes(1)
@@ -54,7 +54,7 @@ describe('setupDriveInstall (postInstall)', () => {
 		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
 			ok: true,
 			text: () => Promise.resolve(''),
-			json: () => Promise.resolve({ metadata: { sources: [{ type: 'PROFILE', id: '1234' }] } }),
+			json: () => Promise.resolve({ id: '1234', email: 'drive-user@example.com' }),
 		} as Response)
 		const { db, where } = fakeDb()
 		const ctx = {
@@ -76,7 +76,7 @@ describe('setupDriveInstall (postInstall)', () => {
 		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
 			ok: true,
 			text: () => Promise.resolve(''),
-			json: () => Promise.resolve({ metadata: { sources: [{ type: 'PROFILE', id: '1234' }] } }),
+			json: () => Promise.resolve({ id: '1234', email: 'drive-user@example.com' }),
 		} as Response)
 		setupDriveWatch.mockRejectedValueOnce(new Error('MASKIN_PUBLIC_URL env var is required'))
 		const { db } = fakeDb()
@@ -97,11 +97,11 @@ describe('setupDriveInstall (postInstall)', () => {
 		).rejects.toThrow(/no access token/i)
 	})
 
-	it('throws when the People response has no id', async () => {
+	it('throws when the userinfo response has no id', async () => {
 		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
 			ok: true,
 			text: () => Promise.resolve(''),
-			json: () => Promise.resolve({ metadata: { sources: [] } }),
+			json: () => Promise.resolve({ email: 'drive-user@example.com' }),
 		} as Response)
 		const { db } = fakeDb()
 		await expect(
@@ -111,6 +111,6 @@ describe('setupDriveInstall (postInstall)', () => {
 				workspaceId: 'ws-1',
 				credentials: { accessToken: 'ya29.test' },
 			}),
-		).rejects.toThrow(/missing metadata.sources/)
+		).rejects.toThrow(/missing id field/)
 	})
 })

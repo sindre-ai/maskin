@@ -44,7 +44,7 @@ final class BackendDictationRun {
 	var previewText: String { previews.text }
 
 	init(
-		service: any SpeechTranscribing, language: String?,
+		service: any SpeechTranscribing,
 		previewRecognizer: SFSpeechRecognizer?,
 		onText: @escaping @MainActor (String) -> Void,
 		onPreview: @escaping @MainActor (String) -> Void,
@@ -54,7 +54,7 @@ final class BackendDictationRun {
 		onAnswer: @escaping @MainActor (_ empty: Bool) -> Void
 	) {
 		queue = PhraseTranscriptionQueue(
-			transcriber: service, language: language, onText: onText, onFailure: { onFailure(.failed($0)) })
+			transcriber: service, onText: onText, onFailure: { onFailure(.failed($0)) })
 		self.onFailure = onFailure
 		self.onInterrupted = onInterrupted
 		self.onLimit = onLimit

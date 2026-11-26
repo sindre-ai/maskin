@@ -29,6 +29,7 @@ import type { DineroFilingHandoff, DineroReviewItem, DineroReviewLog } from '@/l
 import { getStoredActor } from '@/lib/auth'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useState } from 'react'
+import { DineroVatReportSection, money, vatCodeLabel } from './dinero-vat-report'
 
 const DAY_MS = 86_400_000
 
@@ -41,6 +42,10 @@ const TOOL_LABELS: Record<string, string> = {
 	BookVoucher: 'Booked a purchase voucher',
 	add_purchase_payment: 'Registered a payment on a bill',
 	add_invoice_payment: 'Registered a payment on an invoice',
+	book_finance_voucher: 'Booked a finance voucher',
+	create_trade_offer: 'Created a quote',
+	send_trade_offer: 'Emailed a quote to the customer',
+	generate_invoice_from_trade_offer: 'Turned a quote into an invoice',
 }
 
 function actionLabel(item: DineroReviewItem): string {
@@ -49,12 +54,8 @@ function actionLabel(item: DineroReviewItem): string {
 	return TOOL_LABELS[item.tool] ?? item.tool
 }
 
-function money(n: number | null): string {
-	return n === null ? '' : n.toLocaleString('da-DK', { minimumFractionDigits: 2 })
-}
-
 /** Only a person who is an admin or owner can open the review; the server refuses everyone else. */
-function useCanReview(): boolean {
+export function useCanReview(): boolean {
 	const { workspace } = useWorkspace()
 	const canWrite = useCanWrite()
 	const me = getStoredActor()
@@ -175,6 +176,7 @@ function ReviewBody({ workspaceId, log }: { workspaceId: string; log: DineroRevi
 					The filing hand-off is available after you approve the books.
 				</p>
 			)}
+			<DineroVatReportSection workspaceId={workspaceId} from={log.from} to={log.to} />
 			{log.truncated && (
 				<p className="text-xs text-muted-foreground">
 					Only the first 2000 entries are shown. Choose a shorter period.
@@ -199,7 +201,11 @@ function ReviewBody({ workspaceId, log }: { workspaceId: string; log: DineroRevi
 						</TableHeader>
 						<TableBody>
 							{log.items.map((item) => (
-								<TableRow key={item.event_id} data-testid={`dinero-item-${item.event_id}`}>
+								<TableRow
+									key={item.event_id}
+									id={`dinero-item-${item.event_id}`}
+									data-testid={`dinero-item-${item.event_id}`}
+								>
 									<TableCell className="text-xs text-muted-foreground">
 										{item.at ? new Date(item.at).toLocaleString() : ''}
 									</TableCell>
@@ -349,8 +355,9 @@ function FilingHandoff({ handoff }: { handoff: DineroFilingHandoff }) {
 				<ul className="flex flex-col gap-0.5">
 					{handoff.figures.map((f) => (
 						<li key={f.vat_code ?? 'none'}>
-							{f.vat_code ? `VAT ${f.vat_code}` : 'No VAT code'}: {money(f.amount_incl_vat)} incl.
-							VAT, {f.lines} {f.lines === 1 ? 'line' : 'lines'}
+							{vatCodeLabel(f.vat_code)}: {money(f.amount_incl_vat)} incl. VAT
+							{f.vat_amount !== null ? `, VAT ${money(f.vat_amount)}` : ''}, {f.lines}{' '}
+							{f.lines === 1 ? 'line' : 'lines'}
 						</li>
 					))}
 				</ul>

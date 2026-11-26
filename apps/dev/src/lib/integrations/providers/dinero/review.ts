@@ -10,6 +10,14 @@ import { DINERO_MCP_URL } from './config'
 const CALL_TIMEOUT_MS = 60_000
 const LOG_LIMIT = 2000
 const DAY_MS = 86_400_000
+/** How far before the period a purchase draft or receipt upload is looked for. */
+const DRAFT_LOOKBACK_DAYS = 60
+const DRAFT_DETAIL_TOOLS = [
+	'CreatePurchaseVoucher',
+	'update_purchase_voucher_draft',
+	'upload_file',
+	'BookVoucher',
+] as const
 
 /** What the flow is told when the owner has approved the books and the period is closed. */
 export const DINERO_LOCKED_MESSAGE =
@@ -43,6 +51,13 @@ export interface ReviewLine {
 	vat_code: string | null
 }
 
+/** What the log holds about the receipt behind a booked item. The file itself is in Dinero's archive. */
+export interface ReviewReceipt {
+	file_name: string | null
+	file_guid: string | null
+	reference: string | null
+}
+
 export interface ReviewItem {
 	event_id: number
 	at: string | null
@@ -52,6 +67,8 @@ export interface ReviewItem {
 	booked: boolean
 	voucher_date: string | null
 	lines: ReviewLine[]
+	/** The receipt behind the item, or null when the log holds none. Not part of the figures hash. */
+	receipt: ReviewReceipt | null
 	result: string | null
 	reverses_event_id: number | null
 	reversed_by_event_id: number | null
@@ -87,6 +104,94 @@ function linesOf(args: Json | null): ReviewLine[] {
 							: null,
 			},
 		]
+	})
+}
+
+function receiptOf(args: Json | null): ReviewReceipt | null {
+	if (!args) return null
+	const str = (v: unknown) => (typeof v === 'string' && v.length > 0 ? v : null)
+	const receipt = {
+		file_name: str(args.fileName),
+		file_guid: str(args.fileGuid),
+		reference: str(args.externalReference),
+	}
+	return receipt.file_name || receipt.file_guid || receipt.reference ? receipt : null
+}
+
+const GUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
+
+/** The voucher guid a logged call names: the first guid under a key that ends in guid or is id. */
+function guidOfArgs(args: Json | null): string | null {
+	if (!args) return null
+	for (const [k, v] of Object.entries(args)) {
+		if (
+			/guid$/i.test(k) &&
+			k.toLowerCase() !== 'fileguid' &&
+			typeof v === 'string' &&
+			GUID_RE.test(v)
+		) {
+			return v.toLowerCase()
+		}
+	}
+	return null
+}
+
+/** A logged purchase voucher draft (or a later edit of it) or a receipt upload, from the log. */
+export interface DraftLogEvent {
+	id: number
+	data: unknown
+}
+
+/**
+ * A booked purchase voucher (BookVoucher) names only the voucher, so its lines and receipt are
+ * read from the draft the flow saved before: the latest CreatePurchaseVoucher whose answer names
+ * the voucher, or update_purchase_voucher_draft on it, with a lower log id. The receipt's file name
+ * comes from the upload_file call whose answer names the file. Anything it cannot find stays as it
+ * was: no lines, no receipt. Pure, so it is tested without a database.
+ */
+export function withPurchaseDraftDetails(
+	items: ReviewItem[],
+	drafts: DraftLogEvent[],
+): ReviewItem[] {
+	const parsed = drafts.map((e) => {
+		const d = asObj(e.data) ?? {}
+		const result = typeof d.result === 'string' ? d.result.toLowerCase() : ''
+		return {
+			id: e.id,
+			tool: typeof d.tool === 'string' ? d.tool : '',
+			ok: d.outcome === 'success',
+			args: asObj(d.arguments),
+			result,
+		}
+	})
+	return items.map((item) => {
+		if (!item.booked || item.tool !== 'BookVoucher') return item
+		const bookLog = parsed.find((p) => p.id === item.event_id)
+		const guid = guidOfArgs(bookLog?.args ?? null) ?? null
+		if (!guid) return item
+		const draft = parsed
+			.filter(
+				(p) =>
+					p.ok &&
+					p.id < item.event_id &&
+					((p.tool === 'CreatePurchaseVoucher' && p.result.includes(guid)) ||
+						(p.tool === 'update_purchase_voucher_draft' && guidOfArgs(p.args) === guid)),
+			)
+			.sort((a, b) => b.id - a.id)[0]
+		if (!draft?.args) return item
+		const receipt = receiptOf(draft.args)
+		const fileGuid = receipt?.file_guid?.toLowerCase() ?? null
+		const upload = fileGuid
+			? parsed.find((p) => p.ok && p.tool === 'upload_file' && p.result.includes(fileGuid))
+			: undefined
+		const fileName = upload ? (receiptOf(upload.args)?.file_name ?? null) : null
+		return {
+			...item,
+			voucher_date:
+				typeof draft.args.voucherDate === 'string' ? draft.args.voucherDate : item.voucher_date,
+			lines: linesOf(draft.args),
+			receipt: receipt ? { ...receipt, file_name: fileName ?? receipt.file_name } : item.receipt,
+		}
 	})
 }
 
@@ -168,6 +273,7 @@ function toItem(e: LogEvent, reversedBy: Map<number, number>): ReviewItem {
 		booked,
 		voucher_date: typeof args?.date === 'string' ? args.date : null,
 		lines: linesOf(args),
+		receipt: receiptOf(args),
 		result: typeof d.result === 'string' ? d.result : null,
 		reverses_event_id: reverses,
 		reversed_by_event_id: reversedById,
@@ -229,7 +335,27 @@ export async function readReviewLog(
 			if (typeof d?.reverses_event_id === 'number') reversedBy.set(d.reverses_event_id, r.id)
 		}
 	}
-	return rows.map((r) => toItem(r, reversedBy))
+	const items = rows.map((r) => toItem(r, reversedBy))
+	if (!items.some((i) => i.booked && i.tool === 'BookVoucher')) return items
+	// A booked purchase voucher names only the voucher: read the draft and the receipt upload the
+	// flow logged before it, from a while before the period too, since a draft can be older.
+	const lookback = new Date(start.getTime() - DRAFT_LOOKBACK_DAYS * DAY_MS)
+	const drafts = await db
+		.select({ id: events.id, data: events.data })
+		.from(events)
+		.where(
+			and(
+				eq(events.workspaceId, p.workspaceId),
+				eq(events.entityId, p.integrationId),
+				eq(events.action, DINERO_ACTION_EVENT),
+				gte(events.createdAt, lookback),
+				lt(events.createdAt, end),
+				inArray(sql<string>`${events.data}->>'tool'`, [...DRAFT_DETAIL_TOOLS]),
+			),
+		)
+		.orderBy(asc(events.id))
+		.limit(LOG_LIMIT * 3)
+	return withPurchaseDraftDetails(items, drafts)
 }
 
 /**

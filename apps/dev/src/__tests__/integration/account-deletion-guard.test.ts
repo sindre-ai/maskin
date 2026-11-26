@@ -21,6 +21,8 @@ const ERASED = new Set([
 	'oauth_grants',
 	'password_reset_tokens',
 	'read_state',
+	'receipt_intakes',
+	'search_opens',
 	'slack_user_links',
 	'star_state',
 	'subscriptions',

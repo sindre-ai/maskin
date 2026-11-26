@@ -59,12 +59,16 @@ describe('maskin-youtube tool server', () => {
 		trackYoutubeToolCalled.mockReset()
 	})
 
-	it('lists the read tools, the seven write tools and the three upload tools', async () => {
+	it('lists the read tools, the fourteen write tools and the three upload tools', async () => {
 		const { client } = await connect()
 		const { tools } = await client.listTools()
 		expect(tools.map((t) => t.name).sort()).toEqual([
 			'youtube__add_to_playlist',
 			'youtube__create_playlist',
+			'youtube__delete_caption',
+			'youtube__delete_comment',
+			'youtube__delete_playlist',
+			'youtube__delete_video',
 			'youtube__get_analytics',
 			'youtube__get_channel',
 			'youtube__get_own_captions',
@@ -77,10 +81,13 @@ describe('maskin-youtube tool server', () => {
 			'youtube__list_recent_videos',
 			'youtube__post_comment',
 			'youtube__publish_video',
+			'youtube__remove_from_playlist',
+			'youtube__replace_caption',
 			'youtube__reply_to_comment',
 			'youtube__search',
 			'youtube__set_thumbnail',
 			'youtube__update_video_metadata',
+			'youtube__upload_caption',
 			'youtube__upload_video',
 		])
 	})
@@ -112,14 +119,36 @@ describe('maskin-youtube tool server', () => {
 			)
 		})
 
-		it('has no input that could set the privacy of an upload', async () => {
+		it('takes a visibility and a publish time, but no raw privacy field', async () => {
 			const { client } = await connect()
 			const { tools } = await client.listTools()
 			const upload = tools.find((t) => t.name === 'youtube__upload_video')
 			const properties = Object.keys(upload?.inputSchema.properties ?? {})
-			for (const name of ['privacy_status', 'privacyStatus', 'visibility', 'publish_at']) {
+			for (const name of ['visibility', 'publish_at']) {
+				expect(properties).toContain(name)
+			}
+			for (const name of ['privacy_status', 'privacyStatus']) {
 				expect(properties).not.toContain(name)
 			}
+		})
+
+		it('passes the visibility and publish time on to the held upload', async () => {
+			prepareUpload.mockResolvedValue({ status: 'pending_approval', action_id: 'a1' })
+			const { client } = await connect()
+			await client.callTool({
+				name: 'youtube__upload_video',
+				arguments: {
+					file_id: FILE_ID,
+					object_id: OBJECT_ID,
+					title: 'Launch',
+					visibility: 'public',
+					publish_at: '2026-12-01T12:00:00Z',
+				},
+			})
+			expect(prepareUpload.mock.calls[0]?.[1]).toMatchObject({
+				visibility: 'public',
+				publish_at: '2026-12-01T12:00:00Z',
+			})
 		})
 
 		it('rejects a call with a bad file id before any code runs', async () => {
@@ -632,6 +661,19 @@ describe('youtube write tools', () => {
 		['post_comment', { video_id: 'v1', text: 'Nice one' }],
 		['reply_to_comment', { video_id: 'v1', comment_id: 'c1', text: 'Thanks' }],
 		['like', { video_id: 'v1' }],
+		[
+			'upload_caption',
+			{ video_id: 'v1', file_id: '22222222-2222-4222-8222-222222222222', language: 'en' },
+		],
+		[
+			'replace_caption',
+			{ video_id: 'v1', caption_id: 'cap1', file_id: '22222222-2222-4222-8222-222222222222' },
+		],
+		['delete_caption', { video_id: 'v1', caption_id: 'cap1' }],
+		['delete_video', { video_id: 'v1' }],
+		['delete_comment', { comment_id: 'c1' }],
+		['delete_playlist', { playlist_id: 'PL1' }],
+		['remove_from_playlist', { playlist_id: 'PL1', video_id: 'v1' }],
 	] as const)('%s holds the change and returns the action id', async (tool, args) => {
 		proposeYoutubeWrite.mockResolvedValueOnce(HELD)
 		const { client, ctx } = await connect()
@@ -753,6 +795,13 @@ describe('youtube write tools', () => {
 			'post_comment',
 			'reply_to_comment',
 			'like',
+			'upload_caption',
+			'replace_caption',
+			'delete_caption',
+			'delete_video',
+			'delete_comment',
+			'delete_playlist',
+			'remove_from_playlist',
 		]) {
 			expect(classifyTool('youtube', `youtube__${tool}`)).toBe('write')
 		}

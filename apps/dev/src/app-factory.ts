@@ -85,6 +85,8 @@ import integrationsOAuthAppRoutes from './routes/integrations-oauth-app'
 import integrationsResendRoutes from './routes/integrations-resend'
 import integrationsSkjaldConnectRoutes from './routes/integrations-skjald-connect'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
+import integrationsWordpressSelfHostedRoutes from './routes/integrations-wordpress-self-hosted'
+import integrationsWordpressSelfHostedMcpRoutes from './routes/integrations-wordpress-self-hosted-mcp'
 import integrationsYoutubeMcpRoutes from './routes/integrations-youtube-mcp'
 import keychainAdminRoutes from './routes/keychain-admin'
 import liveActivitiesRoutes from './routes/live-activities'
@@ -110,6 +112,7 @@ import openaiAppsChallengeRoutes from './routes/openai-apps-challenge'
 import pilotGateRoutes from './routes/pilot-gate'
 import publicBetStrategistRoutes from './routes/public-bet-strategist'
 import publicLandingEventsRoutes from './routes/public-landing-events'
+import receiptIntakeRoutes, { receiptUploadApp, receiptWebhookApp } from './routes/receipt-intake'
 import relationshipsRoutes from './routes/relationships'
 import savedViewsRoutes from './routes/saved-views'
 import searchRoutes from './routes/search'
@@ -499,6 +502,9 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		// The "Not useful" link under a Marketplace pick, same: signed token (routes/email-pick.ts).
 		if (path === '/api/email/pick-dismiss' && (method === 'GET' || method === 'POST')) return next()
 		if (path.startsWith('/api/webhooks/')) return next()
+		// The receipt command route: a receipt key is the only credential, checked in the handler
+		// against receipt_intake_keys (routes/receipt-intake.ts). It is not an actor key.
+		if (path === '/api/receipt-intake/upload' && method === 'POST') return next()
 		if (path.startsWith('/api/internal/agent-servers/')) return next()
 		if (path === '/api/internal/mcp-guard/report' && method === 'POST') return next()
 		if (path === '/api/public/landing-events' && method === 'POST') return next()
@@ -622,6 +628,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/integrations/skjald', integrationsSkjaldConnectRoutes)
 	// Deepdots connects from an email and password form, not an OAuth redirect.
 	app.route('/api/integrations/deepdots', integrationsDeepdotsRoutes)
+	// A self-hosted WordPress site connects from a site address and application password form.
+	app.route('/api/integrations/wordpress-self-hosted', integrationsWordpressSelfHostedRoutes)
 	app.route('/api/integrations/linkedin-unipile/mcp', integrationsLinkedinMcpRoutes)
 	app.route('/api/integrations/linkedin-unipile', integrationsLinkedinRoutes)
 	// google-meet MCP surface — same trie-ordering constraint as linkedin's:
@@ -634,6 +642,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// generic /api/integrations/{provider}/... routes never see these paths.
 	app.route('/api/integrations/google-drive', integrationsGoogleDriveRoutes)
 	app.route('/api/integrations/deepdots/mcp', integrationsDeepdotsMcpRoutes)
+	app.route('/api/integrations/wordpress-self-hosted/mcp', integrationsWordpressSelfHostedMcpRoutes)
 	app.route('/api/integrations/microsoft/mcp', integrationsMicrosoftMcpRoutes)
 	app.route('/api/integrations/google-search-console/mcp', integrationsGoogleSearchConsoleMcpRoutes)
 	// youtube MCP surface — same ordering constraint as google-meet's above.
@@ -663,7 +672,11 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/webhooks/stripe', stripeWebhookRoutes)
 	app.route('/api/marketplace', marketplaceLoopsRoutes)
 	app.route('/api/mini-apps', miniAppRegenRoutes)
+	// Receipt email delivery, signed by Resend. More specific than the catchall below, mounted first.
+	app.route('/api/webhooks', receiptWebhookApp)
 	app.route('/api/webhooks', webhookApp)
+	app.route('/api/receipt-intake', receiptUploadApp)
+	app.route('/api/receipt-intake', receiptIntakeRoutes)
 	app.route('/api/billing', billingRoutes)
 	// Only exists on stacks that set MASKIN_TEST_GRANT_TOKEN (CI's E2E run).
 	// Unmounted — not merely guarded — everywhere else, so production 404s.

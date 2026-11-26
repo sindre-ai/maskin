@@ -40,7 +40,8 @@ struct SettingsServices {
 	/// Create and switch), and every store built afterwards must use the new header.
 	var source: APISettingsSource? {
 		environment.workspaceId.map {
-			APISettingsSource(client: environment.client, workspaceID: $0)
+			APISettingsSource(
+				client: environment.client, workspaceID: $0, connectClient: environment.connectClient)
 		}
 	}
 
@@ -232,8 +233,10 @@ struct SettingsServices {
 
 	func schemaStore() -> SchemaStore { SchemaStore(api: source ?? NoSettingsSource(), currentRole: role) }
 
-	/// The MCP endpoint lives on the API origin.
-	var mcpURL: URL { environment.baseURL.appendingPathComponent("mcp") }
+	/// The MCP address people paste into a client. It is the web host, not the API host: the
+	/// server's OAuth discovery names `<web host>/mcp` as the resource, and a client given another
+	/// host sees a mismatch. The web app shows the page's own origin the same way.
+	var mcpURL: URL { webBaseURL.appendingPathComponent("mcp") }
 
 	func mcpStore() -> MCPStore {
 		MCPStore(api: source ?? NoSettingsSource(), serverURL: mcpURL, currentRole: role)

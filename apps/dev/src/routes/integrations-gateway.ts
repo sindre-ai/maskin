@@ -1,8 +1,9 @@
 import type { Database } from '@maskin/db'
 import { integrations } from '@maskin/db/schema'
 import { isPilotHeldIntegrationTool } from '@maskin/shared'
-import { and, eq } from 'drizzle-orm'
+import { and, asc, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
+import { z } from 'zod'
 import { trackIntegrationToolCalled } from '../lib/analytics/integration-events'
 import { countReceiptDraft, receiptDraftConnector } from '../lib/analytics/receipt-events'
 import { createApiError } from '../lib/errors'
@@ -14,6 +15,7 @@ import {
 	fillCustomerValue,
 	hasCustomerValueToken,
 } from '../lib/integrations/customer-value'
+import { checkGoogleToken } from '../lib/integrations/google-token-check'
 import {
 	GATEWAY_BODY_LIMIT_BYTES,
 	GATEWAY_PROVIDERS,
@@ -46,6 +48,11 @@ import {
 	DINERO_LOCKED_MESSAGE,
 	isDineroPeriodLocked,
 } from '../lib/integrations/providers/dinero/review'
+import {
+	DINERO_APP_TOOLS,
+	answerDineroAppTool,
+	isDineroAppTool,
+} from '../lib/integrations/providers/dinero/vat-check-tool'
 import { assertPublicHost } from '../lib/integrations/public-host'
 import { getProvider } from '../lib/integrations/registry'
 import type { ToolAnnotationsLike } from '../lib/integrations/tool-kinds'
@@ -140,6 +147,8 @@ async function handle(c: import('hono').Context<Env>): Promise<Response> {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const provider = c.req.param('provider') ?? ''
+	// Set when the agent was given one specific connection of a provider (a second Gmail account).
+	const integrationId = c.req.param('integrationId')
 	const workspaceId = c.req.header('x-workspace-id')
 
 	if (!GATEWAY_PROVIDERS.has(provider)) {
@@ -162,8 +171,17 @@ async function handle(c: import('hono').Context<Env>): Promise<Response> {
 	}
 	const label = resolved.config.displayName
 
+	if (integrationId !== undefined && !z.string().uuid().safeParse(integrationId).success) {
+		return jsonRpcError(404, -32001, `${label} is not connected to this workspace.`)
+	}
+	// Without an id, the oldest active connection: the same rule as lookup.ts, so a workspace
+	// with two accounts never answers from whichever row the database returns first.
 	const [integration] = await db
-		.select({ id: integrations.id, config: integrations.config })
+		.select({
+			id: integrations.id,
+			config: integrations.config,
+			externalId: integrations.externalId,
+		})
 		.from(integrations)
 		.where(
 			and(
@@ -171,8 +189,10 @@ async function handle(c: import('hono').Context<Env>): Promise<Response> {
 				eq(integrations.provider, provider),
 				eq(integrations.providerMode, 'registered'),
 				eq(integrations.status, 'active'),
+				...(integrationId ? [eq(integrations.id, integrationId)] : []),
 			),
 		)
+		.orderBy(asc(integrations.createdAt), asc(integrations.id))
 		.limit(1)
 	if (!integration) {
 		return jsonRpcError(404, -32001, `${label} is not connected to this workspace.`)
@@ -223,7 +243,10 @@ async function handle(c: import('hono').Context<Env>): Promise<Response> {
 		label,
 		integrationId: integration.id,
 		access,
-		cacheKey: `${workspaceId}:${provider}`,
+		// The id is part of the key: two accounts of one provider list the same tool names.
+		cacheKey: `${workspaceId}:${provider}:${integration.id}`,
+		// Named in the tool descriptions only when the agent picked one connection by id.
+		account: integrationId ? (integration.externalId ?? undefined) : undefined,
 		upstreamUrl,
 		allowedTools: fixedAllowedTools(provider, integration.config as IntegrationConfig | null),
 		upstreamHeaders: async () => {
@@ -261,6 +284,8 @@ export interface ProxyContext {
 	access: AgentAccess
 	/** Remembers each server's own tool annotations between a tools/list and a later call. */
 	cacheKey: string
+	/** The account behind this server (an email address), named in each tool description. Optional. */
+	account?: string
 	upstreamUrl: string
 	/** A fixed list of allowed tools (a custom server's, or Dinero's): any other tool is refused and left out of tools/list. */
 	allowedTools?: readonly string[]
@@ -437,6 +462,25 @@ export async function proxyMcp(
 		})
 	}
 
+	// get_vat_report reads our own review log, not Dinero: answered here, no sign-in token needed.
+	if (provider === 'dinero' && toolName && allowed && isDineroAppTool(toolName)) {
+		const done = await answerDineroAppTool(
+			db,
+			{ workspaceId, integrationId: integration.id },
+			toolName,
+			rpc?.params?.arguments,
+		)
+		countToolCall(done.isError ? 'API_ERROR' : null)
+		return new Response(
+			JSON.stringify({
+				jsonrpc: '2.0',
+				id: rpc?.id ?? null,
+				result: { isError: done.isError, content: [{ type: 'text', text: done.text }] },
+			}),
+			{ status: 200, headers: { 'content-type': 'application/json' } },
+		)
+	}
+
 	let upstreamHeaders: Record<string, string>
 	try {
 		upstreamHeaders = await ctx.upstreamHeaders()
@@ -509,6 +553,33 @@ export async function proxyMcp(
 		return jsonRpcError(502, -32002, `${label} could not be reached. Try again shortly.`)
 	}
 	countToolCall(upstream.ok ? null : `HTTP_${upstream.status}`)
+	// A provider that refuses the token we sent. Google's hosted MCP answers 401 with its whole tool
+	// list in the body, so passing it on made the agent's client drop every tool while the server
+	// still showed as connected. Say what happened instead, and log the vendor's reason (never the token).
+	if (upstream.status === 401) {
+		// For a Google server, also what Google's own token check says about this token.
+		const googleTokenCheck = await checkGoogleToken({
+			connectionKey: integration.id,
+			upstreamUrl: server.url,
+			authorization: upstreamHeaders.Authorization ?? upstreamHeaders.authorization,
+		})
+		logger.warn('Gateway upstream refused the provider token', {
+			workspaceId,
+			integrationId: integration.id,
+			provider,
+			method: rpc?.method ?? method,
+			wwwAuthenticate: upstream.headers.get('www-authenticate')?.slice(0, 300) ?? null,
+			...(googleTokenCheck.checked || googleTokenCheck.reason === 'rate_limited'
+				? { googleTokenCheck }
+				: {}),
+		})
+		await upstream.body?.cancel().catch(() => {})
+		return jsonRpcError(
+			502,
+			-32002,
+			`${label} refused the sign-in Maskin sent it (HTTP 401), so its tools are not available. Ask a workspace admin to reconnect it under Settings → Integrations.`,
+		)
+	}
 	// A draft saved in the customer's accounting system is counted once, when the vendor says it worked.
 	const draftConnector = toolName && allowed ? receiptDraftConnector(server.url, toolName) : null
 	if (draftConnector) {
@@ -569,7 +640,7 @@ export async function proxyMcp(
 			provider === 'dinero'
 				? {
 						...upstreamResult,
-						tools: [...(upstreamResult.tools ?? []), ...DINERO_BRIDGE_TOOLS],
+						tools: [...(upstreamResult.tools ?? []), ...DINERO_BRIDGE_TOOLS, ...DINERO_APP_TOOLS],
 					}
 				: upstreamResult
 		const out = annotateToolsList(withBridge as Parameters<typeof annotateToolsList>[0], {
@@ -577,6 +648,7 @@ export async function proxyMcp(
 			providerLabel: label,
 			access,
 			allowedTools: ctx.allowedTools,
+			account: ctx.account,
 		})
 		rememberAnnotations(cacheKey, out.upstreamAnnotations)
 		rememberToolNames(
@@ -599,5 +671,9 @@ export async function proxyMcp(
 app.post('/:provider/gateway', handle)
 app.get('/:provider/gateway', handle)
 app.delete('/:provider/gateway', handle)
+// One specific connection of the provider, by integration id.
+app.post('/:provider/gateway/:integrationId', handle)
+app.get('/:provider/gateway/:integrationId', handle)
+app.delete('/:provider/gateway/:integrationId', handle)
 
 export default app

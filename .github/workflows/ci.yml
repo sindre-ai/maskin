@@ -201,7 +201,9 @@ jobs:
     # A skipped job counts as passing for the required check of the same name.
     if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The test step alone takes 13 to 17 minutes on a loaded runner, so 20 cut PR runs off
+    # (PR 3880 was cancelled at 20m16s). 30 leaves room without hiding a wedged run for hours.
+    timeout-minutes: 30
     env:
       # actions/cache waits 10 minutes per segment by default; when the cache
       # backend is unavailable (e.g. "Egress is over the account limit") the

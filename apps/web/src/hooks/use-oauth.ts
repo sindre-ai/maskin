@@ -4,7 +4,7 @@ import { toast } from 'sonner'
 import { api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 
-/** The person's live Claude connections across their workspaces. Listing is never behind the flag. */
+/** The person's live Claude and ChatGPT connections across their workspaces. Listing is never behind the flag. */
 export function useOauthGrants() {
 	return useQuery({
 		queryKey: queryKeys.oauthGrants.all(),
@@ -13,13 +13,13 @@ export function useOauthGrants() {
 	})
 }
 
-export function useDisconnectGrant() {
+export function useDisconnectGrant(appName = 'Claude') {
 	const queryClient = useQueryClient()
 	return useMutation({
 		mutationFn: (grantId: string) => api.oauth.revokeGrant(grantId),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.oauthGrants.all() })
-			toast.success('Claude disconnected')
+			toast.success(`${appName} disconnected`)
 		},
 	})
 }

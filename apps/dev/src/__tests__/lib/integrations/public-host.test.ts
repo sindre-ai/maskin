@@ -27,16 +27,42 @@ describe('isNonPublicAddress', () => {
 		'ff02::1',
 		'::ffff:127.0.0.1',
 		'::ffff:a00:1',
+		// The same mapped address written out in full, in hex, with a zone id, or in capitals.
+		'0:0:0:0:0:ffff:7f00:1',
+		'0000:0000:0000:0000:0000:ffff:a9fe:a9fe',
+		'::FFFF:7F00:1',
+		'::ffff:7f00:1%eth0',
+		// NAT64 carrying a private or metadata IPv4 address, compressed and in full.
+		'64:ff9b::7f00:1',
+		'64:ff9b::a9fe:a9fe',
+		'64:ff9b::10.0.0.1',
+		'0064:ff9b:0000:0000:0000:0000:a9fe:a9fe',
+		// Local-use NAT64, 6to4 and Teredo hide an IPv4 address.
+		'64:ff9b:1::1',
+		'2002:7f00:1::',
+		'2002:a9fe:a9fe::1',
+		'2001:0:4136:e378:8000:63bf:3fff:fdd2',
+		// IPv4-translated and IPv4-compatible forms.
+		'::ffff:0:7f00:1',
+		'::7f00:1',
+		'fec0::1',
+		'fe80::abcd',
 	])('refuses %s', (address) => {
 		expect(isNonPublicAddress(address)).toBe(true)
 	})
 
-	it.each(['93.184.216.34', '8.8.8.8', '172.32.0.1', '2606:2800:220:1:248:1893:25c8:1946'])(
-		'accepts %s',
-		(address) => {
-			expect(isNonPublicAddress(address)).toBe(false)
-		},
-	)
+	it.each([
+		'93.184.216.34',
+		'8.8.8.8',
+		'172.32.0.1',
+		'2606:2800:220:1:248:1893:25c8:1946',
+		// A public IPv4 address carried by IPv6 stays public.
+		'::ffff:5db8:d822',
+		'64:ff9b::5db8:d822',
+		'2002:5db8:d822::1',
+	])('accepts %s', (address) => {
+		expect(isNonPublicAddress(address)).toBe(false)
+	})
 
 	it('keeps the private check the extension probe already used', () => {
 		expect(isPrivateAddress('10.0.0.1')).toBe(true)

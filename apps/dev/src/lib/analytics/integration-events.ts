@@ -11,6 +11,9 @@ export const INTEGRATION_CONNECTED = 'integration_connected'
 export const INTEGRATION_SYNC_COMPLETED = 'integration_sync_completed'
 export const INTEGRATION_TOOL_CALLED = 'integration_tool_called'
 export const INTEGRATION_CONNECT_STARTED = 'integration_connect_started'
+// A new connect started the workspace's Chief of Staff on its connect checklist. Properties are
+// provider and workspace only: never text.
+export const CONNECT_CHECKLIST_STARTED = 'connect_checklist_started'
 // Success event of the Teams transcripts bet. Properties are provider and ok only: never transcript
 // text, meeting titles or names.
 export const MEETING_TRANSCRIPT_LANDED = 'meeting_transcript_landed'
@@ -148,5 +151,20 @@ export async function trackMeetingTranscriptLanded(p: {
 	await capturePosthogEvent(MEETING_TRANSCRIPT_LANDED, p.actorId, {
 		provider: p.provider,
 		ok: p.ok,
+	})
+}
+
+/**
+ * Fire `connect_checklist_started` once a new connect has started the Chief of Staff. Success
+ * event of the connect checklist bet. Payload is provider and workspace_id only; the distinct id
+ * is the workspace, as no person is the subject. Best-effort per capturePosthogEvent.
+ */
+export async function trackConnectChecklistStarted(p: {
+	provider: string
+	workspaceId: string
+}): Promise<void> {
+	await capturePosthogEvent(CONNECT_CHECKLIST_STARTED, p.workspaceId, {
+		provider: p.provider,
+		workspace_id: p.workspaceId,
 	})
 }
