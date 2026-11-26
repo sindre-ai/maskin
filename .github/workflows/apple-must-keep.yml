@@ -28,7 +28,7 @@ permissions:
   contents: read
 
 # Each test class runs as its own job on its own Mac, in parallel: one runner doing both took 45 minutes and hit the
-# job limit (the build alone can take 20). A newer push replaces the run still going for the same branch.
+# job limit (the build alone takes 12 to 26). A leg needs about 40 minutes, so the limit is 60. A newer push replaces the run still going for the same branch.
 concurrency:
   group: apple-must-keep-${{ github.ref }}
   cancel-in-progress: true
@@ -42,7 +42,7 @@ jobs:
         # A one-test run by hand (only = Class/testName) needs only the job for the class it names.
         class: ${{ fromJSON(inputs.only == '' && '["MustKeepTests","MustKeepMoreTests"]' || startsWith(inputs.only, 'MustKeepMoreTests/') && '["MustKeepMoreTests"]' || '["MustKeepTests"]') }}
     runs-on: macos-26
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       OUT: ${{ github.workspace }}/must-keep-out
     steps:
