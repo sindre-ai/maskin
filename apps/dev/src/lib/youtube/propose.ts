@@ -648,6 +648,8 @@ async function buildDeleteCaption(
 		name: track.name,
 	}
 	return { kind: 'delete_caption', payload: { ...payload }, targetVideoId: input.video_id }
+}
+
 /**
  * The comment's author and text are read by the server and stored in the request, so the card shows
  * the real comment and not what the agent says it is. The executor sends only the id, the status and
