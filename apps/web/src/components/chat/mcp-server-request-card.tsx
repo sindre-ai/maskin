@@ -231,7 +231,12 @@ export function McpServerRequestCard({
 						<Link
 							to="/$workspaceId/settings/integrations"
 							params={{ workspaceId }}
-							search={{ select_github: undefined, error: undefined, return_to: undefined }}
+							search={{
+								select_github: undefined,
+								error: undefined,
+								return_to: undefined,
+								provider: undefined,
+							}}
 							className={REQUEST_CARD_LINK}
 						>
 							Manage
