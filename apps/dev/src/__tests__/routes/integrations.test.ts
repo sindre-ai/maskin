@@ -110,6 +110,16 @@ describe('Integrations Routes', () => {
 			expect(names).toContain('dinero')
 		})
 
+		it('lists Uniconta and Business Central for everyone, with no flag on', async () => {
+			const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+			const res = await app.request(jsonGet('/api/integrations/providers'))
+
+			const names = ((await res.json()) as Array<{ name: string }>).map((p) => p.name)
+			expect(names).toContain('uniconta')
+			expect(names).toContain('business-central')
+		})
+
 		// A provider whose mcp.autoInject is false gives an agent no tools until
 		// its server spec is attached per-agent. That spec used to exist only as
 		// a frontend constant, so an agent driving Maskin over MCP could connect
@@ -347,6 +357,65 @@ describe('Integrations Routes', () => {
 				process.env.GITHUB_CLIENT_ID = previousClientId
 			}
 		})
+
+		it.each([
+			['uniconta', 'Uniconta', 'UNICONTA_CLIENT_ID', 'mcp.uniconta.com'],
+			[
+				'business-central',
+				'Business Central',
+				'BUSINESS_CENTRAL_CLIENT_ID',
+				'login.microsoftonline.com',
+			],
+		])(
+			'connects %s for everyone once the server has its app id',
+			async (provider, _name, envKey, host) => {
+				const previous = process.env[envKey]
+				process.env[envKey] = 'test-client-id'
+				try {
+					const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+					const res = await app.request(
+						jsonRequest('POST', `/api/integrations/${provider}/connect`, undefined, {
+							'x-workspace-id': wsId,
+						}),
+					)
+
+					expect(res.status).toBe(200)
+					const body = await res.json()
+					expect(new URL(body.install_url).host).toBe(host)
+				} finally {
+					if (previous === undefined) delete process.env[envKey]
+					else process.env[envKey] = previous
+				}
+			},
+		)
+
+		it.each([
+			['uniconta', 'Uniconta', 'UNICONTA_CLIENT_ID'],
+			['business-central', 'Business Central', 'BUSINESS_CENTRAL_CLIENT_ID'],
+		])(
+			'says %s is a server setup problem, not a crash, when its app id is missing',
+			async (provider, displayName, envKey) => {
+				const previous = process.env[envKey]
+				delete process.env[envKey]
+				try {
+					const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+					const res = await app.request(
+						jsonRequest('POST', `/api/integrations/${provider}/connect`, undefined, {
+							'x-workspace-id': wsId,
+						}),
+					)
+
+					expect(res.status).toBe(500)
+					const body = await res.json()
+					expect(body.error.message).toContain(`Could not start the ${displayName} connection`)
+					expect(body.error.message).toContain('server misconfiguration')
+				} finally {
+					if (previous !== undefined) process.env[envKey] = previous
+				}
+			},
+		)
 
 		// "Install on another organization": the authorize URL only lists orgs that
 		// already have the App, so this mode must return the App's install page
