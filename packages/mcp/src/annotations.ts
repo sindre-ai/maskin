@@ -71,6 +71,8 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
 	'desktop_list_ports',
 	'desktop_settings',
 	'list_file_tags',
+	'gmail_search_mail',
+	'gmail_read_thread',
 ])
 
 interface Row {
@@ -206,6 +208,9 @@ const ROWS: Record<string, Row> = {
 	approve_object_draft: row('Approve object draft', { openWorld: true }),
 	gmail_send_email: row('Send Gmail email', { openWorld: true }),
 	gmail_save_attachment: row('Save Gmail attachment', { openWorld: true }),
+	gmail_search_mail: row('Search Gmail', { openWorld: true }),
+	gmail_read_thread: row('Read Gmail thread', { openWorld: true }),
+	gmail_change_labels: row('Archive or label Gmail thread', { openWorld: true }),
 	resend_send_email: row('Send Resend email', { openWorld: true }),
 	update_integration_access: row('Update integration access', {
 		idempotent: true,

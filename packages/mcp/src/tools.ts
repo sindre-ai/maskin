@@ -2493,6 +2493,67 @@ export const tools = {
 				.describe('The partId next to the attachment, e.g. "1". Stable between reads.'),
 		}),
 	},
+	gmail_search_mail: {
+		description:
+			'Search the connected Gmail with Gmail search words (e.g. "from:anna is:unread newer_than:7d", "label:receipts has:attachment"). Runs on the normal Gmail API, so it works when the hosted Gmail tools refuse the sign-in. Needs "Read" or "Read & write" Gmail access. Returns up to 20 threads, newest first, each with thread_id, subject, from (first message), date (last message), snippet, message_count, labels and unread; pass next_page_token as page_token for more. Then call gmail_read_thread with a thread_id. With several Gmail accounts connected, pass `account`.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			account: z
+				.string()
+				.optional()
+				.describe(
+					'The Gmail address to use, when several accounts are connected. Left out, the first connected account.',
+				),
+			q: z
+				.string()
+				.max(500)
+				.optional()
+				.describe('Gmail search words. Left out: the newest threads.'),
+			max_results: z
+				.number()
+				.int()
+				.min(1)
+				.max(20)
+				.optional()
+				.describe('How many threads. Default 10.'),
+			page_token: z.string().optional().describe('next_page_token from the previous result.'),
+		}),
+	},
+	gmail_read_thread: {
+		description:
+			'Read one Gmail thread with every message: from, to, cc, subject, date, labels, the text of the body (cut at 20,000 characters, body_truncated says so) and the attachments it lists (name, mime_type, size_bytes, part_id, attachment_id). Runs on the normal Gmail API. Needs "Read" or "Read & write" Gmail access. Get thread_id from gmail_search_mail. To keep an attachment, call gmail_save_attachment with the message_id, attachment_id and part_id. With several Gmail accounts connected, pass `account`.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			account: z
+				.string()
+				.optional()
+				.describe(
+					'The Gmail address to use, when several accounts are connected. Left out, the first connected account.',
+				),
+			thread_id: z.string().min(1).describe('The Gmail thread id, from gmail_search_mail.'),
+		}),
+	},
+	gmail_change_labels: {
+		description:
+			'Archive a Gmail thread (takes it out of the inbox) and/or add or remove labels on it. Runs on the normal Gmail API. Needs "Read & write" Gmail access; "Read" is refused. Pass thread_id and at least one of archive, add_labels, remove_labels. Labels are Gmail label names or ids (e.g. "Receipts", "UNREAD", "STARRED"); a label that does not exist is refused, not created. Trash, spam, sent and draft cannot be changed. Returns what changed and the labels the thread has now. With several Gmail accounts connected, pass `account`.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			account: z
+				.string()
+				.optional()
+				.describe(
+					'The Gmail address to use, when several accounts are connected. Left out, the first connected account.',
+				),
+			thread_id: z.string().min(1).describe('The Gmail thread id, from gmail_search_mail.'),
+			archive: z.boolean().optional().describe('True takes the thread out of the inbox.'),
+			add_labels: z.array(z.string()).max(20).optional().describe('Label names or ids to add.'),
+			remove_labels: z
+				.array(z.string())
+				.max(20)
+				.optional()
+				.describe('Label names or ids to remove (remove "UNREAD" to mark it read).'),
+		}),
+	},
 	resend_send_email: {
 		description:
 			'Send an email from your own maskin.io mailbox through Resend. Cannot be undone. create_objects with `metadata: { kind: "email", to: "...", subject: "...", cc: "..." }` and the text as `content`, then call this with only `object_id`: it sends the object as it reads now, once. With send setting ask first, a person must approve that exact text: mention them with create_comment (no `decision` needed); they approve it in a preview (may edit first) or say yes in chat (then call approve_draft_from_chat). Any edit withdraws approval. If refused for no approval, end your turn; you are woken after approval. Always allow sends at once; deny is refused. Files: create_file ids in `metadata.attachment_file_ids` (max 5, 20 MB total). The sender is your own mailbox, set by an admin (none recorded: refused). Never pass `to`, `subject`, `body` or `from`. If the outcome is unclear, calling again with the same object_id is safe.',

@@ -366,6 +366,9 @@ describe('MCP surface pin', () => {
 				'approve_object_draft',
 				'gmail_send_email',
 				'gmail_save_attachment',
+				'gmail_search_mail',
+				'gmail_read_thread',
+				'gmail_change_labels',
 				'resend_send_email',
 				'update_integration_access',
 			].sort()

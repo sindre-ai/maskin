@@ -30,6 +30,8 @@ const UNAVAILABLE_UNDER_OAUTH = [
 	'GET /api/actors/x/access', // newer MCP tool, route not yet checked for the token's workspace pin
 	'GET /api/conversations', // newer MCP tool, route not yet checked for the token's workspace pin
 	'GET /api/conversations/x/files', // list_files with conversation_id: newer MCP tool, route not yet checked for the token's workspace pin
+	'GET /api/integrations/gmail/search', // gmail_search_mail: newer MCP tool, route not yet checked for the token's workspace pin
+	'GET /api/integrations/gmail/thread', // gmail_read_thread: newer MCP tool, route not yet checked for the token's workspace pin
 	'GET /api/data/query', // newer MCP tool, route not yet checked for the token's workspace pin
 	'GET /api/for-you', // newer MCP tool, route not yet checked for the token's workspace pin
 	'GET /api/installed-loops', // list_marketplace: newer MCP tool, route not yet checked for the token's workspace pin
@@ -46,6 +48,7 @@ const UNAVAILABLE_UNDER_OAUTH = [
 	'POST /api/for-you/withdrawals', // newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/installed-loops/x/fork', // fork_loop: newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/integrations/gmail/save-attachment', // newer MCP tool, route not yet checked for the token's workspace pin
+	'POST /api/integrations/gmail/thread-labels', // gmail_change_labels: newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/integrations/gmail/send', // newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/integrations/resend/send', // newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/integrations/x/connect', // connect_integration: third-party credentials
