@@ -1,5 +1,5 @@
 import type { Database } from '@maskin/db'
-import { deletePostInputShape, editPostInputShape } from '@maskin/mcp'
+import { deletePostInputShape, editPostInputShape, linkedInMentionsField } from '@maskin/mcp'
 import type { LinkedInMcpInstanceConfig, LinkedInVerb } from '@maskin/mcp/linkedin'
 import { toolName, toolsForIdentity } from '@maskin/mcp/linkedin'
 import type { StorageProvider } from '@maskin/storage'
@@ -282,7 +282,7 @@ export function registerLinkedInMcpInstance(
 			toolName(cfg, 'publish_post'),
 			{
 				description: scopedDescription(
-					'Publish a LinkedIn post. Pass text (and optionally attachment_file_ids: workspace file ids of up to 9 PNG or JPEG images, shown as a carousel, or exactly one MP4 or MOV video of up to 64 MB) and it posts. If this agent is set to ask first, pass only object_id instead: the task or object that holds a linkedin_post draft; it is refused until a person has approved it, again after any edit, and once it has been posted. The server reads the files; never send file bytes. A video post can take about 30 seconds to come back, so wait for the answer and do not call again: the same call is never posted twice. Documents are not supported',
+					'Publish a LinkedIn post. Pass text (and optionally attachment_file_ids: workspace file ids of up to 9 PNG or JPEG images, shown as a carousel, or exactly one MP4 or MOV video of up to 64 MB) and it posts. If this agent is set to ask first, pass only object_id instead: the task or object that holds a linkedin_post draft; it is refused until a person has approved it, again after any edit, and once it has been posted. The server reads the files; never send file bytes. A video post can take about 30 seconds to come back, so wait for the answer and do not call again: the same call is never posted twice. Documents are not supported. To tag a person or company, put {{0}} in the text where the tag goes and pass mentions: [{name, profile_id}]; a typed @name tags nobody. Get profile_id from search_people, get_profile or list_connections (recipient_urn) for a person, or get_company (company_id) for a company. Tags work on direct calls only, not with object_id',
 					cfg,
 				),
 				// Passthrough so a call that still sends the removed `attachments` reaches the handler and
@@ -314,6 +314,7 @@ export function registerLinkedInMcpInstance(
 							.optional()
 							.describe('Who can comment, e.g. "connections", "anyone", "none".'),
 						quoted_post_id: z.string().optional().describe('Post id to quote-share.'),
+						mentions: linkedInMentionsField,
 					})
 					.passthrough(),
 			},
@@ -391,7 +392,7 @@ export function registerLinkedInMcpInstance(
 			toolName(cfg, 'comment_on_post'),
 			{
 				description: scopedDescription(
-					'Post a top-level comment on a LinkedIn post. Pass post_id and text and it posts. If this agent is set to ask first, pass only object_id instead: the task or object that holds a linkedin_comment draft (the comment is its text, the post is its post_id); it is refused until a person has approved it, again after any edit, and once it has been posted',
+					'Post a top-level comment on a LinkedIn post. Pass post_id and text and it posts. If this agent is set to ask first, pass only object_id instead: the task or object that holds a linkedin_comment draft (the comment is its text, the post is its post_id); it is refused until a person has approved it, again after any edit, and once it has been posted. To tag a person or company in a direct comment, put {{0}} in the text where the tag goes and pass mentions: [{name, profile_id}] (profile_id from search_people, get_profile or list_connections recipient_urn, or get_company company_id); tags are not used with object_id',
 					cfg,
 				),
 				// Passthrough so a stray field reaches the handler and is refused by name with object_id.
@@ -400,6 +401,7 @@ export function registerLinkedInMcpInstance(
 						object_id: sendObjectIdSchema,
 						post_id: z.string().min(1).optional(),
 						text: z.string().min(1).max(3000).optional(),
+						mentions: linkedInMentionsField,
 					})
 					.passthrough(),
 			},
@@ -428,6 +430,7 @@ export function registerLinkedInMcpInstance(
 						const result = await commentOnLinkedInPost(opCtx, {
 							post_id: args.post_id,
 							text: args.text,
+							mentions: args.mentions,
 						})
 						return jsonResult(learned(rec, result, { refId: result.comment_id }))
 					})
@@ -443,7 +446,7 @@ export function registerLinkedInMcpInstance(
 			toolName(cfg, 'reply_to_comment'),
 			{
 				description: scopedDescription(
-					'Reply to an existing LinkedIn comment. Pass comment_id and text and it posts. If this agent is set to ask first, pass only object_id instead: the task or object that holds a linkedin_comment_reply draft (the reply is its text; the post is its post_id and the comment answered is its comment_id; reply_to holds the comment text, shown above the draft); it is refused until a person has approved it, again after any edit, and once it has been posted',
+					'Reply to an existing LinkedIn comment. Pass comment_id and text and it posts. If this agent is set to ask first, pass only object_id instead: the task or object that holds a linkedin_comment_reply draft (the reply is its text; the post is its post_id and the comment answered is its comment_id; reply_to holds the comment text, shown above the draft); it is refused until a person has approved it, again after any edit, and once it has been posted. To tag a person or company in a direct reply, put {{0}} in the text where the tag goes and pass mentions: [{name, profile_id}] (profile_id from search_people, get_profile or list_connections recipient_urn, or get_company company_id); tags are not used with object_id',
 					cfg,
 				),
 				inputSchema: z
@@ -451,6 +454,7 @@ export function registerLinkedInMcpInstance(
 						object_id: sendObjectIdSchema,
 						comment_id: z.string().min(1).optional(),
 						text: z.string().min(1).max(3000).optional(),
+						mentions: linkedInMentionsField,
 					})
 					.passthrough(),
 			},
@@ -486,6 +490,7 @@ export function registerLinkedInMcpInstance(
 						const result = await replyToLinkedInComment(opCtx, {
 							comment_id: args.comment_id,
 							text: args.text,
+							mentions: args.mentions,
 						})
 						return jsonResult(learned(rec, result, { refId: result.comment_id }))
 					})
@@ -501,7 +506,7 @@ export function registerLinkedInMcpInstance(
 			toolName(cfg, 'edit_post'),
 			{
 				description: scopedDescription(
-					'Edit the text or commenting permissions of a LinkedIn post this identity already published. Pass post_id and text (or can_comment) and it edits. If this agent is set to ask first, pass only object_id instead: the task or object that holds a linkedin_post_edit draft (the new post text is its text, the post is its post_id); it is refused until a person has approved it, again after any edit, and once it has been applied, and only the text changes. Does NOT accept attachments: LinkedIn only allows a text edit (attachments are frozen at publish time). Fails with POST_NOT_FOUND if this identity is not the post author. LinkedIn shows an "edited" marker on the post after this call. Two identical edits of the same post_id within 24h dedup on the linkedin_tool_calls ledger keyed on (actor_id, tool_name, target_id).',
+					'Edit the text or commenting permissions of a LinkedIn post this identity already published. Pass post_id and text (or can_comment) and it edits. If this agent is set to ask first, pass only object_id instead: the task or object that holds a linkedin_post_edit draft (the new post text is its text, the post is its post_id); it is refused until a person has approved it, again after any edit, and once it has been applied, and only the text changes. To tag a person or company in a direct edit, put {{0}} in the new text where the tag goes and pass mentions: [{name, profile_id}] for every tag in the new text (profile_id from search_people, get_profile or list_connections recipient_urn, or get_company company_id); tags are not used with object_id. Does NOT accept attachments: LinkedIn only allows a text edit (attachments are frozen at publish time). Fails with POST_NOT_FOUND if this identity is not the post author. LinkedIn shows an "edited" marker on the post after this call. Two identical edits of the same post_id within 24h dedup on the linkedin_tool_calls ledger keyed on (actor_id, tool_name, target_id).',
 					cfg,
 				),
 				inputSchema: z
@@ -847,7 +852,7 @@ export function registerLinkedInMcpInstance(
 			toolName(cfg, 'search_people'),
 			{
 				description: scopedDescription(
-					'Search LinkedIn for people by keywords. Every result carries search_url, the LinkedIn search that was run, so you can open it and compare. An empty people list with empty_reason upstream_returned_no_rows means the call worked and LinkedIn returned nothing; dropped_rows with is_partial true means LinkedIn returned rows we could not read. Long keyword strings (many words, non-English) can return nothing where a short one finds people: if a long query comes back empty, retry with two or three key words',
+					'Search LinkedIn for people by keywords. The recipient_urn of each result is the person provider id: use it as profile_id to tag them in a post or comment. Every result carries search_url, the LinkedIn search that was run, so you can open it and compare. An empty people list with empty_reason upstream_returned_no_rows means the call worked and LinkedIn returned nothing; dropped_rows with is_partial true means LinkedIn returned rows we could not read. Long keyword strings (many words, non-English) can return nothing where a short one finds people: if a long query comes back empty, retry with two or three key words',
 					cfg,
 				),
 				inputSchema: {
@@ -953,7 +958,7 @@ export function registerLinkedInMcpInstance(
 			toolName(cfg, 'get_profile'),
 			{
 				description: scopedDescription(
-					'Fetch one LinkedIn profile by public handle, provider id, or the recipient_urn a prior search_people / list_connections result surfaced (a urn:li:... member URN is accepted and reduced to its bare provider id). Pass sections: ["experience"] to also get dated job history (company, title, start and end as ISO dates, current); it is off by default and only that value is supported. An experience pull is a heavier LinkedIn view that may be throttled: Unipile suggests staying under about 100 profile views per account per day. If the pull is throttled or rejected you still get the base profile plus experience_unavailable: true, never an empty list that looks like no jobs.',
+					'Fetch one LinkedIn profile (recipient_urn in the answer is the provider id to use as profile_id when tagging) by public handle, provider id, or the recipient_urn a prior search_people / list_connections result surfaced (a urn:li:... member URN is accepted and reduced to its bare provider id). Pass sections: ["experience"] to also get dated job history (company, title, start and end as ISO dates, current); it is off by default and only that value is supported. An experience pull is a heavier LinkedIn view that may be throttled: Unipile suggests staying under about 100 profile views per account per day. If the pull is throttled or rejected you still get the base profile plus experience_unavailable: true, never an empty list that looks like no jobs.',
 					cfg,
 				),
 				inputSchema: {
@@ -1023,7 +1028,7 @@ export function registerLinkedInMcpInstance(
 			toolName(cfg, 'get_company'),
 			{
 				description: scopedDescription(
-					'Look up one LinkedIn company: company_id, name, public_identifier, industry, size_band, headcount, headquarters, website, follower_count, description (cut to 500 characters) and url. Pass company as a numeric id, a slug or a linkedin.com/company URL. Costs one profile view of the 100 a day shared with get_profile and list_user_posts.',
+					'Look up one LinkedIn company: company_id, name, public_identifier, industry, size_band, headcount, headquarters, website, follower_count, description (cut to 500 characters) and url. company_id is also the provider id to use as profile_id when tagging the company in a post or comment. Pass company as a numeric id, a slug or a linkedin.com/company URL. Costs one profile view of the 100 a day shared with get_profile and list_user_posts.',
 					cfg,
 				),
 				inputSchema: { company: z.string().min(1) },
