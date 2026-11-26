@@ -9,6 +9,7 @@ const { mockNavigate, searchState } = vi.hoisted(() => ({
 	searchState: {
 		sort: 'name' as 'name' | 'createdAt' | 'updatedAt',
 		order: 'asc' as 'asc' | 'desc',
+		skill: undefined as string | undefined,
 	},
 }))
 
@@ -19,7 +20,11 @@ vi.mock('@tanstack/react-router', async () => {
 		// Wrap in { options } to mirror the real TanStack Route shape so the
 		// test file can read Route.options.component and Route.options.validateSearch.
 		createFileRoute: () => (options: Record<string, unknown>) => ({ options }),
-		useSearch: () => ({ sort: searchState.sort, order: searchState.order }),
+		useSearch: () => ({
+			sort: searchState.sort,
+			order: searchState.order,
+			skill: searchState.skill,
+		}),
 		useNavigate: () => mockNavigate,
 	}
 })
@@ -123,6 +128,7 @@ describe('Settings > Skills', () => {
 		vi.clearAllMocks()
 		searchState.sort = 'name'
 		searchState.order = 'asc'
+		searchState.skill = undefined
 		createPending.value = false
 		updatePending.value = false
 		deletePending.value = false
@@ -298,6 +304,34 @@ describe('Settings > Skills', () => {
 
 		expect(screen.getByRole('heading', { name: 'Edit skill' })).toBeInTheDocument()
 		expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('deploy')
+	})
+
+	it('opens the skill named in the link', () => {
+		searchState.skill = 'deploy'
+		mockUseWorkspaceSkills.mockReturnValue({
+			data: [buildSkill({ name: 'deploy' }), buildSkill({ id: 'skill-2', name: 'release-gate' })],
+			isLoading: false,
+		})
+		mockUseWorkspaceSkill.mockReturnValue({
+			data: { ...buildSkill({ name: 'deploy' }), content: 'existing content' },
+			isLoading: false,
+		})
+		renderPage()
+
+		expect(screen.getByRole('heading', { name: 'Edit skill' })).toBeInTheDocument()
+		expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('deploy')
+	})
+
+	it('shows the plain list when the linked skill does not exist', () => {
+		searchState.skill = 'nope'
+		mockUseWorkspaceSkills.mockReturnValue({
+			data: [buildSkill({ name: 'deploy' })],
+			isLoading: false,
+		})
+		renderPage()
+
+		expect(screen.queryByRole('heading', { name: 'Edit skill' })).not.toBeInTheDocument()
+		expect(screen.getByText('deploy')).toBeInTheDocument()
 	})
 
 	it('does not open the edit dialog when the kebab menu is opened', async () => {
