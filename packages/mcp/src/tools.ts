@@ -2493,6 +2493,38 @@ export const tools = {
 				.describe('The partId next to the attachment, e.g. "1". Stable between reads.'),
 		}),
 	},
+	gmail_search_mail: {
+		description:
+			'Search the connected Gmail with Gmail search words (e.g. "from:anna is:unread newer_than:7d"), on the normal Gmail API, which works when the hosted Gmail tools refuse the sign-in. Needs "Read" Gmail access. Returns up to 20 threads, newest first (thread_id, subject, from, date, snippet, labels, unread) and next_page_token for page_token. Open one with gmail_read_thread.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			account: z.string().optional().describe('Gmail address, when several are connected.'),
+			q: z.string().max(500).optional().describe('Gmail search words. Left out: newest threads.'),
+			max_results: z.number().int().min(1).max(20).optional().describe('Default 10.'),
+			page_token: z.string().optional().describe('next_page_token of the last result.'),
+		}),
+	},
+	gmail_read_thread: {
+		description:
+			'Read one Gmail thread: every message with from, to, cc, subject, date, labels, body text (cut at 20,000 characters) and attachments (name, mime_type, size_bytes, part_id, attachment_id; keep one with gmail_save_attachment). Normal Gmail API. Needs "Read" Gmail access.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			account: z.string().optional().describe('Gmail address, when several are connected.'),
+			thread_id: z.string().min(1).describe('From gmail_search_mail.'),
+		}),
+	},
+	gmail_change_labels: {
+		description:
+			'Archive a Gmail thread and/or add or remove labels, by label name or id (e.g. "Receipts", "UNREAD", "STARRED"). Normal Gmail API. Needs "Read & write" Gmail access. Pass thread_id and at least one of archive, add_labels, remove_labels. A missing label is refused, not created; trash, spam, sent and draft cannot be changed.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			account: z.string().optional().describe('Gmail address, when several are connected.'),
+			thread_id: z.string().min(1).describe('From gmail_search_mail.'),
+			archive: z.boolean().optional().describe('True takes it out of the inbox.'),
+			add_labels: z.array(z.string()).max(20).optional(),
+			remove_labels: z.array(z.string()).max(20).optional().describe('"UNREAD" marks it read.'),
+		}),
+	},
 	resend_send_email: {
 		description:
 			'Send an email from your own maskin.io mailbox through Resend. Cannot be undone. create_objects with `metadata: { kind: "email", to: "...", subject: "...", cc: "..." }` and the text as `content`, then call this with only `object_id`: it sends the object as it reads now, once. With send setting ask first, a person must approve that exact text: mention them with create_comment (no `decision` needed); they approve it in a preview (may edit first) or say yes in chat (then call approve_draft_from_chat). Any edit withdraws approval. If refused for no approval, end your turn; you are woken after approval. Always allow sends at once; deny is refused. Files: create_file ids in `metadata.attachment_file_ids` (max 5, 20 MB total). The sender is your own mailbox, set by an admin (none recorded: refused). Never pass `to`, `subject`, `body` or `from`. If the outcome is unclear, calling again with the same object_id is safe.',

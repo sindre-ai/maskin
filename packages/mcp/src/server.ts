@@ -9079,6 +9079,124 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'gmail_search_mail',
+		{
+			description: tools.gmail_search_mail.description,
+			inputSchema: tools.gmail_search_mail.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const reply = (text: string, isError = false) => ({
+				_meta: meta('gmail_search_mail', config, args.workspace_id),
+				content: [{ type: 'text' as const, text }],
+				...(isError ? { isError: true } : {}),
+			})
+			try {
+				const params = new URLSearchParams()
+				if (args.account) params.set('account', args.account)
+				if (args.q) params.set('q', args.q)
+				if (args.max_results !== undefined) params.set('max_results', String(args.max_results))
+				if (args.page_token) params.set('page_token', args.page_token)
+				const found = await apiCall(
+					config,
+					'GET',
+					`/api/integrations/gmail/search?${params}`,
+					undefined,
+					{ workspaceId: args.workspace_id },
+				)
+				return reply(JSON.stringify(found))
+			} catch (err) {
+				// The server words every refusal for the agent, so pass it on as a result.
+				if (parseApiErrorStatus(err) === null) throw err
+				const detail = (err instanceof Error ? err.message : String(err)).replace(
+					/^API error \d{3}:\s*/,
+					'',
+				)
+				return reply(`Not searched. ${detail}`, true)
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'gmail_read_thread',
+		{
+			description: tools.gmail_read_thread.description,
+			inputSchema: tools.gmail_read_thread.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const reply = (text: string, isError = false) => ({
+				_meta: meta('gmail_read_thread', config, args.workspace_id),
+				content: [{ type: 'text' as const, text }],
+				...(isError ? { isError: true } : {}),
+			})
+			try {
+				const params = new URLSearchParams({ thread_id: args.thread_id })
+				if (args.account) params.set('account', args.account)
+				const thread = await apiCall(
+					config,
+					'GET',
+					`/api/integrations/gmail/thread?${params}`,
+					undefined,
+					{ workspaceId: args.workspace_id },
+				)
+				return reply(JSON.stringify(thread))
+			} catch (err) {
+				// The server words every refusal for the agent, so pass it on as a result.
+				if (parseApiErrorStatus(err) === null) throw err
+				const detail = (err instanceof Error ? err.message : String(err)).replace(
+					/^API error \d{3}:\s*/,
+					'',
+				)
+				return reply(`Not read. ${detail}`, true)
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'gmail_change_labels',
+		{
+			description: tools.gmail_change_labels.description,
+			inputSchema: tools.gmail_change_labels.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const reply = (text: string, isError = false) => ({
+				_meta: meta('gmail_change_labels', config, args.workspace_id),
+				content: [{ type: 'text' as const, text }],
+				...(isError ? { isError: true } : {}),
+			})
+			try {
+				const changed = await apiCall(
+					config,
+					'POST',
+					'/api/integrations/gmail/thread-labels',
+					{
+						account: args.account,
+						thread_id: args.thread_id,
+						archive: args.archive,
+						add_labels: args.add_labels,
+						remove_labels: args.remove_labels,
+					},
+					{ workspaceId: args.workspace_id },
+				)
+				return reply(JSON.stringify(changed))
+			} catch (err) {
+				// The server words every refusal for the agent, so pass it on as a result.
+				if (parseApiErrorStatus(err) === null) throw err
+				const detail = (err instanceof Error ? err.message : String(err)).replace(
+					/^API error \d{3}:\s*/,
+					'',
+				)
+				return reply(`Not changed. ${detail}`, true)
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'approve_draft_from_chat',
 		{
 			description: tools.approve_draft_from_chat.description,
