@@ -103,6 +103,12 @@ describe('Workspace improvements flow definition', () => {
 		expect(new Set(titles).size).toBe(titles.length)
 	})
 
+	it('lets the heartbeat skip the checklist step when the flow has none (an adopted flow)', () => {
+		expect(heartbeat?.actionPrompt).toContain(
+			'If there is no task named Workspace improvements onboarding checklist, skip this step and carry on.',
+		)
+	})
+
 	it('ships the two skills the heartbeat loads, one tab, and no duplicates', () => {
 		expect(SKILLS.map((s) => s.name)).toEqual(['drive-to-outcome', 'results-view-refresh'])
 		expect(heartbeat?.actionPrompt).toContain('drive-to-outcome')
