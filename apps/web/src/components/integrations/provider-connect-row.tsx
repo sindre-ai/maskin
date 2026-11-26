@@ -69,6 +69,7 @@ export function ProviderRow({
 	variant = 'settings',
 	reconnect = false,
 	introState,
+	focused = false,
 }: {
 	provider: ProviderInfo
 	integration?: IntegrationResponse
@@ -100,6 +101,8 @@ export function ProviderRow({
 	reconnect?: boolean
 	/** Draws the quiet row of an agent intro: tighter, an outline Connect and plain state subtitles. */
 	introState?: IntegrationToolState
+	/** A link named this provider: open the card and its agent access so the person lands on it. */
+	focused?: boolean
 }) {
 	const connect = useConnectIntegration(workspaceId)
 	const disconnect = useDisconnectIntegration(workspaceId)
@@ -237,6 +240,7 @@ export function ProviderRow({
 			badge={isDrive && <StatusPill tone="new">{DRIVE_COPY.providerCard.pill}</StatusPill>}
 			compact={introState !== undefined}
 			chat={variant === 'chat'}
+			defaultOpen={focused}
 			subtitle={introSubtitle ?? connectedLabel}
 			tone={
 				needsReconnect || (introState && introNeedsReconnect)
@@ -374,7 +378,7 @@ export function ProviderRow({
 			footer={
 				// Who can use it is managed in Settings, not from the chat card.
 				isConnected && variant === 'settings' ? (
-					<AgentAccess integration={integration} workspaceId={workspaceId} />
+					<AgentAccess integration={integration} workspaceId={workspaceId} defaultOpen={focused} />
 				) : undefined
 			}
 		/>
@@ -390,6 +394,7 @@ export function GroupedProviderRow({
 	onRequestSkjaldConnect,
 	returnTo,
 	variant = 'settings',
+	focused = false,
 }: {
 	provider: ProviderInfo
 	installations: IntegrationResponse[]
@@ -401,11 +406,13 @@ export function GroupedProviderRow({
 	/** Where the connect flow should land afterwards; absent means Settings → Integrations. */
 	returnTo?: string
 	variant?: 'settings' | 'chat'
+	/** A link named this provider: start expanded, with each install's agent access open. */
+	focused?: boolean
 }) {
 	const connect = useConnectIntegration(workspaceId)
 	const disconnect = useDisconnectIntegration(workspaceId)
 	const canWrite = useCanWrite()
-	const [expanded, setExpanded] = useState(false)
+	const [expanded, setExpanded] = useState(focused)
 	const count = installations.length
 
 	// LinkedIn installs are per-member: the row carries `actorId`, and the only
@@ -565,6 +572,7 @@ export function GroupedProviderRow({
 							disconnecting={disconnect.isPending}
 							onReconnect={() => connect.mutate({ provider: provider.name, returnTo })}
 							reconnecting={connect.isPending}
+							agentAccessOpen={focused}
 						/>
 					))}
 					<div className="flex flex-col gap-2 px-4 py-3 md:flex-row md:flex-wrap">
@@ -619,6 +627,7 @@ function NestedInstallationRow({
 	disconnecting,
 	onReconnect,
 	reconnecting,
+	agentAccessOpen = false,
 }: {
 	integration: IntegrationResponse
 	/** True for providers whose installs belong to a member, not the workspace. */
@@ -639,6 +648,8 @@ function NestedInstallationRow({
 	/** Runs the provider's normal sign-in, which updates this row in place. */
 	onReconnect: () => void
 	reconnecting: boolean
+	/** Start with the agent access panel open. */
+	agentAccessOpen?: boolean
 }) {
 	const canWrite = useCanWrite()
 	const [confirmingDisconnect, setConfirmingDisconnect] = useState(false)
@@ -712,7 +723,11 @@ function NestedInstallationRow({
 				onConfirm={() => onDisconnect(() => setConfirmingDisconnect(false))}
 			/>
 			<div className="basis-full">
-				<AgentAccess integration={integration} workspaceId={workspaceId} />
+				<AgentAccess
+					integration={integration}
+					workspaceId={workspaceId}
+					defaultOpen={agentAccessOpen}
+				/>
 			</div>
 		</div>
 	)
@@ -799,6 +814,7 @@ export function ProviderConnectRow({
 	variant = 'settings',
 	reconnect,
 	introState,
+	focused,
 }: {
 	provider: ProviderInfo
 	/** This provider's active integrations in the workspace. */
@@ -809,6 +825,8 @@ export function ProviderConnectRow({
 	reconnect?: boolean
 	/** The quiet row of an agent intro; see ProviderRow. */
 	introState?: IntegrationToolState
+	/** A link named this provider; see ProviderRow. */
+	focused?: boolean
 }) {
 	const [apiKeyOpen, setApiKeyOpen] = useState(false)
 	const [apiKey, setApiKey] = useState('')
@@ -841,6 +859,7 @@ export function ProviderConnectRow({
 					onRequestSkjaldConnect={openSkjald}
 					returnTo={returnTo}
 					variant={variant}
+					focused={focused}
 				/>
 			) : (
 				// A tool whose vendor wants the customer's own sign-in app: Connect asks for it first.
@@ -877,6 +896,7 @@ export function ProviderConnectRow({
 							variant={variant}
 							reconnect={reconnect}
 							introState={introState}
+							focused={focused}
 						/>
 					)}
 				/>

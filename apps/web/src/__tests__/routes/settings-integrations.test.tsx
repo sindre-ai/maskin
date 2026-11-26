@@ -1,7 +1,7 @@
 import type { GithubPendingSelection, LinkableGithubInstallation } from '@/lib/api'
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { buildIntegrationResponse } from '../factories'
 
@@ -1219,5 +1219,64 @@ describe('IntegrationsPage ordering', () => {
 		const sl = screen.getByText('Slack', { exact: false })
 		expect(gh.compareDocumentPosition(li) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 		expect(li.compareDocumentPosition(sl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+	})
+})
+
+describe('IntegrationsPage link to one provider', () => {
+	const providers = [
+		{ name: 'slack', displayName: 'Slack', authType: 'oauth2', events: [] },
+		{ name: 'dinero', displayName: 'Dinero', authType: 'oauth2', events: [] },
+	]
+
+	beforeEach(() => {
+		mockUseProviders.mockReturnValue({ data: providers, isLoading: false })
+	})
+
+	afterEach(() => {
+		mockSearch.mockReturnValue({})
+	})
+
+	it('opens a connected provider with its agent access visible and marked', () => {
+		mockUseIntegrations.mockReturnValue({
+			data: [
+				buildIntegrationResponse({ provider: 'slack', status: 'active' }),
+				buildIntegrationResponse({ provider: 'dinero', status: 'active' }),
+			],
+			isLoading: false,
+		})
+		mockSearch.mockReturnValue({ provider: 'dinero' })
+		const { container } = render(<IntegrationsPage />)
+
+		const marked = container.querySelector('[data-linked-provider]') as HTMLElement
+		expect(within(marked).getByText('Dinero')).toBeInTheDocument()
+		expect(within(marked).getByText('All other agents')).toBeInTheDocument()
+		// Only the named provider opens; Slack stays collapsed.
+		expect(screen.getAllByText('All other agents')).toHaveLength(1)
+	})
+
+	it('switches to Discover when the named provider is not connected', () => {
+		mockUseIntegrations.mockReturnValue({
+			data: [buildIntegrationResponse({ provider: 'slack', status: 'active' })],
+			isLoading: false,
+		})
+		mockSearch.mockReturnValue({ provider: 'Dinero' })
+		const { container } = render(<IntegrationsPage />)
+
+		const marked = container.querySelector('[data-linked-provider]') as HTMLElement
+		expect(within(marked).getByText('Dinero')).toBeInTheDocument()
+		expect(screen.queryByText('Slack')).not.toBeInTheDocument()
+	})
+
+	it('shows the plain page for a provider that does not exist', () => {
+		mockUseIntegrations.mockReturnValue({
+			data: [buildIntegrationResponse({ provider: 'slack', status: 'active' })],
+			isLoading: false,
+		})
+		mockSearch.mockReturnValue({ provider: 'nope' })
+		const { container } = render(<IntegrationsPage />)
+
+		expect(container.querySelector('[data-linked-provider]')).toBeNull()
+		expect(screen.getByText('Slack')).toBeInTheDocument()
+		expect(screen.queryByText('All other agents')).not.toBeInTheDocument()
 	})
 })

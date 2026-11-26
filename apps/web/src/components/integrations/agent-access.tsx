@@ -127,13 +127,16 @@ export function AgentAccess({
 	integration,
 	workspaceId,
 	kind = 'integration',
+	defaultOpen = false,
 }: {
 	integration: IntegrationResponse
 	workspaceId: string
 	kind?: 'integration' | 'key'
+	/** Start with the panel open, e.g. when a link names this integration. */
+	defaultOpen?: boolean
 }) {
 	const isKey = kind === 'key'
-	const [open, setOpen] = useState(false)
+	const [open, setOpen] = useState(defaultOpen)
 	const panelRef = useRef<HTMLDivElement>(null)
 	const toggleRef = useRef<HTMLButtonElement>(null)
 	const { workspace } = useWorkspace()
