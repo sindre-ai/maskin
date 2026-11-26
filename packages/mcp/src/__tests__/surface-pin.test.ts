@@ -78,6 +78,8 @@ const READS_OUTSIDE_READ_TOOL_NAMES = [
 	'query_data',
 	'list_file_tags',
 	'get_trigger',
+	'gmail_search_mail',
+	'gmail_read_thread',
 ]
 
 // Tools in READ_TOOL_NAMES that are not read-only. None today: install_loop split off list_marketplace.

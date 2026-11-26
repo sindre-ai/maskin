@@ -2495,63 +2495,34 @@ export const tools = {
 	},
 	gmail_search_mail: {
 		description:
-			'Search the connected Gmail with Gmail search words (e.g. "from:anna is:unread newer_than:7d", "label:receipts has:attachment"). Runs on the normal Gmail API, so it works when the hosted Gmail tools refuse the sign-in. Needs "Read" or "Read & write" Gmail access. Returns up to 20 threads, newest first, each with thread_id, subject, from (first message), date (last message), snippet, message_count, labels and unread; pass next_page_token as page_token for more. Then call gmail_read_thread with a thread_id. With several Gmail accounts connected, pass `account`.',
+			'Search the connected Gmail with Gmail search words (e.g. "from:anna is:unread newer_than:7d"), on the normal Gmail API, which works when the hosted Gmail tools refuse the sign-in. Needs "Read" Gmail access. Returns up to 20 threads, newest first (thread_id, subject, from, date, snippet, labels, unread) and next_page_token for page_token. Open one with gmail_read_thread.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			account: z
-				.string()
-				.optional()
-				.describe(
-					'The Gmail address to use, when several accounts are connected. Left out, the first connected account.',
-				),
-			q: z
-				.string()
-				.max(500)
-				.optional()
-				.describe('Gmail search words. Left out: the newest threads.'),
-			max_results: z
-				.number()
-				.int()
-				.min(1)
-				.max(20)
-				.optional()
-				.describe('How many threads. Default 10.'),
-			page_token: z.string().optional().describe('next_page_token from the previous result.'),
+			account: z.string().optional().describe('Gmail address, when several are connected.'),
+			q: z.string().max(500).optional().describe('Gmail search words. Left out: newest threads.'),
+			max_results: z.number().int().min(1).max(20).optional().describe('Default 10.'),
+			page_token: z.string().optional().describe('next_page_token of the last result.'),
 		}),
 	},
 	gmail_read_thread: {
 		description:
-			'Read one Gmail thread with every message: from, to, cc, subject, date, labels, the text of the body (cut at 20,000 characters, body_truncated says so) and the attachments it lists (name, mime_type, size_bytes, part_id, attachment_id). Runs on the normal Gmail API. Needs "Read" or "Read & write" Gmail access. Get thread_id from gmail_search_mail. To keep an attachment, call gmail_save_attachment with the message_id, attachment_id and part_id. With several Gmail accounts connected, pass `account`.',
+			'Read one Gmail thread: every message with from, to, cc, subject, date, labels, body text (cut at 20,000 characters) and attachments (name, mime_type, size_bytes, part_id, attachment_id; keep one with gmail_save_attachment). Normal Gmail API. Needs "Read" Gmail access.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			account: z
-				.string()
-				.optional()
-				.describe(
-					'The Gmail address to use, when several accounts are connected. Left out, the first connected account.',
-				),
-			thread_id: z.string().min(1).describe('The Gmail thread id, from gmail_search_mail.'),
+			account: z.string().optional().describe('Gmail address, when several are connected.'),
+			thread_id: z.string().min(1).describe('From gmail_search_mail.'),
 		}),
 	},
 	gmail_change_labels: {
 		description:
-			'Archive a Gmail thread (takes it out of the inbox) and/or add or remove labels on it. Runs on the normal Gmail API. Needs "Read & write" Gmail access; "Read" is refused. Pass thread_id and at least one of archive, add_labels, remove_labels. Labels are Gmail label names or ids (e.g. "Receipts", "UNREAD", "STARRED"); a label that does not exist is refused, not created. Trash, spam, sent and draft cannot be changed. Returns what changed and the labels the thread has now. With several Gmail accounts connected, pass `account`.',
+			'Archive a Gmail thread and/or add or remove labels, by label name or id (e.g. "Receipts", "UNREAD", "STARRED"). Normal Gmail API. Needs "Read & write" Gmail access. Pass thread_id and at least one of archive, add_labels, remove_labels. A missing label is refused, not created; trash, spam, sent and draft cannot be changed.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			account: z
-				.string()
-				.optional()
-				.describe(
-					'The Gmail address to use, when several accounts are connected. Left out, the first connected account.',
-				),
-			thread_id: z.string().min(1).describe('The Gmail thread id, from gmail_search_mail.'),
-			archive: z.boolean().optional().describe('True takes the thread out of the inbox.'),
-			add_labels: z.array(z.string()).max(20).optional().describe('Label names or ids to add.'),
-			remove_labels: z
-				.array(z.string())
-				.max(20)
-				.optional()
-				.describe('Label names or ids to remove (remove "UNREAD" to mark it read).'),
+			account: z.string().optional().describe('Gmail address, when several are connected.'),
+			thread_id: z.string().min(1).describe('From gmail_search_mail.'),
+			archive: z.boolean().optional().describe('True takes it out of the inbox.'),
+			add_labels: z.array(z.string()).max(20).optional(),
+			remove_labels: z.array(z.string()).max(20).optional().describe('"UNREAD" marks it read.'),
 		}),
 	},
 	resend_send_email: {

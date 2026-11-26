@@ -8,7 +8,9 @@ import { createMcpServer } from '../server'
 // 217,879 bytes for 123 tools (300,751 on main before the bet). The Lighter Maskin tool replies
 // bet wins under 220 KB; this budget keeps 1 KB of room under 219 KB. Raise it on purpose, with
 // the new size in the PR, never to make a red test green.
-const WIRE_TOOL_LIST_BUDGET = 219_000
+// Raised 26 Nov 2026 for the three Gmail mail tools: 222,605 bytes with their first wording,
+// about 1,100 fewer after trimming it.
+const WIRE_TOOL_LIST_BUDGET = 223_000
 
 describe('tool list on the wire', () => {
 	it('stays under its byte budget', async () => {
