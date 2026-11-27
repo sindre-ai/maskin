@@ -131,6 +131,7 @@ describe('Marketplace install — seeded bundle end-to-end', () => {
 		'product-discovery-loop',
 		'meeting-loop',
 		'product-release-loop',
+		'product-delivery-loop',
 		'customer-voice-loop',
 		'knowledge-wiki-loop',
 		'product-usage-loop',
