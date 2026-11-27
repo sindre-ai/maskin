@@ -91,6 +91,30 @@ describe('Marketplace Loops Routes', () => {
 			})
 		})
 
+		it('marks a listing that is one agent with agent_only and every flow as false', async () => {
+			const { app, mockResults } = createTestApp(marketplaceLoopsRoutes, '/api/marketplace')
+			const agent = buildMarketplaceLoop({
+				name: 'Deck Maker',
+				slug: 'deck-maker',
+				loopSettings: { agentOnly: true, firstLook: 'Find a design style.' },
+			})
+			const flow = buildMarketplaceLoop({ name: 'Zebra', slug: 'zebra', loopSettings: null })
+			mockResults.selectQueue = [
+				[
+					{ id: agent.id, useCase: agent.useCase },
+					{ id: flow.id, useCase: flow.useCase },
+				],
+				[{ loopId: agent.id, itemType: 'actor' }],
+				[agent, flow],
+				[{ loopId: agent.id, itemType: 'actor' }],
+			]
+
+			const res = await app.request(jsonGet('/api/marketplace/loops'))
+			const body = await res.json()
+
+			expect(body.loops.map((l: { agent_only: boolean }) => l.agent_only)).toEqual([true, false])
+		})
+
 		it('bins loops without a use_case under "uncategorized"', async () => {
 			const { app, mockResults } = createTestApp(marketplaceLoopsRoutes, '/api/marketplace')
 			const loop = buildMarketplaceLoop({ useCase: null })

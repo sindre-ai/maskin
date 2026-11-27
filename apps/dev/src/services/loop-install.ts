@@ -59,6 +59,9 @@ export class SkillNameConflictError extends Error {
 /** What the caller needs to start the checklist's driver once the install has committed. */
 export type ChecklistStart = { parentTaskId: string; driverActorId: string | null }
 
+/** What the caller needs to introduce the agent once an agent-only install has committed. */
+export type AgentOnlyInstall = { actorId: string; firstLook: string | null }
+
 export type ProvisionedCounts = {
 	actors: number
 	triggers: number
@@ -93,6 +96,8 @@ export async function installLoopInTransaction(
 	provisioned: ProvisionedCounts
 	/** Set only when the flow ships a checklist and its tasks were created by this call. */
 	checklistStart: ChecklistStart | null
+	/** Set only for an agent-only listing: the agent to say hello for, and where it should look first. */
+	agentOnly: AgentOnlyInstall | null
 }> {
 	const { workspaceId, actorId, loop, items, agentStorage, storageProvider } = params
 	const loopId = loop.id
@@ -119,6 +124,8 @@ export async function installLoopInTransaction(
 	//    map. We can't insert a trigger without a real target_actor_id (FK
 	//    NOT NULL), so the pre-pass + ordering is load-bearing.
 	const sourceToLocal = new Map<string, string>()
+	// The first agent the bundle ships (created here or reused), for an agent-only listing.
+	let firstAgentId: string | null = null
 	// Agents the bundle names by role instead of shipping (see resolveRoleActors): bound to the
 	// workspace's own agent of that role, so triggers and skills wire up like any bundled agent.
 	for (const [roleId, localId] of await resolveRoleActors(tx, workspaceId, roleIdsOfItems(items))) {
@@ -146,6 +153,7 @@ export async function installLoopInTransaction(
 				const existing = await findProvisionedActorBySourceItem(tx, workspaceId, item.sourceItemId)
 				if (existing) {
 					sourceToLocal.set(item.sourceItemId, existing.id)
+					firstAgentId ??= existing.id
 					break
 				}
 				const [row] = await tx
@@ -165,6 +173,7 @@ export async function installLoopInTransaction(
 					role: 'member',
 				})
 				sourceToLocal.set(item.sourceItemId, row.id)
+				firstAgentId ??= row.id
 				provisioned.actors++
 				break
 			}
@@ -308,10 +317,36 @@ export async function installLoopInTransaction(
 		provisioned.triggers++
 	}
 
+	const shippedSettings = readLoopSettings(loop.loopSettings)
+
+	// A listing that is one agent: no flow object, no views, no checklist and no flow event. The
+	// install row keeps a null object_id, which uninstall and the version push already handle.
+	if (shippedSettings?.agentOnly) {
+		if (!firstAgentId) throw new Error('Agent-only listing ships no agent')
+		await recordEvent(tx, {
+			workspaceId,
+			actorId,
+			action: 'created',
+			entityType: 'installed_loop',
+			entityId: installRow.id,
+			data: {
+				source_loop_id: loopId,
+				installed_version: loop.version,
+				object_id: null,
+				items: provisioned,
+			},
+		})
+		return {
+			installed: installRow,
+			provisioned,
+			checklistStart: null,
+			agentOnly: { actorId: firstAgentId, firstLook: shippedSettings.firstLook ?? null },
+		}
+	}
+
 	// Create the Loop object this install represents (see route comment) and
 	// link it back on the install row. A flow that ships `adoptExisting` links the workspace's own
 	// hand-made flow of the same name instead of creating a second one.
-	const shippedSettings = readLoopSettings(loop.loopSettings)
 	const adopted = shippedSettings?.adoptExisting
 		? await adoptExistingLoopObject(tx, {
 				workspaceId,
@@ -413,7 +448,12 @@ export async function installLoopInTransaction(
 		},
 	})
 
-	return { installed: { ...installRow, objectId: loopObject.id }, provisioned, checklistStart }
+	return {
+		installed: { ...installRow, objectId: loopObject.id },
+		provisioned,
+		checklistStart,
+		agentOnly: null,
+	}
 }
 
 /**

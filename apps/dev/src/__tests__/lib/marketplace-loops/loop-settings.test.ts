@@ -102,3 +102,14 @@ describe('Product Discovery settings', () => {
 		])
 	})
 })
+
+describe('agent-only listings', () => {
+	it('keeps agentOnly and firstLook through the read, instead of dropping them as unknown fields', () => {
+		const read = readLoopSettings({ agentOnly: true, firstLook: 'Find a design style.' })
+		expect(read).toEqual({ agentOnly: true, firstLook: 'Find a design style.' })
+	})
+
+	it('puts nothing of them on a flow page', () => {
+		expect(loopSettingsForInstall({ agentOnly: true, firstLook: 'Find a style.' })).toEqual({})
+	})
+})
