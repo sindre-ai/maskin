@@ -10,7 +10,11 @@ import {
 	triggers,
 	workspaceMembers,
 } from '@maskin/db/schema'
-import { MIN_WAKE_LEAD_MINUTES } from '@maskin/shared'
+import {
+	LIVE_FLOW_STATUSES,
+	MIN_WAKE_LEAD_MINUTES,
+	TERMINAL_STATUSES_BY_TYPE,
+} from '@maskin/shared'
 import type {
 	NextStepResponse,
 	ScheduleNextStepInput,
@@ -18,7 +22,7 @@ import type {
 	SetNextStepInput,
 	UpdateNextStepInput,
 } from '@maskin/shared'
-import { and, eq, inArray, isNull, lt, or } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNull, lt, notInArray, or, sql } from 'drizzle-orm'
 import { recordEvent } from './events/record-event'
 
 type NextStepRow = typeof nextSteps.$inferSelect
@@ -648,18 +652,49 @@ export async function scheduleNextStep(
 }
 
 /**
- * The first list of driven objects that must always have a next step: bets in active, loops in
- * pilot, supervised or live, events in planned, in_production or live. Tasks, contacts, content
- * and insights are out: a task already has an automatic owner through its status triggers.
+ * Driven objects the sweep covers. `bet`, `loop` and `event` must always have a next step: an
+ * object with none is picked up too. A `contact` is covered for an overdue step only (`overdueOnly`),
+ * since most contacts sit with no step by design and would flood the first sweep, and it is woken
+ * once per agent for everything due (`queued`), never once per contact. Loops are covered in every
+ * status of a running flow, so one in `learning` is swept like one in `pilot`. Tasks, content and
+ * insights are out unless they are members of a running flow. A member of a running flow (an
+ * `in_loop` edge from a loop in a running status) of any other type is covered for an overdue step
+ * too, until its own closed statuses say it ended, so a type a flow uses needs no entry here. It is
+ * queued like a contact.
  */
 export const NEXT_STEP_COVERED_OBJECTS: ReadonlyArray<{
 	type: string
 	statuses: readonly string[]
+	/** Only an overdue step counts. An object with no step is left alone. */
+	overdueOnly?: boolean
+	/** One run per agent for everything due, not one run per object. */
+	queued?: boolean
 }> = [
 	{ type: 'bet', statuses: ['active'] },
-	{ type: 'loop', statuses: ['pilot', 'supervised', 'live'] },
+	{ type: 'loop', statuses: LIVE_FLOW_STATUSES },
 	{ type: 'event', statuses: ['planned', 'in_production', 'live'] },
+	{
+		type: 'contact',
+		statuses: [
+			'new_lead',
+			'qualified',
+			'connection_requested',
+			'messaged',
+			'in_conversation',
+			'meeting_booked',
+			'offer_pending',
+			'follow_up_later',
+		],
+		overdueOnly: true,
+		queued: true,
+	},
 ]
+
+/** Whether an object of this type is woken in one run with the agent's others. Listed types say so; any other type got here as a member of a running flow. */
+export function isQueuedType(type: string): boolean {
+	const listed = NEXT_STEP_COVERED_OBJECTS.find((c) => c.type === type)
+	return listed ? !!listed.queued : true
+}
 
 /** Slack before a step counts as overdue, so a step due this minute is not flagged. */
 export const NEXT_STEP_OVERDUE_GRACE_MS = 5 * 60 * 1000
@@ -672,6 +707,8 @@ export interface ObjectNeedingNextStep {
 	driverId: string
 	/** overdue: the open step is past due. missing: the object has no open or blocked step. */
 	reason: 'overdue' | 'missing'
+	/** Woken with the agent's other queued objects in one run, not alone. */
+	queued: boolean
 	nextStepId: string | null
 	dueAt: Date | null
 }
@@ -694,11 +731,32 @@ export async function findObjectsNeedingNextStep(
 ): Promise<ObjectNeedingNextStep[]> {
 	const now = opts.now ?? new Date()
 	const overdueBefore = new Date(now.getTime() - NEXT_STEP_OVERDUE_GRACE_MS)
-	const covered = or(
-		...NEXT_STEP_COVERED_OBJECTS.map((c) =>
-			and(eq(objects.type, c.type), inArray(objects.status, [...c.statuses])),
-		),
+	const inCovered = (c: (typeof NEXT_STEP_COVERED_OBJECTS)[number]) =>
+		and(eq(objects.type, c.type), inArray(objects.status, [...c.statuses]))
+	const listedTypes = NEXT_STEP_COVERED_OBJECTS.map((c) => c.type)
+	const mustHaveStep = or(...NEXT_STEP_COVERED_OBJECTS.filter((c) => !c.overdueOnly).map(inCovered))
+	const flowMember = and(
+		notInArray(objects.type, listedTypes),
+		...Object.entries(TERMINAL_STATUSES_BY_TYPE)
+			.filter(([type]) => !listedTypes.includes(type))
+			.map(
+				([type, statuses]) =>
+					sql`NOT (${objects.type} = ${type} AND ${objects.status} IN (${sql.join(
+						statuses.map((st) => sql`${st}`),
+						sql`, `,
+					)}))`,
+			),
+		sql`EXISTS (
+			SELECT 1 FROM ${relationships} r
+			INNER JOIN ${objects} l ON l.id = r.source_id
+			WHERE r.type = 'in_loop' AND r.target_id = ${objects.id}
+				AND l.type = 'loop' AND l.status IN (${sql.join(
+					LIVE_FLOW_STATUSES.map((st) => sql`${st}`),
+					sql`, `,
+				)})
+		)`,
 	)
+	const coveredForOverdue = or(...NEXT_STEP_COVERED_OBJECTS.map(inCovered), flowMember)
 
 	const rows = await db
 		.select({
@@ -718,18 +776,19 @@ export async function findObjectsNeedingNextStep(
 		)
 		.where(
 			and(
-				covered,
 				opts.workspaceId ? eq(objects.workspaceId, opts.workspaceId) : undefined,
 				opts.driverId ? eq(objects.driver, opts.driverId) : undefined,
 				or(
 					and(
+						mustHaveStep,
 						isNull(nextSteps.id),
 						opts.notUpdatedSince ? lt(objects.updatedAt, opts.notUpdatedSince) : undefined,
 					),
-					and(eq(nextSteps.status, 'open'), lt(nextSteps.dueAt, overdueBefore)),
+					and(coveredForOverdue, eq(nextSteps.status, 'open'), lt(nextSteps.dueAt, overdueBefore)),
 				),
 			),
 		)
+		.orderBy(asc(nextSteps.dueAt))
 		.limit(opts.limit ?? 500)
 
 	return rows.map((r) => ({
@@ -739,6 +798,7 @@ export async function findObjectsNeedingNextStep(
 		status: r.status,
 		driverId: r.driverId,
 		reason: r.nextStepId ? 'overdue' : 'missing',
+		queued: isQueuedType(r.type),
 		nextStepId: r.nextStepId,
 		dueAt: r.dueAt,
 	}))

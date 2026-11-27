@@ -81,6 +81,26 @@ describe('a flow in pilot holds sends', () => {
 		}
 	})
 
+	it('holds an own-address email set to Always allow in a pilot flow, and sends it under a supervised one', async () => {
+		const { ws, agent, trigger } = await setup()
+		const flow = await insertFlow(ws.id, 'pilot', [trigger.id])
+		const session = await insertSession({
+			workspaceId: ws.id,
+			actorId: agent.id,
+			triggerId: trigger.id,
+		})
+		await setting(ws.id, agent.id, 'always_allow', 'agent_email')
+		const params = {
+			workspaceId: ws.id,
+			agentId: agent.id,
+			kind: 'agent_email',
+			sessionId: session.id,
+		}
+		expect(await decideSend(db, params)).toBe('needs_approval')
+		await db.update(objects).set({ status: 'supervised' }).where(eq(objects.id, flow.id))
+		expect(await decideSend(db, params)).toBe('send_now')
+	})
+
 	it('sends as before under a supervised or live flow, and for a call with no session', async () => {
 		const { ws, agent, trigger } = await setup()
 		const flow = await insertFlow(ws.id, 'supervised', [trigger.id])

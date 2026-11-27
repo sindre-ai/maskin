@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
 	blockerCleared,
+	buildQueueWakePrompt,
 	buildWakePrompt,
 	childrenWakeParent,
 	isClosedStatus,
 	isFailedOrDiscarded,
+	isTaskReady,
 } from '../../services/driver-wake'
 
 const task = (id: string, status: string) => ({ id, type: 'task', status })
@@ -99,5 +101,50 @@ describe('buildWakePrompt', () => {
 		})
 		expect(prompt).not.toContain('Stored next step')
 		expect(prompt).toContain('(untitled)')
+	})
+})
+
+describe('isTaskReady', () => {
+	it('is true only for a task at todo', () => {
+		expect(isTaskReady('task', 'todo')).toBe(true)
+		expect(isTaskReady('task', 'backlog')).toBe(false)
+		expect(isTaskReady('task', 'in_progress')).toBe(false)
+		expect(isTaskReady('bet', 'todo')).toBe(false)
+	})
+})
+
+describe('buildWakePrompt for a ready task', () => {
+	it('says the task is ready and names it', () => {
+		const prompt = buildWakePrompt({
+			object: { id: 't1', type: 'task', title: 'Send the newsletter', status: 'todo' },
+			reasons: [{ reason: 'task_ready', changed: [] }],
+			nextStep: null,
+		})
+		expect(prompt).toContain('This task is ready for you')
+		expect(prompt).toContain('Send the newsletter')
+		expect(prompt).toContain('t1')
+	})
+})
+
+describe('buildQueueWakePrompt', () => {
+	const item = (n: number, withStep: boolean) => ({
+		object: { id: `id-${n}`, type: 'contact', title: `Contact ${n}`, status: 'messaged' },
+		nextStep: withStep
+			? { action: `Message ${n}`, status: 'open', dueAt: new Date('2026-11-16T08:00:00Z') }
+			: null,
+	})
+
+	it('lists every object with its stored step', () => {
+		const prompt = buildQueueWakePrompt({ items: [item(1, true), item(2, false)], total: 2 })
+		expect(prompt).toContain('Due now (2):')
+		expect(prompt).toContain('Contact 1 (contact, messaged), ID: id-1')
+		expect(prompt).toContain('Message 1')
+		expect(prompt).toContain('2026-11-16T08:00:00.000Z')
+		expect(prompt).toContain('Contact 2 (contact, messaged), ID: id-2')
+	})
+
+	it('says when the list was capped', () => {
+		const prompt = buildQueueWakePrompt({ items: [item(1, true)], total: 40 })
+		expect(prompt).toContain('Due now (1 of 40, the rest come with the next sweep):')
 	})
 })
