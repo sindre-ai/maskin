@@ -99,7 +99,7 @@ describe('LoopReferenceCard', () => {
 		expect(screen.getByText('Agents')).toBeInTheDocument()
 		expect(screen.getByText('Developer, Strategist')).toBeInTheDocument()
 		expect(screen.getByText('Activity')).toBeInTheDocument()
-		expect(screen.getByText('3 items in progress')).toBeInTheDocument()
+		expect(screen.getByText('3 items open')).toBeInTheDocument()
 		expect(screen.getByText(/Updated/)).toBeInTheDocument()
 		expect(document.querySelector('[data-linked-card]')).not.toBeNull()
 	})

@@ -11,6 +11,7 @@ import {
 	DialogTitle,
 } from '@/components/ui/dialog'
 import { useBillingCancel, useBillingUsage, useStripeCheckout } from '@/hooks/use-billing'
+import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import { trackUpgradeClicked } from '@/lib/analytics'
 import type {
 	BillingPlan,
@@ -27,6 +28,7 @@ import {
 	PLAN_PRICE_DKK,
 	type PaidPlan,
 	SEAT_CAPS,
+	ULTRA_EXTRA_USER_DKK,
 	formatKroner,
 	isPaidPlan,
 } from '@maskin/shared'
@@ -35,9 +37,10 @@ import { Check, ChevronDown, ChevronRight, Clock, ExternalLink } from 'lucide-re
 import { type ReactNode, useEffect, useState } from 'react'
 
 const PLAN_LABEL: Record<BillingPlan, string> = {
-	trial: 'Trial',
-	starter: `Starter — ${formatKroner(PLAN_PRICE_DKK.starter)}/mo`,
-	pro: `Pro — ${formatKroner(PLAN_PRICE_DKK.pro)}/mo`,
+	trial: 'Free',
+	starter: `Starter — ${formatKroner(PLAN_PRICE_DKK.starter)}/user/mo`,
+	pro: `Pro — ${formatKroner(PLAN_PRICE_DKK.pro)}/user/mo`,
+	// Team is legacy: not sold, kept only so an existing Team workspace renders.
 	team: `Team — ${formatKroner(PLAN_PRICE_DKK.team)}/mo`,
 	ultra: `Ultra — ${formatKroner(PLAN_PRICE_DKK.ultra)}/mo`,
 	enterprise: 'Enterprise',
@@ -77,7 +80,9 @@ const CHECKOUT_RETURN_RETRY_MS = 3_000
 // SEAT_CAPS / OWNERSHIP_CAPS come from @maskin/shared (packages/shared/src/billing-caps.ts) —
 // the same numbers the backend enforces on invite (SEAT_CAP_EXCEEDED) and on
 // workspace creation / ownership transfer (OWNERSHIP_CAP_EXCEEDED), so this
-// copy can't drift out of sync with what's actually enforced.
+// copy can't drift out of sync with what's actually enforced. Paid seat caps
+// follow the seats paid (settings.billing.seats), which the card shows as the
+// current member count and total; SEAT_CAPS is the Free and Enterprise copy.
 function formatOwnershipCap(n: number | null): string {
 	if (n === null) return 'Unlimited workspaces you can own'
 	if (n === 1) return '1 workspace you can own'
@@ -102,54 +107,82 @@ interface PlanCardConfig {
 // Prices come from @maskin/shared (plan-pricing.ts), the same file the backend caps
 // are derived from; plan cards show no usage amount; scripts/verify-billing-cap-literals.mjs
 // fails CI when this file stops reading from it.
-function paidPlanCard(plan: PaidPlan, eyebrow: string, tagline: string): PlanCardConfig {
+function seatSummary(seats: number, totalDkk: number): string {
+	return `${seats} ${seats === 1 ? 'user' : 'users'} · ${formatKroner(totalDkk)}/mo`
+}
+
+function paidPlanCard(
+	plan: PaidPlan,
+	eyebrow: string,
+	priceSuffix: string,
+	tagline: string,
+	seats: number,
+): PlanCardConfig {
+	const total =
+		plan === 'ultra'
+			? PLAN_PRICE_DKK.ultra + ULTRA_EXTRA_USER_DKK * Math.max(0, seats - 1)
+			: PLAN_PRICE_DKK[plan] * seats
 	return {
 		plan,
 		eyebrow,
 		price: formatKroner(PLAN_PRICE_DKK[plan]),
-		priceSuffix: '/mo',
+		priceSuffix,
 		tagline,
 		features: [
+			seatSummary(seats, total),
 			'Usage included each month',
 			formatOwnershipCap(OWNERSHIP_CAPS[plan]),
-			formatSeatCap(SEAT_CAPS[plan]),
 			'Hosted by Maskin — no API key needed',
 		],
 	}
 }
 
-const PLAN_CONFIG: PlanCardConfig[] = [
-	{
-		plan: 'trial',
-		eyebrow: 'TRIAL',
-		price: 'Free',
-		priceSuffix: '/14 days',
-		tagline: 'Full product, no card. Usage included.',
-		features: [
-			'Usage included for the trial',
-			formatOwnershipCap(OWNERSHIP_CAPS.trial),
-			formatSeatCap(SEAT_CAPS.trial),
-			'Hosted by Maskin — no API key needed',
-		],
-	},
-	paidPlanCard('starter', 'STARTER', 'For trying real workflows on a small budget.'),
-	paidPlanCard('pro', 'PRO', 'For teams running real workflows day to day.'),
-	paidPlanCard('team', 'TEAM', 'Heavier flows, volume rates, one invoice.'),
-	paidPlanCard('ultra', 'ULTRA', 'The most usage, for the busiest teams.'),
-	{
-		plan: 'enterprise',
-		eyebrow: 'ENTERPRISE',
-		price: 'BYOL',
-		priceSuffix: '',
-		tagline: 'Bring your own LLM. Pay by invoice. Full control.',
-		features: [
-			'No Maskin-hosted usage cap',
-			formatOwnershipCap(OWNERSHIP_CAPS.enterprise),
-			formatSeatCap(SEAT_CAPS.enterprise),
-			'Use your own Claude Pro/Max, Anthropic API key, or custom endpoint',
-		],
-	},
-]
+function planCardConfigs(seats: number): PlanCardConfig[] {
+	return [
+		{
+			plan: 'trial',
+			eyebrow: 'FREE',
+			price: 'Free',
+			priceSuffix: '',
+			tagline: 'Full product, no card. Usage included.',
+			features: [
+				`${SEAT_CAPS.trial} members`,
+				formatOwnershipCap(OWNERSHIP_CAPS.trial),
+				'Hosted by Maskin — no API key needed',
+			],
+		},
+		paidPlanCard(
+			'starter',
+			'STARTER',
+			'/user/mo',
+			'For trying real workflows on a small budget.',
+			seats,
+		),
+		paidPlanCard('pro', 'PRO', '/user/mo', 'For teams running real workflows day to day.', seats),
+		{
+			...paidPlanCard('ultra', 'ULTRA', '/mo', 'The most usage, for the busiest teams.', seats),
+			features: [
+				`Plus ${formatKroner(ULTRA_EXTRA_USER_DKK)} per extra user`,
+				seatSummary(seats, PLAN_PRICE_DKK.ultra + ULTRA_EXTRA_USER_DKK * Math.max(0, seats - 1)),
+				'Usage included each month',
+				'Hosted by Maskin — no API key needed',
+			],
+		},
+		{
+			plan: 'enterprise',
+			eyebrow: 'ENTERPRISE',
+			price: 'BYOL',
+			priceSuffix: '',
+			tagline: 'Bring your own LLM. Pay by invoice. Full control.',
+			features: [
+				'No Maskin-hosted usage cap',
+				formatOwnershipCap(OWNERSHIP_CAPS.enterprise),
+				formatSeatCap(SEAT_CAPS.enterprise),
+				'Use your own Claude Pro/Max, Anthropic API key, or custom endpoint',
+			],
+		},
+	]
+}
 
 function PeriodCountdown({ ms, label }: { ms: number; label: string }) {
 	const [remaining, setRemaining] = useState(ms)
@@ -257,6 +290,7 @@ export function BillingSection({
 	afterBanner?: ReactNode
 }) {
 	const usageQuery = useBillingUsage(workspaceId)
+	const membersQuery = useWorkspaceMembers(workspaceId)
 	const checkout = useStripeCheckout(workspaceId)
 	const queryClient = useQueryClient()
 	const [switchOpen, setSwitchOpen] = useState(false)
@@ -292,6 +326,13 @@ export function BillingSection({
 		return () => clearTimeout(timeout)
 	}, [workspaceId])
 
+	// Seats to bill = the people already in the workspace. Agents never count,
+	// and a workspace always bills at least its owner.
+	const seats = Math.max(
+		1,
+		(membersQuery.data ?? []).filter((member) => member.type === 'human').length,
+	)
+
 	const handleUpgrade = (plan: PaidPlan) => {
 		trackUpgradeClicked({
 			source: 'billing_settings',
@@ -301,7 +342,10 @@ export function BillingSection({
 		const base = window.location.href.split('?')[0]
 		checkout.mutate(
 			{
-				plan,
+				plan: plan as 'starter' | 'pro' | 'ultra',
+				// Let the server read the member count if the members query has
+				// not landed yet, so a quick click never bills too few seats.
+				seat_count: membersQuery.data ? seats : undefined,
 				success_url: `${base}?billing=success`,
 				cancel_url: `${base}?billing=cancel`,
 			},
@@ -343,7 +387,9 @@ export function BillingSection({
 	const periodMs = usage.period_resets_in_ms
 	const resetsIn = formatResetsIn(periodMs)
 
-	const visiblePlans = PLAN_CONFIG.filter((config) => config.plan !== 'enterprise' || enterprise)
+	const visiblePlans = planCardConfigs(seats).filter(
+		(config) => config.plan !== 'enterprise' || enterprise,
+	)
 	const defaultPlansOpen = !(isPaid && usage.status === 'active')
 	const plansOpen = plansOpenOverride ?? defaultPlansOpen
 

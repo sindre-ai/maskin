@@ -137,7 +137,14 @@ export const TOOL_GROUPS = {
 		'take_back_go_ahead',
 		'withdraw_decision_card',
 	],
-	email: ['gmail_save_attachment', 'gmail_send_email', 'resend_send_email'],
+	email: [
+		'gmail_change_labels',
+		'gmail_read_thread',
+		'gmail_save_attachment',
+		'gmail_search_mail',
+		'gmail_send_email',
+		'resend_send_email',
+	],
 } as const satisfies Record<string, readonly string[]>
 
 export type ToolGroup = keyof typeof TOOL_GROUPS

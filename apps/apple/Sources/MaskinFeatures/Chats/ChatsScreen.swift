@@ -273,7 +273,8 @@ private struct ChatsContainer: View {
 				.shellToolbar(
 					environment: environment, title: "Chats",
 					actions: ShellActions(
-						new: { newChat = NewChatRequest() }, newLabel: "New conversation",
+						// iPhone: the "+" tab in the bottom bar starts a chat, so the bar has no New button.
+						new: ShellIdiom.isPhone ? nil : { newChat = NewChatRequest() }, newLabel: "New conversation",
 						displaySymbol: ShellActions.slidersSymbol, displayActive: displayActive,
 						displayToggle: { showDisplay = true },
 						hidesAvatar: true, newAlwaysVisible: true, newIsPrimary: true,

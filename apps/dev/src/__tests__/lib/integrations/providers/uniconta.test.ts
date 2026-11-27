@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest'
-import { FLAGS, isFlagEnabled, parseFeatureFlagConfig } from '../../../../lib/feature-flags'
 import { GATEWAY_PROVIDERS } from '../../../../lib/integrations/mcp-gateway'
 import { UNICONTA_PROVIDER, config } from '../../../../lib/integrations/providers/uniconta/config'
 import { getProvider, listProviders } from '../../../../lib/integrations/registry'
@@ -41,18 +40,5 @@ describe('Uniconta provider config', () => {
 		expect(classifyTool(UNICONTA_PROVIDER, 'invoice_order')).toBe('write')
 		expect(classifyTool(UNICONTA_PROVIDER, 'a_tool_added_later')).toBe('write')
 		expect(classifyTool(UNICONTA_PROVIDER, 'query_entity', { readOnlyHint: true })).toBe('read')
-	})
-})
-
-describe('uniconta-connect flag', () => {
-	it('is off unless the actor is a tester', () => {
-		const actor = '00000000-0000-4000-8000-000000000001'
-		const off = parseFeatureFlagConfig({})
-		const on = parseFeatureFlagConfig({
-			FF_TESTER_ACTOR_IDS: actor,
-			FF_TESTER_FEATURES: FLAGS.UNICONTA_CONNECT,
-		})
-		expect(isFlagEnabled(actor, FLAGS.UNICONTA_CONNECT, off)).toBe(false)
-		expect(isFlagEnabled(actor, FLAGS.UNICONTA_CONNECT, on)).toBe(true)
 	})
 })

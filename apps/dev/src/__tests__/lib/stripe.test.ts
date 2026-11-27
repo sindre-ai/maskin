@@ -1,3 +1,4 @@
+import { PLAN_PRICE_DKK, ULTRA_EXTRA_USER_DKK } from '@maskin/shared'
 import type Stripe from 'stripe'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -10,11 +11,12 @@ import {
 	mapSubscriptionStatus,
 	planForPriceId,
 	planFromSubscription,
-	priceIdForPlan,
 	priceIdsFromSubscription,
 	readStripeEnv,
 	resetStripeClientForTests,
 	resolveWorkspaceIdFromEvent,
+	seatPriceLines,
+	seatsForSubscription,
 	vatCheckoutSessionParams,
 } from '../../lib/stripe'
 
@@ -27,6 +29,10 @@ const VALID_ENV = {
 	STRIPE_PRICE_PRO_DKK: 'price_pro_dkk',
 	STRIPE_PRICE_TEAM_DKK: 'price_team_dkk',
 	STRIPE_PRICE_ULTRA_DKK: 'price_ultra_dkk',
+	STRIPE_PRICE_STARTER_SEAT_DKK: 'price_starter_seat',
+	STRIPE_PRICE_PRO_SEAT_DKK: 'price_pro_seat',
+	STRIPE_PRICE_ULTRA_BASE_DKK: 'price_ultra_base',
+	STRIPE_PRICE_ULTRA_SEAT_DKK: 'price_ultra_seat',
 	STRIPE_PRICE_CREDITS_CUSTOM: 'price_credits_custom_test',
 }
 
@@ -48,6 +54,12 @@ describe('readStripeEnv', () => {
 			pro: 'price_pro_dkk',
 			team: 'price_team_dkk',
 			ultra: 'price_ultra_dkk',
+		})
+		expect(env.priceSeat).toEqual({
+			starter: 'price_starter_seat',
+			pro: 'price_pro_seat',
+			ultraBase: 'price_ultra_base',
+			ultraSeat: 'price_ultra_seat',
 		})
 	})
 
@@ -92,24 +104,43 @@ describe('readStripeEnv', () => {
 	})
 })
 
-describe('priceIdForPlan / planForPriceId / hardCapForPrice', () => {
+describe('seatPriceLines / planForPriceId / hardCapForPrice', () => {
 	const env = readStripeEnv(VALID_ENV)
 
-	it('sells the kroner price for every paid plan', () => {
-		expect(priceIdForPlan('starter', env)).toBe('price_starter_dkk')
-		expect(priceIdForPlan('pro', env)).toBe('price_pro_dkk')
-		expect(priceIdForPlan('team', env)).toBe('price_team_dkk')
-		expect(priceIdForPlan('ultra', env)).toBe('price_ultra_dkk')
+	it('builds one seat-price line for Starter and Pro', () => {
+		expect(seatPriceLines('starter', 1, env)).toEqual([
+			{ price: 'price_starter_seat', quantity: 1 },
+		])
+		expect(seatPriceLines('starter', 3, env)).toEqual([
+			{ price: 'price_starter_seat', quantity: 3 },
+		])
+		expect(seatPriceLines('pro', 3, env)).toEqual([{ price: 'price_pro_seat', quantity: 3 }])
 	})
 
-	it('throws a clear error when a plan has no kroner price in this environment', () => {
-		const { STRIPE_PRICE_ULTRA_DKK: _omit, ...missing } = VALID_ENV
-		expect(() => priceIdForPlan('ultra', readStripeEnv(missing))).toThrow(
-			/STRIPE_PRICE_ULTRA_DKK is not configured/,
+	it('builds an Ultra base line plus extra-user lines, omitting the extra line at one seat', () => {
+		expect(seatPriceLines('ultra', 1, env)).toEqual([{ price: 'price_ultra_base', quantity: 1 }])
+		expect(seatPriceLines('ultra', 3, env)).toEqual([
+			{ price: 'price_ultra_base', quantity: 1 },
+			{ price: 'price_ultra_seat', quantity: 2 },
+		])
+	})
+
+	it('throws a clear error when a needed seat price is not configured', () => {
+		const { STRIPE_PRICE_ULTRA_BASE_DKK: _omit, ...missing } = VALID_ENV
+		expect(() => seatPriceLines('ultra', 1, readStripeEnv(missing))).toThrow(
+			/STRIPE_PRICE_ULTRA_BASE_DKK is not configured/,
+		)
+		const { STRIPE_PRICE_PRO_SEAT_DKK: _omitPro, ...noPro } = VALID_ENV
+		expect(() => seatPriceLines('pro', 1, readStripeEnv(noPro))).toThrow(
+			/STRIPE_PRICE_PRO_SEAT_DKK is not configured/,
 		)
 	})
 
-	it('maps the four kroner prices and the two old dollar prices to a plan', () => {
+	it('maps the per-seat prices, the old kroner prices and the two old dollar prices to a plan', () => {
+		expect(planForPriceId('price_starter_seat', env)).toBe('starter')
+		expect(planForPriceId('price_pro_seat', env)).toBe('pro')
+		expect(planForPriceId('price_ultra_base', env)).toBe('ultra')
+		expect(planForPriceId('price_ultra_seat', env)).toBe('ultra')
 		expect(planForPriceId('price_starter_dkk', env)).toBe('starter')
 		expect(planForPriceId('price_pro_dkk', env)).toBe('pro')
 		expect(planForPriceId('price_team_dkk', env)).toBe('team')
@@ -260,6 +291,39 @@ describe('priceIdsFromSubscription / planFromSubscription', () => {
 	})
 })
 
+describe('seatsForSubscription', () => {
+	const env = readStripeEnv(VALID_ENV)
+	const subWith = (...items: Array<{ id: string; quantity: number }>) =>
+		({
+			items: { data: items.map(({ id, quantity }) => ({ price: { id }, quantity })) },
+		}) as unknown as Stripe.Subscription
+
+	it('reads Starter and Pro seat quantity from their one line', () => {
+		expect(seatsForSubscription(subWith({ id: 'price_starter_seat', quantity: 4 }), env)).toBe(4)
+		expect(seatsForSubscription(subWith({ id: 'price_pro_seat', quantity: 2 }), env)).toBe(2)
+	})
+
+	it('counts Ultra as base plus extra users, and ignores the add-on item', () => {
+		expect(
+			seatsForSubscription(
+				subWith(
+					{ id: 'price_linkedin', quantity: 3 },
+					{ id: 'price_ultra_base', quantity: 1 },
+					{ id: 'price_ultra_seat', quantity: 2 },
+				),
+				env,
+			),
+		).toBe(3)
+		expect(seatsForSubscription(subWith({ id: 'price_ultra_base', quantity: 1 }), env)).toBe(1)
+	})
+
+	it('returns null for a legacy USD or old DKK price, so no seats are written', () => {
+		expect(seatsForSubscription(subWith({ id: 'price_pro', quantity: 1 }), env)).toBeNull()
+		expect(seatsForSubscription(subWith({ id: 'price_team_dkk', quantity: 1 }), env)).toBeNull()
+		expect(seatsForSubscription(subWith({ id: 'price_unknown', quantity: 1 }), env)).toBeNull()
+	})
+})
+
 describe('createCheckoutSession', () => {
 	const env = readStripeEnv(VALID_ENV)
 
@@ -273,6 +337,7 @@ describe('createCheckoutSession', () => {
 			{
 				workspaceId: 'ws-1',
 				plan: 'pro',
+				seatCount: 1,
 				successUrl: 'https://app.test/success',
 				cancelUrl: 'https://app.test/cancel',
 			},
@@ -284,7 +349,9 @@ describe('createCheckoutSession', () => {
 		expect(params.mode).toBe('subscription')
 		expect(params.client_reference_id).toBe('ws-1')
 		expect(params.metadata?.workspace_id).toBe('ws-1')
-		expect(params.line_items).toEqual([{ price: 'price_pro_dkk', quantity: 1 }])
+		expect(params.metadata?.seats).toBe('1')
+		expect(params.subscription_data?.metadata?.seats).toBe('1')
+		expect(params.line_items).toEqual([{ price: 'price_pro_seat', quantity: 1 }])
 	})
 
 	it('reuses an existing Stripe customer when one is supplied', async () => {
@@ -294,7 +361,8 @@ describe('createCheckoutSession', () => {
 			stripe,
 			{
 				workspaceId: 'ws-1',
-				plan: 'team',
+				plan: 'ultra',
+				seatCount: 1,
 				successUrl: 'https://app.test/success',
 				cancelUrl: 'https://app.test/cancel',
 				existingCustomerId: 'cus_existing',
@@ -304,6 +372,44 @@ describe('createCheckoutSession', () => {
 		const params = create.mock.calls[0][0] as Stripe.Checkout.SessionCreateParams
 		expect(params.customer).toBe('cus_existing')
 		expect(params.customer_creation).toBeUndefined()
+	})
+
+	// The acceptance criterion: each plan bills the right amount for 1 and 3
+	// seats. Stripe computes the total from the line items, so the test sums
+	// the line items against the same kroner prices checkout sells.
+	const UNIT_DKK: Record<string, number> = {
+		price_starter_seat: PLAN_PRICE_DKK.starter,
+		price_pro_seat: PLAN_PRICE_DKK.pro,
+		price_ultra_base: PLAN_PRICE_DKK.ultra,
+		price_ultra_seat: ULTRA_EXTRA_USER_DKK,
+	}
+	const totalDkk = (lines: Stripe.Checkout.SessionCreateParams.LineItem[]) =>
+		lines.reduce((sum, line) => sum + (UNIT_DKK[String(line.price)] ?? 0) * (line.quantity ?? 1), 0)
+
+	it.each([
+		['starter', 1, 349],
+		['starter', 3, 1047],
+		['pro', 1, 995],
+		['pro', 3, 2985],
+		['ultra', 1, 4995],
+		['ultra', 3, 7585],
+	] as const)('%s at %i seats bills %i kr', async (plan, seats, expected) => {
+		const create = vi.fn().mockResolvedValue({ id: 'cs_x', url: 'https://stripe.test/cs_x' })
+		const stripe = { checkout: { sessions: { create } } } as unknown as Stripe
+		await createCheckoutSession(
+			stripe,
+			{
+				workspaceId: 'ws-1',
+				plan,
+				seatCount: seats,
+				successUrl: 'https://app.test/success',
+				cancelUrl: 'https://app.test/cancel',
+			},
+			env,
+		)
+		const params = create.mock.calls[0]?.[0] as Stripe.Checkout.SessionCreateParams
+		expect(totalDkk(params.line_items ?? [])).toBe(expected)
+		expect(params.metadata?.seats).toBe(String(seats))
 	})
 })
 
@@ -390,6 +496,7 @@ describe('Delta 1 — Stripe Tax params attached', () => {
 			{
 				workspaceId: 'ws-vat',
 				plan: 'pro',
+				seatCount: 1,
 				successUrl: 'https://app.test/success',
 				cancelUrl: 'https://app.test/cancel',
 			},
@@ -419,6 +526,7 @@ describe('Delta 1 — Stripe Tax params attached', () => {
 			{
 				workspaceId: 'ws-vat',
 				plan: 'pro',
+				seatCount: 1,
 				successUrl: 'https://app.test/success',
 				cancelUrl: 'https://app.test/cancel',
 				existingCustomerId: 'cus_existing',

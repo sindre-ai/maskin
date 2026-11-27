@@ -38,6 +38,7 @@ const EXACT: Record<string, FeatureArea> = {
 	turn_sent_back: 'chats',
 	turn_check_cap_hit: 'chats',
 	foryou_card_action: 'for_you',
+	foryou_card_default_applied: 'for_you',
 	mark_read_clicked: 'for_you',
 	ask_banner_decide_clicked: 'for_you',
 	object_updated: 'objects',

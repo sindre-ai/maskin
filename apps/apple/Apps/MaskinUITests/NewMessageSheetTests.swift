@@ -17,8 +17,9 @@ final class NewMessageSheetTests: XCTestCase {
 		XCTAssertTrue(app.tabBars.buttons["For you"].waitForExistence(timeout: 30), "signed-in shell")
 		app.tabBars.buttons["Chats"].tap()
 		sleep(3)
-		let new = app.buttons["New conversation"].firstMatch
-		XCTAssertTrue(new.waitForExistence(timeout: 10), "the + in the Chats bar")
+		// The iPhone's Chats bar has no New button: the + tab opens the same sheet, addressed to the Chief of Staff.
+		let new = app.buttons.matching(NSPredicate(format: "label IN %@", ["New chat with Chief of Staff", "New"])).firstMatch
+		XCTAssertTrue(new.waitForExistence(timeout: 10), "the + tab in the bottom bar")
 		new.tap()
 	}
 

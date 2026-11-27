@@ -33,6 +33,7 @@ import {
 } from '@maskin/shared'
 import { and, eq, gt, gte, inArray, sql } from 'drizzle-orm'
 import { isActorHumanPaused } from '../lib/agent-pause'
+import { trackCardAnsweredByDefault } from '../lib/analytics/card-events'
 import { FLAGS, getFeatureFlagConfig } from '../lib/feature-flags'
 import { logger } from '../lib/logger'
 import { SessionNotAdmittedError } from './self-start-limits'
@@ -214,6 +215,11 @@ export class DecisionDefaultWake {
 				config: { start_reason: 'driver_wake', decision_default: { card_id: card.id } },
 				createdBy: card.actorId,
 				initiatedFromObjectId: object.id,
+			})
+			await trackCardAnsweredByDefault({
+				workspaceId: card.workspaceId,
+				agentId: card.actorId,
+				cardId: card.id,
 			})
 		} catch (err) {
 			if (err instanceof SessionNotAdmittedError) {

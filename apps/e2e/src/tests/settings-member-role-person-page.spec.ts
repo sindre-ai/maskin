@@ -5,10 +5,9 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 /**
  * Settings → Members: changing a human teammate's role from their person page.
  *
- * The members list is route-mocked. A fixture workspace is on the trial plan,
- * whose seat cap is one human (SEAT_CAPS in packages/shared/src/billing-caps.ts),
- * so POST /members refuses to add a second human and no test account can hold
- * one. The cap itself is covered against real Postgres in
+ * The members list is route-mocked, so the test does not depend on the Free
+ * plan's three-human seat cap (SEAT_CAPS in packages/shared/src/billing-caps.ts).
+ * The cap itself is covered against real Postgres in
  * apps/dev/src/__tests__/integration/. What is asserted here is the UI path the
  * mock can't fake: the row opens the person page, the page's role Select is
  * reachable at touch sizes, and picking a role issues the PATCH.

@@ -1049,9 +1049,15 @@ export const tools = {
 	},
 	delete_agent: {
 		description:
-			'Delete another agent with its sessions, triggers, files and memory; this cannot be undone. A person must approve first: post `create_comment` on a relevant object with a `decision` card, mention the person, and put `delete_agent: { actor_id }` on the destructive option that approves it. When they choose it you are woken by their reply; then call this tool with the same `id`. Refused (403) without that approval, after 24 hours, or for another agent than the card named. You cannot delete yourself, a person or a system agent.',
+			'Delete another agent with its sessions, triggers, files and memory; this cannot be undone. A person must approve first: post `create_comment` on a relevant object with a `decision` card, mention the person, and put `delete_agent: { actor_id }` on the destructive option that approves it. When they choose it you are woken by their reply; then call this tool with the same `id`. A plain yes in a chat also counts: link the agent in a message in a chat you are in, ask there, and when the person says yes call this tool with `id` and `chat_message_id` set to the id of their yes message (it must be their latest message in that chat; the server checks who wrote it). Refused (403) without that approval, after 24 hours, or for another agent than the card named. You cannot delete yourself, a person or a system agent.',
 		inputSchema: z.object({
 			id: z.string().uuid().describe('The agent to delete: its id from list_actors.'),
+			chat_message_id: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe("Id of the person's chat message that says yes to deleting this agent."),
 			workspace_id: optionalWorkspaceId,
 		}),
 	},

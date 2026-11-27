@@ -17,6 +17,10 @@ patterns do not do the job. Reuse a pattern before adding one (see `.claude/rule
   `MessageDivider` is a 10.5px label with no room for the redaction marker, and a normal bubble
   would present the rewrite as something the user typed.
 
+## For You: decision card
+
+- **Docked card footer** (`apps/web/src/components/foryou/feed-card.tsx`): the decision options, pinned to the bottom edge of the feed scroller while their card is on screen and back in flow after the draft at the card's end, with a shadow only while docked. The answers must stay after the draft, because approving text you could not read in full is not approving it, so the control cannot be moved above the message; and nothing else in the app makes a control visible without reordering the content it belongs to. The card shell uses `overflow-clip`, not `overflow-hidden`, so `position: sticky` resolves against the feed scroller instead of the card.
+
 ## Agent change review
 
 - **ChangeReview** (`apps/web/src/components/files/change-review.tsx`): the proposal banner above a

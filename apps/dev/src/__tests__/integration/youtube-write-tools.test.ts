@@ -788,4 +788,100 @@ describe('YouTube write tools', () => {
 			expect(execute).not.toHaveBeenCalled()
 		})
 	})
+
+	describe('moderating a comment', () => {
+		const COMMENT = {
+			items: [
+				{
+					snippet: {
+						videoId: 'vid1',
+						authorDisplayName: 'Some Viewer',
+						textDisplay: 'Buy cheap followers now',
+					},
+				},
+			],
+		}
+		const readsComment = (body: object = COMMENT) =>
+			youtubeRead.mockImplementation(async (_ctx: unknown, read: { path: string }) =>
+				read.path === 'comments' ? body : OWN_CHANNEL,
+			)
+		const moderate = (args: {
+			status: 'published' | 'held_for_review' | 'rejected'
+			ban_author?: boolean
+		}) =>
+			proposeYoutubeWrite(ctx(), common(), {
+				tool: 'moderate_comment',
+				args: { comment_id: 'c1', ...args },
+			})
+
+		it('stores the comment as YouTube has it, so the card shows its author and text', async () => {
+			readsComment()
+			const held = await moderate({ status: 'rejected', ban_author: true })
+
+			const row = await rowOf(held.action_id)
+			expect(row?.kind).toBe('moderate_comment')
+			expect(row?.targetVideoId).toBe('vid1')
+			expect(row?.payload).toEqual({
+				id: 'c1',
+				moderationStatus: 'rejected',
+				banAuthor: true,
+				commentAuthor: 'Some Viewer',
+				commentText: 'Buy cheap followers now',
+			})
+			const [card] = await db
+				.select()
+				.from(events)
+				.where(and(eq(events.entityId, objectId), eq(events.action, 'commented')))
+			expect(JSON.stringify(card?.data)).toContain('Some Viewer')
+			expect(JSON.stringify(card?.data)).toContain('Buy cheap followers now')
+			expect(execute).not.toHaveBeenCalled()
+		})
+
+		it('maps the three statuses to the ones Google takes', async () => {
+			readsComment()
+			const statuses = {
+				published: 'published',
+				held_for_review: 'heldForReview',
+				rejected: 'rejected',
+			}
+			for (const [input, google] of Object.entries(statuses)) {
+				const held = await moderate({ status: input as keyof typeof statuses })
+				expect((await rowOf(held.action_id))?.payload).toMatchObject({ moderationStatus: google })
+			}
+		})
+
+		it('refuses ban_author with any status but rejected, and a comment that is not there', async () => {
+			readsComment()
+			await expect(moderate({ status: 'published', ban_author: true })).rejects.toMatchObject({
+				code: 'INVALID_INPUT',
+			})
+			readsComment({ items: [] })
+			await expect(moderate({ status: 'rejected' })).rejects.toMatchObject({ code: 'NOT_FOUND' })
+			expect(await db.select().from(youtubePendingActions)).toHaveLength(0)
+		})
+
+		it('does not count against the comment or like caps', async () => {
+			readsComment()
+			for (let i = 0; i < COMMENTS_PER_DAY; i++) await comment(`vid${i}`, `Comment number ${i}`)
+			await expect(moderate({ status: 'rejected' })).resolves.toBeDefined()
+		})
+
+		it('runs exactly the stored request after a person approves, and charges 50 units', async () => {
+			readsComment()
+			const held = await moderate({ status: 'rejected', ban_author: true })
+			await approve(held.action_id)
+			const chargeQuota = vi.fn().mockResolvedValue(undefined)
+
+			expect(await run(held.action_id, { chargeQuota })).toEqual({
+				ran: true,
+				status: 'executed',
+				resultCode: 'ok',
+			})
+			expect(chargeQuota).toHaveBeenCalledWith(expect.anything(), workspaceId, YOUTUBE_WRITE_UNITS)
+			expect(execute.mock.calls[0]?.[0]).toMatchObject({
+				kind: 'moderate_comment',
+				payload: { id: 'c1', moderationStatus: 'rejected', banAuthor: true },
+			})
+		})
+	})
 })

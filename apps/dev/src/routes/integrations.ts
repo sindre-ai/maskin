@@ -62,7 +62,6 @@ import { type OAuthStatePayload, decodeState, encodeState } from '../lib/integra
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { AZURE_DEVOPS_PROVIDER } from '../lib/integrations/providers/azure-devops/config'
 import { BOX_PROVIDER } from '../lib/integrations/providers/box/config'
-import { BUSINESS_CENTRAL_PROVIDER } from '../lib/integrations/providers/business-central/config'
 import { DEVELOPER_DATA_PROVIDERS } from '../lib/integrations/providers/developer-data'
 import {
 	DiscoveryError,
@@ -141,7 +140,6 @@ import {
 	sendEphemeralResponse,
 	slackInteractiveDeliveryId,
 } from '../lib/integrations/providers/slack/interactive'
-import { UNICONTA_PROVIDER } from '../lib/integrations/providers/uniconta/config'
 import { WORDPRESS_SELF_HOSTED_PROVIDER } from '../lib/integrations/providers/wordpress-self-hosted/config'
 import { WORK_INTEGRATIONS_PROVIDERS } from '../lib/integrations/providers/work-integrations'
 import { ZENDESK_PROVIDER } from '../lib/integrations/providers/zendesk/config'
@@ -348,8 +346,6 @@ const FLAGGED_PROVIDERS: ReadonlyMap<string, FlagId> = new Map([
 		name,
 		FLAGS.SALES_AUTOMATION_INTEGRATIONS,
 	]),
-	[UNICONTA_PROVIDER, FLAGS.UNICONTA_CONNECT],
-	[BUSINESS_CENTRAL_PROVIDER, FLAGS.BUSINESS_CENTRAL_CONNECT],
 	[WORDPRESS_SELF_HOSTED_PROVIDER, FLAGS.WORDPRESS_SELF_HOSTED],
 	...OWN_APP_PROVIDERS.map((name): [string, FlagId] => [name, FLAGS.OWN_APP_INTEGRATIONS]),
 	...WORK_INTEGRATIONS_PROVIDERS.map((name): [string, FlagId] => [name, FLAGS.WORK_INTEGRATIONS]),
@@ -2320,10 +2316,12 @@ app.openapi(callbackRoute, (async (c) => {
 			ownerLogin,
 		})
 	} else {
-		// A second Gmail account is usually a personal inbox. It starts with no agent access, so
-		// the first account's open default never reaches it; a person grants each agent in Settings.
+		// A second Gmail or Calendar account is usually a personal one. It starts with no agent
+		// access, so the first account's open default never reaches it; a person grants each
+		// agent in Settings.
 		const keepOffForAgents =
-			providerName === 'gmail' && (await hasOtherActiveRow(pendingIntegration.id))
+			(providerName === 'gmail' || providerName === 'google-calendar') &&
+			(await hasOtherActiveRow(pendingIntegration.id))
 		await db
 			.update(integrations)
 			.set({

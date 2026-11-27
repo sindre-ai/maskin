@@ -13,13 +13,21 @@
  */
 export const DKK_PER_USD = 7.0
 
-/** Monthly price in whole kroner, excluding VAT. The trial and enterprise have no price. */
+/**
+ * Monthly price in whole kroner, excluding VAT. Starter and Pro are per user;
+ * Ultra is a base price for one user. Team is legacy: it is no longer sold and
+ * the value is kept only so an existing Team workspace still renders its old
+ * price. The Free plan (stored as `trial`) and Enterprise have no price.
+ */
 export const PLAN_PRICE_DKK = {
-	starter: 99,
-	pro: 249,
+	starter: 349,
+	pro: 995,
 	team: 549,
-	ultra: 1499,
+	ultra: 4995,
 } as const
+
+/** Ultra's price per user beyond the first, in whole kroner, excluding VAT. */
+export const ULTRA_EXTRA_USER_DKK = 1295
 
 /**
  * Included usage per plan in whole kroner a month: a fifth of the plan price.

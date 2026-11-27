@@ -132,13 +132,15 @@ describe('POST /sessions/:id/connect-card', () => {
 	})
 
 	it('posts nothing when the provider is already connected in the workspace', async () => {
+		// Slack stays single-install (Maskin hosts one connection), unlike Linear, which can
+		// now have one connection per organization.
 		const session = await chatSession()
 		await db
 			.insert(integrations)
-			.values(buildIntegration({ workspaceId, provider: 'linear', createdBy: humanId }))
+			.values(buildIntegration({ workspaceId, provider: 'slack', createdBy: humanId }))
 		const app = createSessionsApp(agentId)
 
-		const res = await app.request(connectCard(session.id, workspaceId))
+		const res = await app.request(connectCard(session.id, workspaceId, 'slack'))
 		expect(res.status).toBe(200)
 		expect(await res.json()).toEqual({ posted: false, already_connected: true })
 		expect(await messagesFor(conversationId)).toHaveLength(0)

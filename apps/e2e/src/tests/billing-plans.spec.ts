@@ -50,12 +50,13 @@ test.describe('Billing plans — Settings UI', () => {
 			await page.goto(`/${account.workspaceId}/settings/billing`)
 
 			// Scoped to the banner — the plan comparison grid renders its own
-			// "TRIAL" card label, which an unscoped getByText also matches.
-			await expect(page.getByTestId('usage-banner').getByText('Trial')).toBeVisible()
+			// "FREE" card label, which an unscoped getByText also matches.
+			await expect(page.getByTestId('usage-banner').getByText('Free')).toBeVisible()
 			await expect(page.getByRole('button', { name: 'Upgrade to Starter' })).toBeVisible()
 			await expect(page.getByRole('button', { name: 'Upgrade to Pro' })).toBeVisible()
-			await expect(page.getByRole('button', { name: 'Upgrade to Team' })).toBeVisible()
 			await expect(page.getByRole('button', { name: 'Upgrade to Ultra' })).toBeVisible()
+			// Team is legacy and is no longer sold.
+			await expect(page.getByRole('button', { name: 'Upgrade to Team' })).toHaveCount(0)
 		})
 	}
 
@@ -139,7 +140,7 @@ test.describe('Billing plans — Settings UI', () => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 			await page.goto(`/${account.workspaceId}/settings/billing`)
 
-			await expect(page.getByText('Pro — 249 kr/mo')).toBeVisible()
+			await expect(page.getByText('Pro — 995 kr/user/mo')).toBeVisible()
 			await expect(page.getByRole('button', { name: 'Buy usage credits' })).toHaveCount(0)
 		})
 	}
@@ -170,7 +171,7 @@ test.describe('Billing plans — Settings UI', () => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 			await page.goto(`/${account.workspaceId}/settings/billing`)
 
-			await expect(page.getByText('Pro — 249 kr/mo')).toBeVisible()
+			await expect(page.getByText('Pro — 995 kr/user/mo')).toBeVisible()
 			// Reachable/tappable at every ship-gate viewport, including 375px —
 			// ResponsiveDialog becomes a bottom sheet below 768px for exactly this.
 			await page.getByRole('button', { name: 'Buy usage credits' }).click()

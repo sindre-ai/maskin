@@ -35,6 +35,9 @@ import marketWatchTriggersData from './data/market-watch-triggers.json'
 import meetingLoopActorsData from './data/meeting-loop-actors.json'
 import meetingLoopSkillsData from './data/meeting-loop-skills.json'
 import meetingLoopTriggersData from './data/meeting-loop-triggers.json'
+import productDeliveryActorsData from './data/product-delivery-actors.json'
+import productDeliverySkillsData from './data/product-delivery-skills.json'
+import productDeliveryTriggersData from './data/product-delivery-triggers.json'
 import productReleaseActorsData from './data/product-release-actors.json'
 import productReleaseSkillsData from './data/product-release-skills.json'
 import productReleaseTriggersData from './data/product-release-triggers.json'
@@ -45,6 +48,9 @@ import productUsageViewsData from './data/product-usage-views.json'
 import signalIntakeActorsData from './data/signal-intake-actors.json'
 import signalIntakeSkillsData from './data/signal-intake-skills.json'
 import signalIntakeTriggersData from './data/signal-intake-triggers.json'
+import workspaceImprovementsSkillsData from './data/workspace-improvements-skills.json'
+import workspaceImprovementsTriggersData from './data/workspace-improvements-triggers.json'
+import workspaceImprovementsViewsData from './data/workspace-improvements-views.json'
 import type { LoopSettings } from './loop-settings'
 import type {
 	ActorSnapshotSource,
@@ -78,7 +84,7 @@ export interface ViewData extends ViewSnapshotSource {
 }
 
 // Shape shared by every marketplace Loop bundle (./discovery-loop,
-// ./market-watch-loop, ./signal-intake-loop, ./meeting-loop, ./product-release-loop, ./customer-voice-loop, ./product-usage-loop, ./accounting-loop) so dev-bootstrap.ts's MARKETPLACE_SEED_CONFIGS can treat
+// ./market-watch-loop, ./signal-intake-loop, ./meeting-loop, ./product-release-loop, ./product-delivery-loop, ./customer-voice-loop, ./product-usage-loop, ./accounting-loop) so dev-bootstrap.ts's MARKETPLACE_SEED_CONFIGS can treat
 // them uniformly.
 export interface MarketplaceLoopSeedConfig {
 	loop: {
@@ -91,6 +97,9 @@ export interface MarketplaceLoopSeedConfig {
 		settings?: LoopSettings
 	}
 	actorIds: readonly string[]
+	// Role ids (see ROLE_ACTOR_PREFIX) for agents the bundle does not ship: triggers and skills name
+	// them, and install binds them to the workspace's own agent of that role. Optional.
+	roleActorIds?: readonly string[]
 	triggerIds: readonly string[]
 	skillIds: readonly string[]
 	// Custom views the bundle ships, in tab order. Optional: most bundles ship none.
@@ -102,6 +111,7 @@ const actorsById: Record<string, ActorData> = {
 	...(marketWatchActorsData as Record<string, ActorData>),
 	...(meetingLoopActorsData as Record<string, ActorData>),
 	...(discoveryActorsData as Record<string, ActorData>),
+	...(productDeliveryActorsData as Record<string, ActorData>),
 	...(productReleaseActorsData as Record<string, ActorData>),
 	...(customerVoiceActorsData as Record<string, ActorData>),
 	...(knowledgeWikiActorsData as Record<string, ActorData>),
@@ -114,11 +124,13 @@ const triggersById: Record<string, TriggerData> = {
 	...(marketWatchTriggersData as Record<string, TriggerData>),
 	...(meetingLoopTriggersData as Record<string, TriggerData>),
 	...(discoveryTriggersData as Record<string, TriggerData>),
+	...(productDeliveryTriggersData as Record<string, TriggerData>),
 	...(productReleaseTriggersData as Record<string, TriggerData>),
 	...(customerVoiceTriggersData as Record<string, TriggerData>),
 	...(knowledgeWikiTriggersData as Record<string, TriggerData>),
 	...(productUsageTriggersData as Record<string, TriggerData>),
 	...(signalIntakeTriggersData as Record<string, TriggerData>),
+	...(workspaceImprovementsTriggersData as Record<string, TriggerData>),
 }
 
 const skillsById: Record<string, SkillData> = {
@@ -126,11 +138,13 @@ const skillsById: Record<string, SkillData> = {
 	...(marketWatchSkillsData as Record<string, SkillData>),
 	...(meetingLoopSkillsData as Record<string, SkillData>),
 	...(discoverySkillsData as Record<string, SkillData>),
+	...(productDeliverySkillsData as Record<string, SkillData>),
 	...(productReleaseSkillsData as Record<string, SkillData>),
 	...(customerVoiceSkillsData as Record<string, SkillData>),
 	...(knowledgeWikiSkillsData as Record<string, SkillData>),
 	...(productUsageSkillsData as Record<string, SkillData>),
 	...(signalIntakeSkillsData as Record<string, SkillData>),
+	...(workspaceImprovementsSkillsData as Record<string, SkillData>),
 }
 
 const viewsById: Record<string, ViewData> = {
@@ -138,6 +152,7 @@ const viewsById: Record<string, ViewData> = {
 	...(customerVoiceViewsData as Record<string, ViewData>),
 	...(knowledgeWikiViewsData as Record<string, ViewData>),
 	...(productUsageViewsData as Record<string, ViewData>),
+	...(workspaceImprovementsViewsData as Record<string, ViewData>),
 }
 
 export function getActorData(id: string): ActorData {

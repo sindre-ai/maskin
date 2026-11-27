@@ -73,6 +73,7 @@ export type {
 export {
 	FORBIDDEN_IDENTITY_PER_CALL_FIELDS,
 	LINKEDIN_CAN_COMMENT_VALUES,
+	LINKEDIN_MENTIONS_MAX,
 	LINKEDIN_MESSAGE_MAX_CHARS,
 	LINKEDIN_POST_MAX_CHARS,
 	LINKEDIN_R11_INPUT_SHAPES,
@@ -80,6 +81,8 @@ export {
 	deletePostInputShape,
 	editPostInputSchema,
 	editPostInputShape,
+	linkedInMentionSchema,
+	linkedInMentionsField,
 	publishPostInputSchema,
 	publishPostInputShape,
 	sendMessageInputSchema,
@@ -89,6 +92,7 @@ export type {
 	DeletePostInput,
 	EditPostInput,
 	LinkedInCanComment,
+	LinkedInMention,
 	PublishPostInput,
 	SendMessageInput,
 } from './lib/linkedin-tool-schemas.js'

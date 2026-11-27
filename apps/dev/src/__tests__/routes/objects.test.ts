@@ -1012,6 +1012,19 @@ describe('Objects Routes', () => {
 			expect(body.deleted).toBe(true)
 		})
 
+		it('returns 409 pointing at uninstall when the object is an installed flow', async () => {
+			const existing = buildObject({ type: 'loop' })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// object, membership, install row found
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [{ id: randomUUID() }]]
+
+			const res = await app.request(jsonDelete(`/api/objects/${existing.id}`))
+
+			expect(res.status).toBe(409)
+			const body = await res.json()
+			expect(body.error.message).toContain('Uninstall the flow')
+		})
+
 		it('returns 404 when object not found', async () => {
 			const { app } = createTestApp(objectsRoutes, '/api/objects')
 

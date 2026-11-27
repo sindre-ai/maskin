@@ -259,24 +259,6 @@ export const FLAGS = {
 	 */
 	SALES_AUTOMATION_INTEGRATIONS: 'sales-automation-integrations',
 	/**
-	 * Gates connecting Uniconta (task
-	 * [Connect Uniconta to the accounting flow](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/e303850f-6315-428b-bb65-b764f7729314)).
-	 * Actor-scoped, read by the integrations routes: off means Uniconta is missing from
-	 * GET /api/integrations/providers and its connect call is refused, so Settings shows nothing new.
-	 * A workspace that is already connected keeps working through the gateway. Retire once a real
-	 * Uniconta sign-in has worked and Uniconta is on for everyone.
-	 */
-	UNICONTA_CONNECT: 'uniconta-connect',
-	/**
-	 * Gates connecting Business Central (task
-	 * [Connect Business Central ERP data](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/aad840e6-8785-46c0-9482-c6899cd5933d)).
-	 * Actor-scoped, read by the integrations routes: off means Business Central is missing from
-	 * GET /api/integrations/providers and its connect call is refused, so Settings shows nothing new.
-	 * A workspace that is already connected keeps working through the gateway. Retire once a real
-	 * Business Central sign-in has worked and it is on for everyone.
-	 */
-	BUSINESS_CENTRAL_CONNECT: 'business-central-connect',
-	/**
 	 * Gates the ten integrations that sign in through an app Maskin owns at the vendor, or need the
 	 * vendor to approve Maskin first: HubSpot, Asana, DocuSign, Figma, Dropbox, Intercom, Pipedrive,
 	 * Ramp, Squarespace and Xero (task

@@ -228,6 +228,87 @@ describe('DriverWaker', () => {
 		})
 	})
 
+	it('wakes the task owner when someone else moves the task to todo', async () => {
+		const task = await makeObject('task', 'backlog')
+
+		await moved(task.id, 'task', 'backlog', 'todo', otherAgentId)
+		await flushAll(driverId, task.id)
+
+		expect(startSessionMock).toHaveBeenCalledTimes(1)
+		const call = startSessionMock.mock.calls[0]?.[0]
+		expect(call?.initiatedFromObjectId).toBe(task.id)
+		expect(call?.config).toMatchObject({
+			start_reason: 'driver_wake',
+			driver_wake: { reasons: ['task_ready'] },
+		})
+	})
+
+	it('wakes the task owner when someone else creates the task at todo', async () => {
+		const task = await makeObject('task', 'todo')
+		const row = await recordEventReturning(db, {
+			workspaceId,
+			actorId: otherAgentId,
+			action: 'created',
+			entityType: 'task',
+			entityId: task.id,
+			data: { id: task.id, status: 'todo', driver: driverId },
+		})
+
+		await waker.onTaskCreated({
+			workspace_id: workspaceId,
+			actor_id: otherAgentId,
+			action: 'created',
+			entity_type: 'task',
+			entity_id: task.id,
+			event_id: String(row.id),
+		})
+		await flushAll(driverId, task.id)
+
+		expect(startSessionMock).toHaveBeenCalledTimes(1)
+		expect(startSessionMock.mock.calls[0]?.[0].config).toMatchObject({
+			driver_wake: { reasons: ['task_ready'] },
+		})
+	})
+
+	it('wakes nobody for a task created in backlog, or created at todo by its owner', async () => {
+		const backlog = await makeObject('task', 'backlog')
+		const own = await makeObject('task', 'todo')
+		const make = async (taskId: string, status: string, actorId: string) => {
+			const row = await recordEventReturning(db, {
+				workspaceId,
+				actorId,
+				action: 'created',
+				entityType: 'task',
+				entityId: taskId,
+				data: { id: taskId, status },
+			})
+			await waker.onTaskCreated({
+				workspace_id: workspaceId,
+				actor_id: actorId,
+				action: 'created',
+				entity_type: 'task',
+				entity_id: taskId,
+				event_id: String(row.id),
+			})
+		}
+		await make(backlog.id, 'backlog', otherAgentId)
+		await make(own.id, 'todo', driverId)
+		await flushAll(driverId, backlog.id)
+		await flushAll(driverId, own.id)
+
+		expect(startSessionMock).not.toHaveBeenCalled()
+	})
+
+	it('does not wake for a task that was already started while the wake settled', async () => {
+		const task = await makeObject('task', 'backlog')
+
+		await moved(task.id, 'task', 'backlog', 'todo', otherAgentId)
+		await db.update(objects).set({ status: 'in_progress' }).where(eq(objects.id, task.id))
+		await flushAll(driverId, task.id)
+
+		expect(startSessionMock).not.toHaveBeenCalled()
+	})
+
 	it('wakes nobody for a change the driver made itself', async () => {
 		const bet = await makeObject('bet', 'active')
 		const task = await makeObject('task', 'in_review', driverId)
@@ -322,7 +403,7 @@ describe('DriverWaker', () => {
 		expect(startSessionMock).not.toHaveBeenCalled()
 		expect(wokenEvents()).toEqual([
 			expect.objectContaining({
-				reason: 'status_changed',
+				reason: 'task_ready',
 				outcome: 'dropped_other_mechanism',
 				drop_reason: 'run_already_started',
 				agent_id: driverId,

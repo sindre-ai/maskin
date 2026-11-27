@@ -12,6 +12,7 @@ const API = 'https://www.googleapis.com/youtube/v3'
 const UPLOAD_API = 'https://www.googleapis.com/upload/youtube/v3'
 const REQUEST_TIMEOUT_MS = 30_000
 const VIDEO_PARTS = ['snippet', 'status', 'localizations']
+const MODERATION_STATUSES = ['published', 'heldForReview', 'rejected']
 
 export interface YoutubeWriteRequest {
 	kind: YoutubeActionKind
@@ -57,6 +58,23 @@ function plan(kind: YoutubeActionKind, payload: Record<string, unknown>): Planne
 			return { method: 'POST', path: '/commentThreads', query: { part: 'snippet' }, body: payload }
 		case 'reply_to_comment':
 			return { method: 'POST', path: '/comments', query: { part: 'snippet' }, body: payload }
+		case 'moderate_comment': {
+			const status = payload.moderationStatus
+			if (typeof payload.id !== 'string' || !MODERATION_STATUSES.includes(status as string)) {
+				return null
+			}
+			// banAuthor only works with rejected, so it is dropped for any other status.
+			const ban = payload.banAuthor === true && status === 'rejected'
+			return {
+				method: 'POST',
+				path: '/comments/setModerationStatus',
+				query: {
+					id: payload.id,
+					moderationStatus: status as string,
+					...(ban ? { banAuthor: 'true' } : {}),
+				},
+			}
+		}
 		case 'like': {
 			if (typeof payload.id !== 'string') return null
 			const rating = payload.rating === 'none' ? 'none' : 'like'

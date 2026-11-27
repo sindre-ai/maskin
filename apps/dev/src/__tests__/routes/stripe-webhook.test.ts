@@ -40,6 +40,10 @@ const VALID_ENV = {
 	STRIPE_PRICE_PRO_DKK: 'price_pro_dkk',
 	STRIPE_PRICE_TEAM_DKK: 'price_team_dkk',
 	STRIPE_PRICE_ULTRA_DKK: 'price_ultra_dkk',
+	STRIPE_PRICE_STARTER_SEAT_DKK: 'price_starter_seat',
+	STRIPE_PRICE_PRO_SEAT_DKK: 'price_pro_seat',
+	STRIPE_PRICE_ULTRA_BASE_DKK: 'price_ultra_base',
+	STRIPE_PRICE_ULTRA_SEAT_DKK: 'price_ultra_seat',
 	STRIPE_PRICE_CREDITS_CUSTOM: 'price_credits_custom_test',
 	STRIPE_PRICE_LINKEDIN_IDENTITY: 'price_linkedin',
 }
@@ -317,6 +321,43 @@ describe('POST /api/webhooks/stripe', () => {
 			period_start: 1_700_000_000,
 			period_end: 1_702_592_000,
 		})
+		// Legacy price: no seats are written, so the old cap stays in force.
+		expect(update.settings.billing.seats).toBeUndefined()
+	})
+
+	it('stores the paid seats on customer.subscription.updated for a per-seat price', async () => {
+		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
+		const workspaceId = randomUUID()
+		mockResults.insertQueue = [[{ id: 'claim-seats' }]]
+		mockResults.select = STRIPE_SYSTEM_ACTOR
+		mockResults.selectQueue = [[{ id: workspaceId, settings: {} }]]
+
+		vi.mocked(verifyStripeWebhook).mockReturnValue({
+			id: 'evt_sub_seats',
+			type: 'customer.subscription.updated',
+			data: {
+				object: {
+					id: 'sub_seats',
+					customer: 'cus_seats',
+					status: 'active',
+					current_period_start: 1_700_000_000,
+					current_period_end: 1_702_592_000,
+					metadata: { workspace_id: workspaceId },
+					// Ultra is base (one user) + two extra users = 3 paid seats.
+					items: {
+						data: [
+							{ price: { id: 'price_ultra_base' }, quantity: 1 },
+							{ price: { id: 'price_ultra_seat' }, quantity: 2 },
+						],
+					},
+				},
+			},
+		} as unknown as Stripe.Event)
+
+		const res = await postWebhook(app, {})
+		expect(res.status).toBe(200)
+		const update = findWorkspaceUpdate(calls.updates)
+		expect(update.settings.billing).toMatchObject({ plan: 'ultra', seats: 3 })
 	})
 
 	it('writes the code Pro cap even when MASKIN_PRO_HARD_CAP_USD_CENTS holds an old value', async () => {
@@ -403,6 +444,49 @@ describe('POST /api/webhooks/stripe', () => {
 			stripe_subscription_id: null,
 			status: 'canceled',
 		})
+	})
+
+	it('clears the paid seats on customer.subscription.deleted', async () => {
+		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
+		const workspaceId = randomUUID()
+		mockResults.insertQueue = [[{ id: 'claim-seats-del' }]]
+		mockResults.select = STRIPE_SYSTEM_ACTOR
+		mockResults.selectQueue = [
+			[
+				{
+					id: workspaceId,
+					settings: {
+						billing: {
+							plan: 'pro',
+							status: 'active',
+							seats: 5,
+							stripe_subscription_id: 'sub_seats_del',
+						},
+					},
+				},
+			],
+		]
+
+		vi.mocked(verifyStripeWebhook).mockReturnValue({
+			id: 'evt_sub_seats_del',
+			type: 'customer.subscription.deleted',
+			data: {
+				object: {
+					id: 'sub_seats_del',
+					customer: 'cus_seats_del',
+					status: 'canceled',
+					canceled_at: 1_700_001_000,
+					metadata: { workspace_id: workspaceId },
+					items: { data: [{ price: { id: 'price_pro_seat' }, quantity: 5 }] },
+				},
+			},
+		} as unknown as Stripe.Event)
+
+		const res = await postWebhook(app, {})
+		expect(res.status).toBe(200)
+		const update = findWorkspaceUpdate(calls.updates)
+		expect(update.settings.billing.plan).toBe('trial')
+		expect(update.settings.billing.seats).toBeUndefined()
 	})
 
 	it('downgrades a enterprise-entitled workspace to enterprise on customer.subscription.deleted', async () => {
