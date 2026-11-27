@@ -297,6 +297,15 @@ export const FLAGS = {
 	 * everyone.
 	 */
 	CHATGPT_MCP_TAB: 'chatgpt-mcp-tab',
+	/**
+	 * Gates the Settings → Trash view, where a person restores a deleted object, flow,
+	 * file, trigger, link or workspace skill (task [Add undo for agent deletes]).
+	 * Frontend only: the settings layout reads it once and mounts the nav item and page.
+	 * Off means Settings looks as it does today. The delete handlers and the restore
+	 * route behind it are additive and safe with the flag off: deletes still delete, they
+	 * just also keep a restorable copy. Retire once the Trash view is on for everyone.
+	 */
+	TRASH_RESTORE: 'trash-restore',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

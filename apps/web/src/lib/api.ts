@@ -2150,6 +2150,36 @@ export const api = {
 				workspaceId,
 			}),
 	},
+	// Reversible deletes: the Trash view lists deleted rows and restores them inside the
+	// 30 day window. Restore is a writer action.
+	trash: {
+		list: (workspaceId: string) => request<TrashListResponse>('/trash', { workspaceId }),
+		restore: (workspaceId: string, id: string) =>
+			request<{ restored: boolean; kind: TrashRow['kind']; entityId: string }>(
+				`/trash/${id}/restore`,
+				{ method: 'POST', workspaceId },
+			),
+	},
+}
+
+/** One deleted row in the Trash view, without its full body. */
+export interface TrashRow {
+	id: string
+	kind: 'object' | 'file' | 'trigger' | 'relationship' | 'workspace_skill'
+	/** Human label: Flow, Item, File, Trigger, Link, Skill. */
+	kindLabel: string
+	entityId: string
+	title: string
+	subtitle: string | null
+	deletedAt: string
+	purgeAt: string
+	deletedBy: { id: string; name: string } | null
+}
+
+export interface TrashListResponse {
+	rows: TrashRow[]
+	total: number
+	trash_retention_days: number
 }
 
 /**

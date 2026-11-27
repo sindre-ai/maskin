@@ -99,6 +99,7 @@ import {
 } from '../lib/search-rank'
 import { serialize, serializeArray } from '../lib/serialize'
 import { checkTaskInitialStatus } from '../lib/task-initial-status'
+import { moveToTrash } from '../lib/trash'
 import type { WorkspaceSettings } from '../lib/types'
 import {
 	assertWorkspaceWriterRole,
@@ -2632,7 +2633,15 @@ const deleteObjectRoute = createRoute({
 	},
 	responses: {
 		200: {
-			content: { 'application/json': { schema: z.object({ deleted: z.boolean() }) } },
+			content: {
+				'application/json': {
+					schema: z.object({
+						deleted: z.boolean(),
+						// Loop only: the member object ids whose in_loop edges were removed.
+						removed_member_object_ids: z.array(z.string().uuid()).optional(),
+					}),
+				},
+			},
 			description: 'Object deleted',
 		},
 		404: {
@@ -3045,7 +3054,29 @@ app.openapi(deleteObjectRoute, async (c) => {
 		)
 	}
 
+	let removedMemberObjectIds: string[] = []
 	await db.transaction(async (tx) => {
+		// A flow is an object of type 'loop'. Capture its in_loop edges for the trash and
+		// remove them here, so a restore can put them back and a direct object delete no
+		// longer leaves orphaned membership edges behind.
+		const loopMembership =
+			existing.type === 'loop'
+				? await tx
+						.select()
+						.from(relationships)
+						.where(and(eq(relationships.sourceId, id), eq(relationships.type, 'in_loop')))
+				: []
+		removedMemberObjectIds = loopMembership.map((edge) => edge.targetId)
+
+		await moveToTrash(tx, {
+			workspaceId: existing.workspaceId,
+			kind: 'object',
+			entityId: id,
+			row: existing,
+			extra: loopMembership.length > 0 ? { loop_membership: loopMembership } : null,
+			deletedBy: actorId,
+		})
+
 		// Polymorphic subscription + read_state + star_state rows aren't FK'd to
 		// objects, so drop them explicitly to avoid orphans pointing at a freed
 		// entity_id.
@@ -3058,6 +3089,25 @@ app.openapi(deleteObjectRoute, async (c) => {
 		await tx
 			.delete(starState)
 			.where(and(eq(starState.entityType, 'object'), eq(starState.entityId, id)))
+
+		if (loopMembership.length > 0) {
+			await tx
+				.delete(relationships)
+				.where(and(eq(relationships.sourceId, id), eq(relationships.type, 'in_loop')))
+			// Every entity mutation gets an audit row. The old delete_loop removed each edge
+			// through DELETE /api/relationships, which logged one per edge; keep that trail.
+			await recordEvents(
+				tx,
+				loopMembership.map((edge) => ({
+					workspaceId: existing.workspaceId,
+					actorId,
+					action: 'deleted' as const,
+					entityType: 'relationship',
+					entityId: edge.id,
+					data: edge,
+				})),
+			)
+		}
 
 		await tx.delete(objects).where(eq(objects.id, id))
 
@@ -3072,7 +3122,13 @@ app.openapi(deleteObjectRoute, async (c) => {
 		})
 	})
 
-	return c.json({ deleted: true as const }, 200)
+	return c.json(
+		{
+			deleted: true as const,
+			...(existing.type === 'loop' ? { removed_member_object_ids: removedMemberObjectIds } : {}),
+		},
+		200,
+	)
 })
 
 // ── POST/DELETE /{id}/star — server-persisted per-actor star toggle ──────

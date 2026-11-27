@@ -30,6 +30,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
+import { moveToTrash } from '../lib/trash'
 import { removeTriggerMetadataKey } from '../lib/trigger-metadata'
 import { fetchLastRunAt, triggerSearchCondition } from '../lib/trigger-queries'
 import { assertWorkspaceWriterRole, isWorkspaceWriter } from '../lib/workspace-auth'
@@ -631,6 +632,13 @@ app.openapi(deleteTriggerRoute, (async (c) => {
 	}
 
 	await db.transaction(async (tx) => {
+		await moveToTrash(tx, {
+			workspaceId: existing.workspaceId,
+			kind: 'trigger',
+			entityId: id,
+			row: existing,
+			deletedBy: actorId,
+		})
 		await tx.delete(triggers).where(eq(triggers.id, id))
 
 		// Cascade-prune the deleted trigger's id from every loop's

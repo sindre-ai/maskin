@@ -1968,7 +1968,7 @@ export const tools = {
 	},
 	delete_loop: {
 		description:
-			'Delete a Loop and its `in_loop` edges. Member objects and step triggers are kept (remove unused triggers with delete_trigger). Fails if the id is not a loop. Cannot be undone.',
+			'Delete a Loop and its `in_loop` edges. Member objects and step triggers are kept (remove unused triggers with delete_trigger). Fails if the id is not a loop. The loop and its edges can be restored from the workspace Trash for 30 days.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),

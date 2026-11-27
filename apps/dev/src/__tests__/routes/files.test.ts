@@ -450,7 +450,7 @@ describe('Files Routes', () => {
 	})
 
 	describe('DELETE /api/files/:id', () => {
-		it('returns 200, deletes from DB and storage, and emits a deleted event', async () => {
+		it('returns 200, keeps the stored bytes for the trash window, and emits a deleted event', async () => {
 			const { app, mockResults, calls, storageProvider } = createImportTestApp(
 				filesRoutes,
 				'/api/files',
@@ -461,7 +461,9 @@ describe('Files Routes', () => {
 			const res = await app.request(jsonDelete(`/api/files/${file.id}`))
 
 			expect(res.status).toBe(200)
-			expect(storageProvider.delete).toHaveBeenCalledWith(file.storageKey)
+			// The bytes stay until the trash purge job removes them after 30 days, so a
+			// restore can point the re-inserted row back at them.
+			expect(storageProvider.delete).not.toHaveBeenCalled()
 			const eventInsert = calls.inserts.at(-1) as Record<string, unknown>
 			expect(eventInsert.entityType).toBe('file')
 			expect(eventInsert.action).toBe('deleted')

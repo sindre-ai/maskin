@@ -26,6 +26,7 @@ interface SettingsNavItem {
 		| '/$workspaceId/settings/keys'
 		| '/$workspaceId/settings/keychain'
 		| '/$workspaceId/settings/send-permissions'
+		| '/$workspaceId/settings/trash'
 	exact?: boolean
 }
 
@@ -62,14 +63,24 @@ const sendPermissionsNavItem: SettingsNavItem = {
 	to: '/$workspaceId/settings/send-permissions',
 }
 
+// Trash is listed only while its flag is on. The route reads the flag too.
+const trashNavItem: SettingsNavItem = {
+	label: 'Trash',
+	to: '/$workspaceId/settings/trash',
+}
+
 function SettingsLayout() {
 	useDocumentTitle('Settings')
 	const { workspace, workspaceId } = useWorkspace()
 	const matchRoute = useMatchRoute()
 	const sendPermissionsEnabled = useFeatureFlag('send-permissions-screen')
+	const trashEnabled = useFeatureFlag('trash-restore')
 	const isGeneral = !!matchRoute({ to: '/$workspaceId/settings', params: { workspaceId } })
 	const groups: { label: string; items: SettingsNavItem[] }[] = [
-		{ label: 'Workspace', items: WORKSPACE_NAV },
+		{
+			label: 'Workspace',
+			items: [...WORKSPACE_NAV, ...(trashEnabled ? [trashNavItem] : [])],
+		},
 		{ label: 'Agents', items: AGENTS_NAV },
 		{
 			label: 'Access',

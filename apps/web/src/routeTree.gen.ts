@@ -38,6 +38,7 @@ import { Route as AuthedWorkspaceIdLoopsIndexRouteImport } from './routes/_authe
 import { Route as AuthedWorkspaceIdChatsIndexRouteImport } from './routes/_authed/$workspaceId/chats/index'
 import { Route as AuthedWorkspaceIdAgentsIndexRouteImport } from './routes/_authed/$workspaceId/agents/index'
 import { Route as AuthedWorkspaceIdTriggersTriggerIdRouteImport } from './routes/_authed/$workspaceId/triggers/$triggerId'
+import { Route as AuthedWorkspaceIdSettingsTrashRouteImport } from './routes/_authed/$workspaceId/settings/trash'
 import { Route as AuthedWorkspaceIdSettingsSkillsRouteImport } from './routes/_authed/$workspaceId/settings/skills'
 import { Route as AuthedWorkspaceIdSettingsSendPermissionsRouteImport } from './routes/_authed/$workspaceId/settings/send-permissions'
 import { Route as AuthedWorkspaceIdSettingsNotificationsRouteImport } from './routes/_authed/$workspaceId/settings/notifications'
@@ -221,6 +222,12 @@ const AuthedWorkspaceIdTriggersTriggerIdRoute =
     id: '/triggers/$triggerId',
     path: '/triggers/$triggerId',
     getParentRoute: () => AuthedWorkspaceIdRoute,
+  } as any)
+const AuthedWorkspaceIdSettingsTrashRoute =
+  AuthedWorkspaceIdSettingsTrashRouteImport.update({
+    id: '/trash',
+    path: '/trash',
+    getParentRoute: () => AuthedWorkspaceIdSettingsRoute,
   } as any)
 const AuthedWorkspaceIdSettingsSkillsRoute =
   AuthedWorkspaceIdSettingsSkillsRouteImport.update({
@@ -424,6 +431,7 @@ export interface FileRoutesByFullPath {
   '/$workspaceId/settings/notifications': typeof AuthedWorkspaceIdSettingsNotificationsRoute
   '/$workspaceId/settings/send-permissions': typeof AuthedWorkspaceIdSettingsSendPermissionsRoute
   '/$workspaceId/settings/skills': typeof AuthedWorkspaceIdSettingsSkillsRoute
+  '/$workspaceId/settings/trash': typeof AuthedWorkspaceIdSettingsTrashRoute
   '/$workspaceId/triggers/$triggerId': typeof AuthedWorkspaceIdTriggersTriggerIdRoute
   '/$workspaceId/agents/': typeof AuthedWorkspaceIdAgentsIndexRoute
   '/$workspaceId/chats/': typeof AuthedWorkspaceIdChatsIndexRoute
@@ -477,6 +485,7 @@ export interface FileRoutesByTo {
   '/$workspaceId/settings/notifications': typeof AuthedWorkspaceIdSettingsNotificationsRoute
   '/$workspaceId/settings/send-permissions': typeof AuthedWorkspaceIdSettingsSendPermissionsRoute
   '/$workspaceId/settings/skills': typeof AuthedWorkspaceIdSettingsSkillsRoute
+  '/$workspaceId/settings/trash': typeof AuthedWorkspaceIdSettingsTrashRoute
   '/$workspaceId/triggers/$triggerId': typeof AuthedWorkspaceIdTriggersTriggerIdRoute
   '/$workspaceId/agents': typeof AuthedWorkspaceIdAgentsIndexRoute
   '/$workspaceId/chats': typeof AuthedWorkspaceIdChatsIndexRoute
@@ -536,6 +545,7 @@ export interface FileRoutesById {
   '/_authed/$workspaceId/settings/notifications': typeof AuthedWorkspaceIdSettingsNotificationsRoute
   '/_authed/$workspaceId/settings/send-permissions': typeof AuthedWorkspaceIdSettingsSendPermissionsRoute
   '/_authed/$workspaceId/settings/skills': typeof AuthedWorkspaceIdSettingsSkillsRoute
+  '/_authed/$workspaceId/settings/trash': typeof AuthedWorkspaceIdSettingsTrashRoute
   '/_authed/$workspaceId/triggers/$triggerId': typeof AuthedWorkspaceIdTriggersTriggerIdRoute
   '/_authed/$workspaceId/agents/': typeof AuthedWorkspaceIdAgentsIndexRoute
   '/_authed/$workspaceId/chats/': typeof AuthedWorkspaceIdChatsIndexRoute
@@ -595,6 +605,7 @@ export interface FileRouteTypes {
     | '/$workspaceId/settings/notifications'
     | '/$workspaceId/settings/send-permissions'
     | '/$workspaceId/settings/skills'
+    | '/$workspaceId/settings/trash'
     | '/$workspaceId/triggers/$triggerId'
     | '/$workspaceId/agents/'
     | '/$workspaceId/chats/'
@@ -648,6 +659,7 @@ export interface FileRouteTypes {
     | '/$workspaceId/settings/notifications'
     | '/$workspaceId/settings/send-permissions'
     | '/$workspaceId/settings/skills'
+    | '/$workspaceId/settings/trash'
     | '/$workspaceId/triggers/$triggerId'
     | '/$workspaceId/agents'
     | '/$workspaceId/chats'
@@ -706,6 +718,7 @@ export interface FileRouteTypes {
     | '/_authed/$workspaceId/settings/notifications'
     | '/_authed/$workspaceId/settings/send-permissions'
     | '/_authed/$workspaceId/settings/skills'
+    | '/_authed/$workspaceId/settings/trash'
     | '/_authed/$workspaceId/triggers/$triggerId'
     | '/_authed/$workspaceId/agents/'
     | '/_authed/$workspaceId/chats/'
@@ -944,6 +957,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/$workspaceId/triggers/$triggerId'
       preLoaderRoute: typeof AuthedWorkspaceIdTriggersTriggerIdRouteImport
       parentRoute: typeof AuthedWorkspaceIdRoute
+    }
+    '/_authed/$workspaceId/settings/trash': {
+      id: '/_authed/$workspaceId/settings/trash'
+      path: '/trash'
+      fullPath: '/$workspaceId/settings/trash'
+      preLoaderRoute: typeof AuthedWorkspaceIdSettingsTrashRouteImport
+      parentRoute: typeof AuthedWorkspaceIdSettingsRoute
     }
     '/_authed/$workspaceId/settings/skills': {
       id: '/_authed/$workspaceId/settings/skills'
@@ -1184,6 +1204,7 @@ interface AuthedWorkspaceIdSettingsRouteChildren {
   AuthedWorkspaceIdSettingsNotificationsRoute: typeof AuthedWorkspaceIdSettingsNotificationsRoute
   AuthedWorkspaceIdSettingsSendPermissionsRoute: typeof AuthedWorkspaceIdSettingsSendPermissionsRoute
   AuthedWorkspaceIdSettingsSkillsRoute: typeof AuthedWorkspaceIdSettingsSkillsRoute
+  AuthedWorkspaceIdSettingsTrashRoute: typeof AuthedWorkspaceIdSettingsTrashRoute
   AuthedWorkspaceIdSettingsIndexRoute: typeof AuthedWorkspaceIdSettingsIndexRoute
   AuthedWorkspaceIdSettingsExtensionsExtIdRoute: typeof AuthedWorkspaceIdSettingsExtensionsExtIdRoute
   AuthedWorkspaceIdSettingsIntegrationsGoogleDriveRoute: typeof AuthedWorkspaceIdSettingsIntegrationsGoogleDriveRoute
@@ -1209,6 +1230,7 @@ const AuthedWorkspaceIdSettingsRouteChildren: AuthedWorkspaceIdSettingsRouteChil
     AuthedWorkspaceIdSettingsSendPermissionsRoute:
       AuthedWorkspaceIdSettingsSendPermissionsRoute,
     AuthedWorkspaceIdSettingsSkillsRoute: AuthedWorkspaceIdSettingsSkillsRoute,
+    AuthedWorkspaceIdSettingsTrashRoute: AuthedWorkspaceIdSettingsTrashRoute,
     AuthedWorkspaceIdSettingsIndexRoute: AuthedWorkspaceIdSettingsIndexRoute,
     AuthedWorkspaceIdSettingsExtensionsExtIdRoute:
       AuthedWorkspaceIdSettingsExtensionsExtIdRoute,

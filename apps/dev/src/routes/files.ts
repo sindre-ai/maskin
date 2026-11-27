@@ -56,6 +56,7 @@ import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { insertStoredFile, recordFileCreated } from '../lib/stored-file'
+import { moveToTrash } from '../lib/trash'
 import {
 	assertWorkspaceWriterRole,
 	isWorkspaceMember,
@@ -1072,7 +1073,6 @@ const deleteFileRoute = createRoute({
 
 app.openapi(deleteFileRoute, (async (c) => {
 	const db = c.get('db')
-	const storage = c.get('storageProvider')
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 
@@ -1081,20 +1081,19 @@ app.openapi(deleteFileRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'File not found'), 404)
 	}
 
-	// DB first — the row is the source of truth. S3 delete after is
-	// best-effort; an orphan object keyed on the deleted file's UUID is
-	// inert because future creates mint a new UUID = new key.
-	await db.delete(files).where(eq(files.id, existing.id))
-
-	try {
-		await storage.delete(existing.storageKey)
-	} catch (err) {
-		logger.error('Failed to delete file from storage (orphan object left)', {
-			fileId: existing.id,
-			storageKey: existing.storageKey,
-			error: String(err),
+	// Copy the row to the trash and delete it in one transaction. The stored bytes are
+	// deliberately kept: a restore re-inserts the row with the same storage key, and the
+	// trash purge job removes the bytes once the 30 day window ends.
+	await db.transaction(async (tx) => {
+		await moveToTrash(tx, {
+			workspaceId: existing.workspaceId,
+			kind: 'file',
+			entityId: existing.id,
+			row: existing,
+			deletedBy: actorId,
 		})
-	}
+		await tx.delete(files).where(eq(files.id, existing.id))
+	})
 
 	try {
 		await recordEvent(db, {
