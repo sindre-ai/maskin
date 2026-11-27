@@ -6,6 +6,8 @@
  * For every due row: conditional UPDATE clears retry_at + marks the row as
  * about-to-be-retried, then fires startSession({retryOf, attemptNumber:N+1,
  * callerKind:'internal'}). Sets original.retried_session_id = new.id.
+ * At most MAX_RETRIES_PER_TICK rows start per tick; the rest move one tick
+ * ahead, so a reset-time backlog drains over a few minutes, not in one burst.
  *
  * One scheduler wins the row via the CAS on retried_session_id IS NULL. Cap
  * 5 attempts per §17.7 — an infinite retry loop on a permanently-broken
@@ -34,6 +36,15 @@ import { startSession } from './session-lifecycle'
 import { TaskSessionRestarter } from './task-session-restart'
 
 const TICK_MS = 30_000
+/**
+ * Most retries one tick may start. A Claude limit reset makes every queued retry due at the
+ * same instant; starting all of them in one tick burned the fresh window in ten minutes
+ * (102 retries on 4 Nov, 67 on 20 Nov). The rest wait a tick each, so the backlog drains over
+ * a few minutes instead of all at once. A lone due retry still starts on its own tick.
+ */
+export const MAX_RETRIES_PER_TICK = 5
+/** How far a retry past the allowance is pushed: one tick ahead, so the next tick picks it up. */
+export const RETRY_DEFER_MS = TICK_MS
 /** Reasons that mean the run died waiting on Claude's allowance. A lineage made only of these keeps the limit wording at the cap. */
 const CLAUDE_LIMIT_CODES: ReadonlySet<string> = new Set([
 	'session_limit',
@@ -68,12 +79,15 @@ export class SessionRetryScheduler {
 	private timer: NodeJS.Timeout | null = null
 	private running = false
 	private taskRestarter: TaskSessionRestarter
+	private maxRetriesPerTick: number
 
 	constructor(
 		private db: Database,
 		private env: NodeJS.ProcessEnv = process.env,
+		options: { maxRetriesPerTick?: number } = {},
 	) {
 		this.taskRestarter = new TaskSessionRestarter(db, env)
+		this.maxRetriesPerTick = options.maxRetriesPerTick ?? MAX_RETRIES_PER_TICK
 	}
 
 	/** Start the tick loop. Idempotent — a second call is a no-op. */
@@ -101,7 +115,7 @@ export class SessionRetryScheduler {
 
 		this.running = true
 		try {
-			const due = await this.db
+			const due = (await this.db
 				.select({
 					id: sessions.id,
 					workspaceId: sessions.workspaceId,
@@ -119,10 +133,20 @@ export class SessionRetryScheduler {
 				})
 				.from(sessions)
 				.where(and(lte(sessions.retryAt, now), isNull(sessions.retriedSessionId)))
-				.limit(50)
+				.limit(50)) as RetryableSession[]
 
-			for (const row of due) {
-				await this.retryOne(row as RetryableSession).catch((err) =>
+			// A limit reset makes every queued retry due in the same tick. Start at most the
+			// allowance and push the rest one tick ahead, so the backlog drains a few at a time.
+			// Capped rows start nothing (they only clear and alert), so they never wait.
+			const capped = due.filter((row) => row.attemptNumber >= MAX_RETRY_ATTEMPTS)
+			const startable = due.filter((row) => row.attemptNumber < MAX_RETRY_ATTEMPTS)
+			const starting = startable.slice(0, this.maxRetriesPerTick)
+			const waiting = startable.slice(this.maxRetriesPerTick)
+
+			if (waiting.length > 0) await this.deferToNextTick(waiting, now)
+
+			for (const row of [...capped, ...starting]) {
+				await this.retryOne(row).catch((err) =>
 					logger.error('SessionRetryScheduler.retryOne failed', {
 						sessionId: row.id,
 						error: String(err),
@@ -137,6 +161,34 @@ export class SessionRetryScheduler {
 				.catch((err) => logger.error('TaskSessionRestarter sweep failed', { error: String(err) }))
 		} finally {
 			this.running = false
+		}
+	}
+
+	/**
+	 * Push the retries past this tick's allowance one tick ahead. Guarded the same way as the
+	 * claim, so a competing scheduler that already started or deferred the row keeps it: the
+	 * row is only moved while it still has no retry link and a retry time to move.
+	 */
+	private async deferToNextTick(rows: RetryableSession[], now: Date): Promise<void> {
+		const until = new Date(now.getTime() + RETRY_DEFER_MS)
+		for (const row of rows) {
+			try {
+				await this.db
+					.update(sessions)
+					.set({ retryAt: until })
+					.where(
+						and(
+							eq(sessions.id, row.id),
+							isNull(sessions.retriedSessionId),
+							isNotNull(sessions.retryAt),
+						),
+					)
+			} catch (err) {
+				logger.warn('SessionRetryScheduler failed to defer a retry to a later tick', {
+					sessionId: row.id,
+					error: String(err),
+				})
+			}
 		}
 	}
 
