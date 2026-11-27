@@ -108,6 +108,10 @@ function ForYouFeed() {
 	const items = data?.items ?? []
 	const markRead = useMarkRead(workspaceId)
 	const dismiss = useDismissForYou(workspaceId)
+	// The feed's own scroll container. A card's docked footer roots its shadow
+	// observer on this, so "docked to the bottom of the feed" is measured against
+	// the feed's viewport, not the window.
+	const feedScrollRef = useRef<HTMLDivElement>(null)
 
 	const [filterValue, setTypeFilter] = useState<string | undefined>(undefined)
 	const typeFilter = feedKindFilter(filterValue)
@@ -843,7 +847,10 @@ function ForYouFeed() {
 				</ResponsiveDialog>
 			)}
 
-			<div className="-ml-1 min-h-0 w-[calc(100%+0.25rem)] flex-1 overflow-y-auto px-1 pb-14">
+			<div
+				ref={feedScrollRef}
+				className="-ml-1 min-h-0 w-[calc(100%+0.25rem)] flex-1 overflow-y-auto px-1 pb-14"
+			>
 				<div className="flex w-full flex-col">
 					{greetingInPage ? <h1 className="page-title pb-2">{greeting}</h1> : null}
 					{showLead && (
@@ -924,6 +931,7 @@ function ForYouFeed() {
 												repliedText={replied.get(key)?.text}
 												onReplied={(text) => handleReplied(item, text)}
 												onMarkRead={() => dismissAll([item], 'Marked as read')}
+												scrollRootRef={feedScrollRef}
 											/>
 										)
 									})}

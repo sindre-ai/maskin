@@ -70,6 +70,8 @@ interface FeedCardProps {
 	/** Called once the reply is on the server, with the text that was sent. */
 	onReplied: (text: string) => void
 	onMarkRead: () => void
+	/** The feed's own scroll container, so the docked footer's shadow observer roots on it, not the window. */
+	scrollRootRef?: React.RefObject<HTMLDivElement | null>
 }
 
 /**
@@ -94,6 +96,7 @@ export function FeedCard({
 	onMarkRead,
 	onDraftAction,
 	onDraftsDone,
+	scrollRootRef,
 }: FeedCardProps) {
 	const objectId = item.entity_id
 	// A card with no object (the morning budget card): nothing to open, no thread to reply in.
@@ -156,6 +159,36 @@ export function FeedCard({
 	// last so it lands under the filled bar. A plain mention has nothing to
 	// decide and shows only the composer.
 	const options: readonly CardAction[] = useMemo(() => cardActions(item), [item])
+
+	// The answers dock to the bottom edge of the feed while the card is on screen
+	// (see the options render below). A zero-height sentinel just after them sits
+	// out of view exactly while the footer is docked, so the shadow that marks the
+	// dock comes and goes off that sentinel. Rooted on the feed's scroller, not the
+	// window, because the feed is its own scroll container and the footer docks to
+	// it; when the card fits or has reached its end the sentinel is in view and the
+	// bar is back in flow with no shadow.
+	const dockSentinelRef = useRef<HTMLDivElement>(null)
+	const [docked, setDocked] = useState(false)
+	useEffect(() => {
+		// Only an expanded card renders the answers (and the sentinel); a collapsed
+		// row that expands later must attach the observer then, hence `expanded`.
+		// Without a scroller ref (standalone renders) there is no dock to measure,
+		// so skip the observer entirely rather than fall back to the window.
+		if (!expanded || options.length === 0) return
+		const root = scrollRootRef?.current
+		if (!root) return
+		const sentinel = dockSentinelRef.current
+		if (!sentinel) return
+		const observer = new IntersectionObserver(
+			(entries) => {
+				const entry = entries[0]
+				if (entry) setDocked(!entry.isIntersecting)
+			},
+			{ root, threshold: 0 },
+		)
+		observer.observe(sentinel)
+		return () => observer.disconnect()
+	}, [expanded, options, scrollRootRef])
 
 	// A card with nothing to tap still gives the reader a way to act on it.
 	const openTheTask = !objectless && options.length === 0
@@ -406,14 +439,34 @@ export function FeedCard({
 				)}
 
 				{options.length > 0 && (
-					<DecisionOptions
-						variant="row"
-						hideTagWhenAlone
-						defaultLine={defaultOnSilenceLine(decision)}
-						options={options}
-						pendingId={pendingId}
-						onChoose={(option) => chooseOption(option)}
-					/>
+					<>
+						{/* The answers are the card's footer, pinned to the bottom edge of the
+						    feed while the card is on screen and back in flow after the draft at
+						    the card's end. Nothing is reordered and the draft stays whole. The
+						    card frame is overflow-clip (not overflow-hidden) so sticky resolves
+						    against the feed scroller instead of the card. */}
+						{/* biome-ignore lint/a11y/useSemanticElements: a docked bar of answer buttons is a group, not a form fieldset */}
+						<div
+							role="group"
+							aria-label="Answer this decision"
+							data-testid="foryou-decision-dock"
+							data-docked={docked ? 'true' : 'false'}
+							className="sticky bottom-0 z-10 -mx-[22px] border-t border-border bg-card px-[22px] pb-[max(0.25rem,env(safe-area-inset-bottom))] pt-3 data-[docked=true]:shadow-md"
+						>
+							<DecisionOptions
+								variant="row"
+								hideTagWhenAlone
+								defaultLine={defaultOnSilenceLine(decision)}
+								options={options}
+								pendingId={pendingId}
+								onChoose={(option) => chooseOption(option)}
+							/>
+						</div>
+						{/* Zero-height marker, out of view while the footer is docked. The
+						    negative margin cancels the column's gap so adding it does not push
+						    the composer further from the answers than it already sits. */}
+						<div ref={dockSentinelRef} aria-hidden className={cn('h-0', showComposer && '-mb-3')} />
+					</>
 				)}
 
 				{openTheTask && (
@@ -522,7 +575,7 @@ function CardShell({
 			ref={shellRef}
 			data-testid="foryou-feed-card"
 			className={cn(
-				'overflow-hidden rounded-[20px] border border-border bg-card',
+				'overflow-clip rounded-[20px] border border-border bg-card',
 				expanded ? 'shadow-sm' : 'shadow-xs',
 			)}
 		>
