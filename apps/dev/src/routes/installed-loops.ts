@@ -27,6 +27,7 @@ import {
 } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq, inArray, or, sql } from 'drizzle-orm'
+import { CLIENT_SOURCE_HEADER } from '../lib/analytics/knowledge-events'
 import {
 	trackLoopForked,
 	trackLoopInstalled,
@@ -37,11 +38,14 @@ import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import { shouldSkipOnboardingKickoff } from '../lib/onboarding/chief-of-staff-kickoff'
 import { errorSchema, idParamSchema, jsonbField } from '../lib/openapi-schemas'
+import { resolveClientSourceTag } from '../lib/sentry'
 import { serialize } from '../lib/serialize'
 import { isWorkspaceMember, isWorkspaceWriter } from '../lib/workspace-auth'
+import { greetInstalledAgent } from '../services/agent-only-install'
 import type { AgentStorageManager } from '../services/agent-storage'
 import { startLoopChecklistSession } from '../services/loop-checklist-provisioning'
 import {
+	type AgentOnlyInstall,
 	type ChecklistStart,
 	type ProvisionedCounts,
 	SkillNameConflictError,
@@ -128,6 +132,9 @@ const installedLoopResponseSchema = z.object({
 		skills: z.number(),
 		integrations: z.number(),
 	}),
+	// Only for an agent-only listing: the direct message with the installed agent, where it says
+	// hello. Null when the installer is an agent. Absent for a flow, which has its own page.
+	chatId: z.string().uuid().nullable().optional(),
 	metadata: jsonbField.optional(),
 })
 
@@ -308,8 +315,9 @@ app.openapi(installLoopRoute, async (c) => {
 	let installed: typeof installedLoops.$inferSelect
 	let provisioned: ProvisionedCounts
 	let checklistStart: ChecklistStart | null
+	let agentOnly: AgentOnlyInstall | null
 	try {
-		;({ installed, provisioned, checklistStart } = await db.transaction((tx) =>
+		;({ installed, provisioned, checklistStart, agentOnly } = await db.transaction((tx) =>
 			installLoopInTransaction(tx, {
 				workspaceId,
 				actorId,
@@ -370,7 +378,8 @@ app.openapi(installLoopRoute, async (c) => {
 	// Ask the Chief of Staff how to tailor the new loop to this workspace. Suggest-only
 	// and best effort: the install is done, so a failure here is logged, never returned.
 	// Skipped in E2E stacks, which have no LLM credentials for the session to run on.
-	if (!shouldSkipOnboardingKickoff()) {
+	// An agent-only listing has no flow to tailor: the agent says hello instead (below).
+	if (!agentOnly && !shouldSkipOnboardingKickoff()) {
 		startLoopPersonalizationChat({
 			db,
 			sessionManager: c.get('sessionManager'),
@@ -402,10 +411,37 @@ app.openapi(installLoopRoute, async (c) => {
 		})
 	}
 
+	// An agent-only listing: the new agent says hello in a direct message with the installer, and
+	// the reply carries that chat so the app can open it. Best effort, like the steps above: a
+	// failure to open the chat is logged and the install still succeeds.
+	let chatId: string | null | undefined
+	if (agentOnly) {
+		try {
+			;({ chatId } = await greetInstalledAgent({
+				db,
+				sessionManager: c.get('sessionManager'),
+				workspaceId,
+				installerId: actorId,
+				agentId: agentOnly.actorId,
+				firstLook: agentOnly.firstLook,
+				claimedSessionId: c.get('maskinSessionId'),
+				clientSource: resolveClientSourceTag(c.req.header(CLIENT_SOURCE_HEADER)),
+			}))
+		} catch (err) {
+			chatId = null
+			logger.error('Failed to start the hello for an agent-only install', {
+				installedLoopId: installed.id,
+				workspaceId,
+				error: String(err),
+			})
+		}
+	}
+
 	return c.json(
 		{
 			...serialize(installed),
 			provisioned,
+			...(chatId !== undefined ? { chatId } : {}),
 		},
 		201,
 	)
