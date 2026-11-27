@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The call directory extension reads the number and name file the app writes into the shared
+	     App Group folder. Needs the App Groups capability (group.io.maskin.app) on the App ID
+	     io.maskin.app.calldirectory, like the app's and the share extension's. No keychain, no push. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.io.maskin.app</string>
+	</array>
+</dict>
+</plist>
