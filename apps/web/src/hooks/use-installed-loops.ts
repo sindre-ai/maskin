@@ -16,8 +16,9 @@ export function useInstallLoop(workspaceId: string) {
 	return useMutation({
 		mutationFn: ({ loopId, source }: { loopId: string; source?: InstallSource }) =>
 			api.installedLoops.install(workspaceId, loopId, source),
-		onSuccess: () => {
-			toast.success('Flow installed')
+		onSuccess: (row) => {
+			// Only an agent-only install carries a chatId (null or a chat id); a flow's reply has none.
+			toast.success(row?.chatId !== undefined ? 'Agent installed' : 'Flow installed')
 			queryClient.invalidateQueries({ queryKey: queryKeys.installedLoops.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.triggers.all(workspaceId) })
