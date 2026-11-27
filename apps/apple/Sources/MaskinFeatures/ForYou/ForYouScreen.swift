@@ -58,7 +58,8 @@ public struct ForYouScreen: View {
 				newLabel: "New chat with Chief of Staff",
 				live: true, displaySymbol: ShellActions.slidersSymbol,
 				displayActive: !runtime.store.options.isDefaultDisplay,
-				displayToggle: { showDisplay = true })
+				// iPhone: no filter button in the bar (the iPad keeps it).
+				displayToggle: ShellIdiom.isPhone ? nil : { showDisplay = true })
 		)
 		.sheet(isPresented: $showDisplay) { ForYouDisplaySheet(store: runtime.store) }
 		.task(id: environment.workspaceId) {

@@ -20,17 +20,20 @@ public enum ShellTab: String, CaseIterable, Hashable, Identifiable, Sendable {
 		case .loops: "Flows"
 		case .objects: "Items"
 		case .search: "Search"
-		case .newChat: "New chat with Chief of Staff"
+		case .newChat: "New"
 		}
 	}
+
+	/// What VoiceOver says for the round "+" tab, whose visible title is only "New".
+	public static let newChatAccessibilityLabel = "New chat with Chief of Staff"
 
 	/// What the floating bar at the top of this tab's root screen holds, left to right. Search has
 	/// none: it is the system search tab, and its field is the bar.
 	public var barItems: [ShellBarItem] {
 		switch self {
 		case .forYou: [.live, .avatar]
-		case .chats: [.search, .display, .new, .avatar]
-		case .loops: [.marketplace, .display, .avatar]
+		case .chats: [.search, .display, .avatar]
+		case .loops: [.marketplace, .display]
 		case .objects: [.search, .display, .avatar]
 		case .search, .newChat: [.avatar]
 		}

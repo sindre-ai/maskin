@@ -323,10 +323,15 @@ private struct AdaptiveTabs: View {
 			// on the Mac). It rides the system search role for the detached look, but it is a
 			// button: picking it starts a chat with the Chief of Staff (see `AppRuntime.selectedTab`)
 			// and the tab you were on stays. Search lives in the profile sheet. Not on the iPad: its
-			// "+" is on each screen (For you starts the same chat).
+			// "+" is on each screen (For you starts the same chat). Before iOS 26 this is a plain
+			// trailing tab: it shows the short title "New" beside the icon, and VoiceOver reads the
+			// full line.
 			if !ShellIdiom.isPad {
-				Tab(ShellTab.newChat.title, systemImage: ShellTab.newChat.systemImage, value: ShellTab.newChat, role: .search) {
+				Tab(value: ShellTab.newChat, role: .search) {
 					Color.clear
+				} label: {
+					Label(ShellTab.newChat.title, systemImage: ShellTab.newChat.systemImage)
+						.accessibilityLabel(ShellTab.newChatAccessibilityLabel)
 				}
 			}
 		}
