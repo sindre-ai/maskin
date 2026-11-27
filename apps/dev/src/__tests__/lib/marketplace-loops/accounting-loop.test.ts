@@ -35,7 +35,7 @@ describe('Accounting loop definition', () => {
 		expect(ACCOUNTING_LOOP.slug).toBe('accounting-loop')
 		expect(ACCOUNTING_LOOP.name).toBe('Accounting')
 		expect(ACCOUNTING_LOOP.useCase).toBe('Finance')
-		expect(ACCOUNTING_LOOP.version).toBe('1.5.0')
+		expect(ACCOUNTING_LOOP.version).toBe('1.6.0')
 		expect(ACCOUNTING_LOOP.description.length).toBeGreaterThan(0)
 	})
 
@@ -88,14 +88,15 @@ describe('Accounting loop definition', () => {
 		expect(connect?.body).not.toMatch(/custom tool/)
 	})
 
-	it('ships one actor, four triggers and four skills, no duplicates', () => {
+	it('ships one actor, five triggers and five skills, no duplicates', () => {
 		expect(ACCOUNTING_LOOP_ACTOR_IDS).toEqual([ACCOUNTING_LOOP_ACTOR_BOOKKEEPER])
-		expect(ACCOUNTING_LOOP_TRIGGER_IDS.length).toBe(4)
-		expect(ACCOUNTING_LOOP_SKILL_IDS.length).toBe(4)
+		expect(ACCOUNTING_LOOP_TRIGGER_IDS.length).toBe(5)
+		expect(ACCOUNTING_LOOP_SKILL_IDS.length).toBe(5)
 		expect(new Set(ACCOUNTING_LOOP_SKILL_IDS).size).toBe(ACCOUNTING_LOOP_SKILL_IDS.length)
 		expect(ACCOUNTING_LOOP_SKILL_IDS.map((id) => getSkillData(id).name).sort()).toEqual([
 			'accounting-connection-check',
 			'accounting-rule-check',
+			'accounting-year-end-pack',
 			'bookkeeping-draft-method',
 			'vat-return-check',
 		])
@@ -541,6 +542,102 @@ describe('Accounting loop definition', () => {
 		it('stops and names the owner when the report tool is not there', () => {
 			expect(skill()).toMatch(/If the tool is not among your tools, say so in the first line/)
 			expect(skill()).toMatch(/Dinero connected by sign-in/)
+		})
+	})
+
+	// The year-end pack: open items and what only a person signs or files. A draft checklist for the
+	// owner, never filed or signed by the flow, with no human accountant step.
+	describe('year-end pack', () => {
+		const pack = () =>
+			skillTexts().find((t) => t.startsWith('---\nname: accounting-year-end-pack')) ?? ''
+		const yearEndTrigger = () =>
+			ACCOUNTING_LOOP_TRIGGER_IDS.map((id) => getTriggerData(id)).find((t) =>
+				t.name.startsWith('Year-end pack check'),
+			)
+
+		it('lists the three kinds of open item in a fixed table with counts and kroner', () => {
+			const text = pack()
+			expect(text).toMatch(/Missing receipts\./)
+			expect(text).toMatch(/Bank lines with no matching voucher\./)
+			expect(text).toMatch(/Uncategorised vouchers\./)
+			expect(text).toContain('| kind | items | amount in kroner | where to start |')
+			expect(text).toMatch(/table counts equal the number of lines listed under it/)
+		})
+
+		it('says plainly that the owner signs and files, with no human accountant step', () => {
+			const text = pack()
+			expect(text).toMatch(/The owner signs and files themselves: the flow does not/)
+			expect(text).toMatch(/the flow has no other review step/)
+			expect(text).toMatch(/The rule check \(skill accounting-rule-check\) is the control/)
+			expect(text).toMatch(/5\. What the owner still does\./)
+			expect(text).toMatch(/Prepare, sign and file the annual report/)
+			expect(text).toMatch(/you sign and file yourself/)
+			expect(yearEndTrigger()?.actionPrompt).toMatch(/the owner signs and files themselves/)
+			expect(actorTexts().join('\n')).toMatch(/owner signs and files themselves/)
+			expect(text).not.toMatch(/adviser reviews/i)
+			expect(ACCOUNTING_LOOP.description).toMatch(/the flow never signs or files/)
+		})
+
+		it('never says anything was booked, signed, filed or approved', () => {
+			const all = [pack(), yearEndTrigger()?.actionPrompt ?? '', ...actorTexts()].join('\n')
+			expect(all).not.toMatch(
+				/\b(has|have|had|was|were|is|are|been|get|gets) (been )?(filed|signed|submitted)\b/i,
+			)
+			expect(pack()).toMatch(/never book, finalise, change, approve, pay, send, sign or file/i)
+			expect(pack()).toMatch(/Never state that anything was booked, signed, filed or approved/)
+		})
+
+		it('keeps one set of figures: none are computed in this pack', () => {
+			expect(pack()).toMatch(/Figures are not part of this version of the pack/)
+			expect(pack()).toMatch(/Do not compute figures/)
+		})
+
+		it('starts 60 days before the year end, once per accounting year', () => {
+			const trigger = yearEndTrigger()
+			expect(trigger?.type).toBe('cron')
+			expect(trigger?.name).toMatch(/UTC/)
+			expect(trigger?.actionPrompt).toContain('flow named Accounting')
+			expect(trigger?.actionPrompt).toMatch(/more than 60 days away/)
+			expect(trigger?.actionPrompt).toMatch(
+				/workspace file tool list_files \(never Dinero's list_files[^)]*\) to look for a file in this flow named exactly Year-end pack/,
+			)
+			expect(trigger?.actionPrompt).toMatch(/If one exists, say nothing/)
+			expect(pack()).toMatch(/Make one pack per accounting year/)
+			expect(pack()).toMatch(/named exactly Year-end pack followed by the accounting year's name/)
+			expect(pack()).toMatch(/workspace file tool create_file/)
+			expect(pack()).toMatch(/workspace file tool list_files \(never Dinero's list_files/)
+		})
+
+		it('ends silently when the connection fails, leaving the owner note to the 06:00 check', () => {
+			const prompt = yearEndTrigger()?.actionPrompt ?? ''
+			expect(prompt).toMatch(/If the connection fails, end the session without a comment/)
+			expect(prompt).toMatch(/weekly connection check at 06:00/)
+			expect(prompt).not.toMatch(/connection fails, post/)
+		})
+
+		it('uses only Dinero tools that are on the allowed list', () => {
+			const allowed = new Set([
+				'CreatePurchaseVoucher',
+				'upload_file',
+				'list_organizations',
+				'list_accounting_years',
+				'get_chart_of_accounts',
+				'list_purchase_accounts',
+				'list_vat_types',
+				'list_contacts',
+				'get_contact',
+				'GetContactByName',
+				'list_vouchers',
+				'get_purchase_voucher',
+				'list_files',
+				'list_voucher_file_cards',
+				'get_purchase_drafts_for_file',
+				'SearchBankTransactions',
+			])
+			const named =
+				pack().match(/\b(?:list_[a-z_]+|get_[a-z_]+|SearchBankTransactions|Create[A-Za-z]+)\b/g) ??
+				[]
+			for (const name of named) expect(allowed.has(name)).toBe(true)
 		})
 	})
 
