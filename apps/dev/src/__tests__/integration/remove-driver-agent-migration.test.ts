@@ -79,6 +79,7 @@ describe('migration 0179_remove_driver_agent (Integration)', () => {
 		const untouched = await insertObject(db, ws.id, survivors[0].id, {
 			type: 'task',
 			status: 'todo',
+			driver: survivors[0].id,
 		})
 
 		await runMigration()
