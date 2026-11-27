@@ -76,10 +76,10 @@ public enum FlowsOverview {
 		return "\(needing) of \(loops.count) \(loops.count == 1 ? "flow needs" : "flows need") you."
 	}
 
-	/// "2 in progress · 5 closed" under a card's figure; nil when the flow has no work yet.
+	/// "2 open · 5 closed" under a card's figure; nil when the flow has no work yet.
 	public static func workLine(_ loop: LoopSummary) -> String? {
 		var parts: [String] = []
-		if loop.inProgressCount > 0 { parts.append("\(loop.inProgressCount) in progress") }
+		if loop.inProgressCount > 0 { parts.append("\(loop.inProgressCount) open") }
 		if loop.closedCount > 0 { parts.append("\(loop.closedCount) closed") }
 		return parts.isEmpty ? nil : parts.joined(separator: " · ")
 	}

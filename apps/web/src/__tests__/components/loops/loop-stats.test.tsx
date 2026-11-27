@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { buildLoopSummary } from '../../factories'
 
 describe('LoopStats (legacy 3-tile)', () => {
-	it('renders in progress, closed, and median to close', () => {
+	it('renders open, closed, and median to close', () => {
 		const loop = buildLoopSummary({
 			inProgressCount: 6,
 			closedCount: 128,
@@ -13,7 +13,7 @@ describe('LoopStats (legacy 3-tile)', () => {
 		render(<LoopStats loop={loop} />)
 
 		expect(screen.getByText('6')).toBeInTheDocument()
-		expect(screen.getByText('in progress')).toBeInTheDocument()
+		expect(screen.getByText('open')).toBeInTheDocument()
 		expect(screen.getByText('128')).toBeInTheDocument()
 		expect(screen.getByText('closed')).toBeInTheDocument()
 		expect(screen.getByText('11d')).toBeInTheDocument()
