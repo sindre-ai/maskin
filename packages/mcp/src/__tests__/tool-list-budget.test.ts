@@ -25,7 +25,9 @@ const wsId = '00000000-0000-0000-0000-0000000000aa'
 // on purpose, with the new size in the PR, never to make a red test green.
 // Raised 26 Nov 2026 for the three Gmail mail tools (search, read thread, change labels):
 // 203,748 characters with their first wording, about 1,100 fewer after trimming it.
-const TOOL_LIST_BUDGET = 204_000
+// Raised 27 Nov 2026 for the two native Google Calendar read tools: 205,326 characters after
+// trimming their wording.
+const TOOL_LIST_BUDGET = 206_000
 const PER_TOOL_BUDGET: Record<string, number> = {
 	create_comment: 12_000,
 	post_conversation_message: 7_000,

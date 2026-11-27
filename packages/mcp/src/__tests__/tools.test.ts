@@ -107,6 +107,8 @@ const ALL_TOOL_NAMES = [
 	'gmail_search_mail',
 	'gmail_read_thread',
 	'gmail_change_labels',
+	'google_calendar_list_calendars',
+	'google_calendar_list_events',
 	'resend_send_email',
 	'approve_draft_from_chat',
 	'approve_object_draft',

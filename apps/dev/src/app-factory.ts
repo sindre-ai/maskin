@@ -71,6 +71,7 @@ import integrationsDeepdotsRoutes from './routes/integrations-deepdots'
 import integrationsDeepdotsMcpRoutes from './routes/integrations-deepdots-mcp'
 import integrationsGatewayRoutes from './routes/integrations-gateway'
 import integrationsGmailRoutes from './routes/integrations-gmail'
+import integrationsGoogleCalendarRoutes from './routes/integrations-google-calendar'
 import integrationsGoogleDisconnectRoutes from './routes/integrations-google-disconnect'
 import integrationsGoogleDriveRoutes from './routes/integrations-google-drive'
 import integrationsGoogleDriveMcpRoutes from './routes/integrations-google-drive-mcp'
@@ -657,6 +658,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/integrations', integrationsGatewayRoutes)
 	// Gmail send (the gmail_send_email tool's route), before the generic catch-all.
 	app.route('/api/integrations/gmail', integrationsGmailRoutes)
+	// Native calendar reads (the google_calendar_* tool routes), before the generic catch-all.
+	app.route('/api/integrations/google-calendar', integrationsGoogleCalendarRoutes)
 	// Resend send (the resend_send_email tool's route); the gateway holds the MCP's own send tools.
 	app.route('/api/integrations/resend', integrationsResendRoutes)
 	app.route('/api/integrations', integrationsRoutes)

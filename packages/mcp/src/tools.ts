@@ -2531,6 +2531,32 @@ export const tools = {
 			remove_labels: z.array(z.string()).max(20).optional().describe('"UNREAD" marks it read.'),
 		}),
 	},
+	google_calendar_list_calendars: {
+		description:
+			"List the connected Google account's calendars through the normal Google Calendar API (works when the hosted Calendar tools refuse the sign-in). Needs Read access. Returns calendar_id, summary, primary, access_role, time_zone and next_page_token. Read only. Use a calendar_id with google_calendar_list_events.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			account: z.string().optional().describe('Account email, when several are connected.'),
+			page_token: z.string().optional().describe('next_page_token of the last result.'),
+		}),
+	},
+	google_calendar_list_events: {
+		description:
+			'List events on the connected Google Calendar in a time window, in start order, through the normal API (works when the hosted tools refuse the sign-in). Needs Read access. Defaults to the next 30 days on the primary calendar. Each event has summary, start, end, all_day, location, organizer, attendees (first 20), attendee_count, self_attending and self_response. Read only.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			account: z.string().optional().describe('Account email, when several are connected.'),
+			calendar_id: z
+				.string()
+				.optional()
+				.describe('From google_calendar_list_calendars. Left out: primary.'),
+			time_min: z.string().optional().describe('ISO with offset. Default now.'),
+			time_max: z.string().optional().describe('ISO with offset. Default 30 days after time_min.'),
+			max_results: z.number().int().min(1).max(50).optional().describe('Default 25.'),
+			q: z.string().max(200).optional().describe('Events whose text contains this.'),
+			page_token: z.string().optional().describe('next_page_token of the last result.'),
+		}),
+	},
 	resend_send_email: {
 		description:
 			'Send an email from your own maskin.io mailbox through Resend. Cannot be undone. create_objects with `metadata: { kind: "email", to: "...", subject: "...", cc: "..." }` and the text as `content`, then call this with only `object_id`: it sends the object as it reads now, once. With send setting ask first, a person must approve that exact text: mention them with create_comment (no `decision` needed); they approve it in a preview (may edit first) or say yes in chat (then call approve_draft_from_chat). Any edit withdraws approval. If refused for no approval, end your turn; you are woken after approval. Always allow sends at once; deny is refused. Files: create_file ids in `metadata.attachment_file_ids` (max 5, 20 MB total). The sender is your own mailbox, set by an admin (none recorded: refused). Never pass `to`, `subject`, `body` or `from`. If the outcome is unclear, calling again with the same object_id is safe.',

@@ -10,7 +10,9 @@ import { createMcpServer } from '../server'
 // the new size in the PR, never to make a red test green.
 // Raised 26 Nov 2026 for the three Gmail mail tools: 222,605 bytes with their first wording,
 // about 1,100 fewer after trimming it.
-const WIRE_TOOL_LIST_BUDGET = 223_000
+// Raised 27 Nov 2026 for the two native Google Calendar read tools: 224,364 bytes after trimming
+// their wording.
+const WIRE_TOOL_LIST_BUDGET = 225_000
 
 describe('tool list on the wire', () => {
 	it('stays under its byte budget', async () => {

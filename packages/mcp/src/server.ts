@@ -9208,6 +9208,87 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'google_calendar_list_calendars',
+		{
+			description: tools.google_calendar_list_calendars.description,
+			inputSchema: tools.google_calendar_list_calendars.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const reply = (text: string, isError = false) => ({
+				_meta: meta('google_calendar_list_calendars', config, args.workspace_id),
+				content: [{ type: 'text' as const, text }],
+				...(isError ? { isError: true } : {}),
+			})
+			try {
+				const params = new URLSearchParams()
+				if (args.account) params.set('account', args.account)
+				if (args.page_token) params.set('page_token', args.page_token)
+				const found = await apiCall(
+					config,
+					'GET',
+					`/api/integrations/google-calendar/calendars?${params}`,
+					undefined,
+					{ workspaceId: args.workspace_id },
+				)
+				return reply(JSON.stringify(found))
+			} catch (err) {
+				// The server words every refusal for the agent, so pass it on as a result.
+				if (parseApiErrorStatus(err) === null) throw err
+				const detail = (err instanceof Error ? err.message : String(err)).replace(
+					/^API error \d{3}:\s*/,
+					'',
+				)
+				return reply(`Not listed. ${detail}`, true)
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'google_calendar_list_events',
+		{
+			description: tools.google_calendar_list_events.description,
+			inputSchema: tools.google_calendar_list_events.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const reply = (text: string, isError = false) => ({
+				_meta: meta('google_calendar_list_events', config, args.workspace_id),
+				content: [{ type: 'text' as const, text }],
+				...(isError ? { isError: true } : {}),
+			})
+			try {
+				const params = new URLSearchParams()
+				if (args.account) params.set('account', args.account)
+				if (args.calendar_id) params.set('calendar_id', args.calendar_id)
+				if (args.time_min) params.set('time_min', args.time_min)
+				if (args.time_max) params.set('time_max', args.time_max)
+				if (args.max_results !== undefined) params.set('max_results', String(args.max_results))
+				if (args.q) params.set('q', args.q)
+				if (args.page_token) params.set('page_token', args.page_token)
+				const found = await apiCall(
+					config,
+					'GET',
+					`/api/integrations/google-calendar/events?${params}`,
+					undefined,
+					{ workspaceId: args.workspace_id },
+				)
+				return reply(JSON.stringify(found))
+			} catch (err) {
+				// The server words every refusal for the agent, so pass it on as a result.
+				if (parseApiErrorStatus(err) === null) throw err
+				const detail = (err instanceof Error ? err.message : String(err)).replace(
+					/^API error \d{3}:\s*/,
+					'',
+				)
+				return reply(`Not listed. ${detail}`, true)
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'approve_draft_from_chat',
 		{
 			description: tools.approve_draft_from_chat.description,
