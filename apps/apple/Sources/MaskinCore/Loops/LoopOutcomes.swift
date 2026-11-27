@@ -81,14 +81,14 @@ public enum LoopQuality {
 		public var id: String { label }
 	}
 
-	/// Every real number the API has for a loop's health: in progress, closed, median time to close,
+	/// Every real number the API has for a loop's health: open, closed, median time to close,
 	/// waiting, next run. Dashes for what is missing. The Outcome tab shows only `cardStats`.
 	public static func stats(
 		for loop: LoopSummary, nextRun: Date?, duration: (TimeInterval) -> String,
 		date: (Date) -> String
 	) -> [Stat] {
 		[
-			Stat(label: "In progress", value: "\(loop.inProgressCount)"),
+			Stat(label: "Open", value: "\(loop.inProgressCount)"),
 			Stat(label: "Closed", value: "\(loop.closedCount)"),
 			Stat(label: "Median time", value: loop.medianTimeToClose.map(duration) ?? "—"),
 			Stat(label: "Needs you", value: "\(loop.waitingCount)"),

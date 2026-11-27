@@ -52,7 +52,7 @@ const DEFAULT_ORDER: 'asc' | 'desc' = 'desc'
 const LOOP_ORDER_COLUMNS = [
 	{ id: 'updatedAt', label: 'Last activity', canHide: false },
 	{ id: 'name', label: 'Name', canHide: false },
-	{ id: 'inProgressCount', label: 'In progress', canHide: false },
+	{ id: 'inProgressCount', label: 'Open', canHide: false },
 ]
 
 type FlowsView = 'cards' | 'list'

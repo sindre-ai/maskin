@@ -127,9 +127,9 @@ public struct LoopSummary: Identifiable, Equatable, Sendable, Codable {
 		return total == 0 ? 0 : Double(closedCount) / Double(total)
 	}
 
-	/// "3 in progress · 12 closed"
+	/// "3 open · 12 closed"
 	public var statsLine: String {
-		"\(inProgressCount) in progress · \(closedCount) closed"
+		"\(inProgressCount) open · \(closedCount) closed"
 	}
 
 	/// What a pause or resume sets: resuming goes back to the first live rung, like the web app.

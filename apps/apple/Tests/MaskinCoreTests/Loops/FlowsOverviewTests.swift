@@ -30,8 +30,8 @@ struct FlowsOverviewTests {
 	@Test("the work line leaves out what is zero")
 	func workLine() {
 		#expect(FlowsOverview.workLine(loopRow("a", inProgress: 0, closed: 0)) == nil)
-		#expect(FlowsOverview.workLine(loopRow("a", inProgress: 2, closed: 0)) == "2 in progress")
-		#expect(FlowsOverview.workLine(loopRow("a", inProgress: 2, closed: 5)) == "2 in progress · 5 closed")
+		#expect(FlowsOverview.workLine(loopRow("a", inProgress: 2, closed: 0)) == "2 open")
+		#expect(FlowsOverview.workLine(loopRow("a", inProgress: 2, closed: 5)) == "2 open · 5 closed")
 	}
 
 	@Test("figures come from the most urgent target and are nil without one")
