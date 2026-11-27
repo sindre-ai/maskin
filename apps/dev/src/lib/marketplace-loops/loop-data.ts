@@ -35,6 +35,8 @@ import marketWatchTriggersData from './data/market-watch-triggers.json'
 import meetingLoopActorsData from './data/meeting-loop-actors.json'
 import meetingLoopSkillsData from './data/meeting-loop-skills.json'
 import meetingLoopTriggersData from './data/meeting-loop-triggers.json'
+import presentationDesignerActorsData from './data/presentation-designer-actors.json'
+import presentationDesignerSkillsData from './data/presentation-designer-skills.json'
 import productDeliveryActorsData from './data/product-delivery-actors.json'
 import productDeliverySkillsData from './data/product-delivery-skills.json'
 import productDeliveryTriggersData from './data/product-delivery-triggers.json'
@@ -110,6 +112,7 @@ const actorsById: Record<string, ActorData> = {
 	...(accountingActorsData as Record<string, ActorData>),
 	...(marketWatchActorsData as Record<string, ActorData>),
 	...(meetingLoopActorsData as Record<string, ActorData>),
+	...(presentationDesignerActorsData as Record<string, ActorData>),
 	...(discoveryActorsData as Record<string, ActorData>),
 	...(productDeliveryActorsData as Record<string, ActorData>),
 	...(productReleaseActorsData as Record<string, ActorData>),
@@ -137,6 +140,7 @@ const skillsById: Record<string, SkillData> = {
 	...(accountingSkillsData as Record<string, SkillData>),
 	...(marketWatchSkillsData as Record<string, SkillData>),
 	...(meetingLoopSkillsData as Record<string, SkillData>),
+	...(presentationDesignerSkillsData as Record<string, SkillData>),
 	...(discoverySkillsData as Record<string, SkillData>),
 	...(productDeliverySkillsData as Record<string, SkillData>),
 	...(productReleaseSkillsData as Record<string, SkillData>),
