@@ -201,7 +201,7 @@ app.openapi(listTrashRoute, (async (c) => {
 		.limit(limit ?? 200)
 		.offset(offset ?? 0)
 
-	const [{ total }] = await db.select({ total: count() }).from(trash).where(where)
+	const [totalRow] = await db.select({ total: count() }).from(trash).where(where)
 
 	return c.json(
 		{
@@ -212,7 +212,7 @@ app.openapi(listTrashRoute, (async (c) => {
 					payload: row.payload as Record<string, unknown>,
 				}),
 			),
-			total: Number(total ?? 0),
+			total: Number(totalRow?.total ?? 0),
 			trash_retention_days: TRASH_RETENTION_DAYS,
 		},
 		200,
