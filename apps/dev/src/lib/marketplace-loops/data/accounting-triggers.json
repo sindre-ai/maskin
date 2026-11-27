@@ -48,5 +48,17 @@
 		"actionPrompt": "Run the VAT return check for the flow named Accounting (find it with list_loops). If this session starts more than 1 hour after its scheduled time, do nothing, say nothing and stop. Load the skill vat-return-check and follow it. It reads the next VAT due date from Skat, and does nothing at all while that date is more than 28 days away, so on most Mondays stay silent. When the due date is near, it reads the VAT report with get_vat_report, writes the draft check note and posts one short comment on the flow with the link. Never file anything, and never claim that a return went out.",
 		"targetActorId": "2efeee74-29d6-4ef6-854a-e8c05cecfe9b",
 		"enabled": true
+	},
+	"5d777562-ac02-4250-bff2-09703e64ec66": {
+		"id": "5d777562-ac02-4250-bff2-09703e64ec66",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Deadline watch (Mon 07:00 UTC)",
+		"type": "cron",
+		"config": {
+			"expression": "0 7 * * 1"
+		},
+		"actionPrompt": "Run the weekly deadline watch for the flow named Accounting (find it with list_loops). If this session starts more than 1 hour after Monday 07:00 UTC, do nothing and end with one line. Otherwise load the skill accounting-deadline-watch and run it exactly as it says: confirm the next VAT, payroll tax, corporate tax and annual report dates at the source and cite each page, keep the next four on the context page, and speak only when a date is 30 days away or less and not yet handled. When nothing is that close, say nothing and end the session. Draft only: never file, pay, sign, book or send anything, and never try to fix a problem by calling a tool that is not on the allowed list.",
+		"targetActorId": "2efeee74-29d6-4ef6-854a-e8c05cecfe9b",
+		"enabled": true
 	}
 }

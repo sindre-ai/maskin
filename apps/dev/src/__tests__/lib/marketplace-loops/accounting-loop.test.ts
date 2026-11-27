@@ -35,7 +35,7 @@ describe('Accounting loop definition', () => {
 		expect(ACCOUNTING_LOOP.slug).toBe('accounting-loop')
 		expect(ACCOUNTING_LOOP.name).toBe('Accounting')
 		expect(ACCOUNTING_LOOP.useCase).toBe('Finance')
-		expect(ACCOUNTING_LOOP.version).toBe('1.5.0')
+		expect(ACCOUNTING_LOOP.version).toBe('1.6.0')
 		expect(ACCOUNTING_LOOP.description.length).toBeGreaterThan(0)
 	})
 
@@ -88,13 +88,14 @@ describe('Accounting loop definition', () => {
 		expect(connect?.body).not.toMatch(/custom tool/)
 	})
 
-	it('ships one actor, four triggers and four skills, no duplicates', () => {
+	it('ships one actor, five triggers and five skills, no duplicates', () => {
 		expect(ACCOUNTING_LOOP_ACTOR_IDS).toEqual([ACCOUNTING_LOOP_ACTOR_BOOKKEEPER])
-		expect(ACCOUNTING_LOOP_TRIGGER_IDS.length).toBe(4)
-		expect(ACCOUNTING_LOOP_SKILL_IDS.length).toBe(4)
+		expect(ACCOUNTING_LOOP_TRIGGER_IDS.length).toBe(5)
+		expect(ACCOUNTING_LOOP_SKILL_IDS.length).toBe(5)
 		expect(new Set(ACCOUNTING_LOOP_SKILL_IDS).size).toBe(ACCOUNTING_LOOP_SKILL_IDS.length)
 		expect(ACCOUNTING_LOOP_SKILL_IDS.map((id) => getSkillData(id).name).sort()).toEqual([
 			'accounting-connection-check',
+			'accounting-deadline-watch',
 			'accounting-rule-check',
 			'bookkeeping-draft-method',
 			'vat-return-check',
@@ -541,6 +542,132 @@ describe('Accounting loop definition', () => {
 		it('stops and names the owner when the report tool is not there', () => {
 			expect(skill()).toMatch(/If the tool is not among your tools, say so in the first line/)
 			expect(skill()).toMatch(/Dinero connected by sign-in/)
+		})
+	})
+
+	// The deadline watch: one Monday cron trigger, on in a fresh install, run by the Bookkeeper. It
+	// confirms four dates at the source, keeps them on one page, and speaks only when a date is
+	// 30 days away or less and not yet handled. It never files or pays.
+	describe('deadline watch', () => {
+		const watch = () =>
+			skillTexts().find((t) => t.startsWith('---\nname: accounting-deadline-watch')) ?? ''
+		const watchTrigger = () =>
+			ACCOUNTING_LOOP_TRIGGER_IDS.map((id) => getTriggerData(id)).find((t) =>
+				t.name.startsWith('Deadline watch'),
+			)
+
+		it('runs every Monday at 07:00 UTC, on in a fresh install, for the Bookkeeper', () => {
+			const trigger = watchTrigger()
+			expect(trigger?.type).toBe('cron')
+			expect(trigger?.config).toMatchObject({ expression: '0 7 * * 1' })
+			expect(trigger?.name).toMatch(/UTC/)
+			expect(trigger?.enabled).toBe(true)
+			expect(trigger?.targetActorId).toBe(ACCOUNTING_LOOP_ACTOR_BOOKKEEPER)
+			expect(trigger?.actionPrompt).toContain('flow named Accounting')
+			expect(trigger?.actionPrompt).toContain('accounting-deadline-watch')
+		})
+
+		it('does nothing when the session starts more than an hour late', () => {
+			expect(watchTrigger()?.actionPrompt).toMatch(
+				/more than 1 hour after Monday 07:00 UTC, do nothing and end with one line/,
+			)
+		})
+
+		it('confirms the four dates at the source and cites the page, never from memory', () => {
+			const text = watch()
+			expect(text).toMatch(/1\. VAT return\./)
+			expect(text).toMatch(/2\. Payroll tax\. Only if the page says there are employees/)
+			expect(text).toMatch(/3\. Corporate tax\./)
+			expect(text).toMatch(/4\. Annual report\./)
+			expect(text).toContain('skat.dk')
+			expect(text).toContain('erhvervsstyrelsen.dk')
+			expect(text).toMatch(/Never use a date, a rate or a limit from memory/)
+			expect(text).toMatch(/Never estimate a date/)
+			expect(text).toMatch(/Never work the period out from turnover yourself/)
+		})
+
+		it('keeps the next dates in one table on one context page', () => {
+			const text = watch()
+			expect(text).toMatch(/one file in the flow named exactly Accounting context/)
+			expect(text).toMatch(/never Dinero's list_files/)
+			expect(text).toContain(
+				'| kind | next date | period or year it covers | source page | read on | handled | last told |',
+			)
+			expect(text).toMatch(/never make a second one/)
+			expect(text).toMatch(/at most 3 questions at a time/)
+		})
+
+		it('keeps what was handled and told in the table, carried over only for the same date', () => {
+			const text = watch()
+			expect(text).toMatch(/must not wipe them/)
+			expect(text).toMatch(
+				/copy handled and last told from the old row only if its next date is exactly the same/,
+			)
+			expect(text).toMatch(/Skip a row whose handled column says yes/)
+			expect(text).toMatch(
+				/Skip a row whose last told column holds a date when more than 7 days are still left/,
+			)
+			expect(text).toMatch(/write today's date in the last told column/)
+		})
+
+		it('speaks only when a date is within 30 days and not handled, otherwise stays silent', () => {
+			const text = watch()
+			expect(text).toMatch(/Silent when nothing is within 30 days/)
+			expect(text).toMatch(/30 days away or less, counting today/)
+			expect(text).toMatch(/If no row is left, you are done: say nothing/)
+			expect(watchTrigger()?.actionPrompt).toMatch(/When nothing is that close, say nothing/)
+		})
+
+		it('drafts the work as a file with open items and what the owner still does', () => {
+			const text = watch()
+			expect(text).toMatch(/exactly Deadline work, the kind, and the due date/)
+			expect(text).toContain('| kind | items | amount in kroner | where to start |')
+			expect(text).toMatch(/Figures are not part of this draft/)
+			expect(text).toMatch(/Do not compute a VAT or tax amount/)
+			expect(text).toMatch(/The owner files and pays themselves, the flow does not/)
+			expect(text).toMatch(/Each line starts with the owner/)
+		})
+
+		it('never files, pays, signs or says anything was', () => {
+			const all = [watch(), watchTrigger()?.actionPrompt ?? '', ...actorTexts()].join('\n')
+			expect(watch()).toMatch(/It never files, pays, signs, books or sends anything/)
+			expect(watchTrigger()?.actionPrompt).toMatch(/never file, pay, sign, book or send anything/)
+			expect(all).not.toMatch(
+				/\b(has|have|had|was|were|is|are|been|get|gets) (been )?(filed|paid|signed|submitted)\b/i,
+			)
+		})
+
+		it('uses only Dinero tools that are on the allowed list', () => {
+			const allowed = new Set([
+				'CreatePurchaseVoucher',
+				'upload_file',
+				'list_organizations',
+				'list_accounting_years',
+				'get_chart_of_accounts',
+				'list_purchase_accounts',
+				'list_vat_types',
+				'list_contacts',
+				'get_contact',
+				'GetContactByName',
+				'list_vouchers',
+				'get_purchase_voucher',
+				'list_files',
+				'list_voucher_file_cards',
+				'get_purchase_drafts_for_file',
+				'SearchBankTransactions',
+			])
+			const named =
+				watch().match(/\b(?:list_[a-z_]+|get_[a-z_]+|SearchBankTransactions|Create[A-Za-z]+)\b/g) ??
+				[]
+			// create_file is the workspace file tool, not a Dinero tool.
+			for (const name of named) expect(allowed.has(name)).toBe(true)
+		})
+
+		it('tells the Bookkeeper about the watch', () => {
+			expect(actorTexts().join('\n')).toMatch(
+				/# Deadline watch\nEvery Monday, load the skill accounting-deadline-watch/,
+			)
+			expect(ACCOUNTING_LOOP.description).toMatch(/Every Monday it also confirms your next VAT/)
 		})
 	})
 
