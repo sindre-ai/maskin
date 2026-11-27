@@ -1,12 +1,15 @@
 import type { ErrorEvent } from '@sentry/node'
 
-// The maskin-dev Sentry quota (5,000 a month) ran out on 21 Nov 2026 and the plan has no
-// per-key rate limit, so the app caps itself. To remove the cap, delete the
-// createSentryHourlyCap() step from beforeSend in sentry.ts (and this file).
-export const HOURLY_EVENT_CAP = 8
-// Warnings and below may use half the hour's budget, so a burst of low-severity events cannot
+// The maskin-dev Sentry quota (5,000 a month, shared with maskin-web and maskin-ios) ran out on
+// 21 Nov 2026 and the plan has no per-key rate limit, so the app caps itself.
+//
+// The cap is low enough that dev cannot eat the shared pool: 3 an hour is 2,160 a month at most,
+// leaving room for the web, the agent server and the iOS crash reports the quota mostly exists for.
+// To remove the cap, delete the createSentryHourlyCap() step from beforeSend in sentry.ts (and this file).
+export const HOURLY_EVENT_CAP = 3
+// Warnings and below may use one of the three slots, so a burst of low-severity events cannot
 // use up the room that errors and fatals need.
-export const LOW_SEVERITY_CAP = 4
+export const LOW_SEVERITY_CAP = 1
 export const HOURLY_CAP_WINDOW_MS = 60 * 60 * 1000
 
 /**
