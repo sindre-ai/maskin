@@ -25,6 +25,11 @@ export type IntroScanArgs = {
 	workspaceId: string
 	agent: { id: string; name: string; description: string | null }
 	recipient: { id: string; name: string }
+	/**
+	 * Set for an agent installed from the marketplace: where to look first to fit this person
+	 * (for example knowledge pages and files for a design style). The scan then reads that too.
+	 */
+	firstLook?: string
 }
 
 /** Resolves to null whenever there is nothing usable: the caller then falls back to generic steps. */
@@ -33,13 +38,23 @@ export type IntroScanRunner = (args: IntroScanArgs) => Promise<IntroScan | null>
 export function buildIntroScanPrompt(args: IntroScanArgs): string {
 	const recipient = args.recipient.name.trim() || 'the person who created you'
 	const description = args.agent.description?.trim()
+	const firstLook = args.firstLook?.trim()
+	// An installed agent was not made by the person who gets its hello, so it does not say "for you".
+	const opening = firstLook
+		? `You were just installed from the marketplace into this workspace as "${args.agent.name}"${description ? ` (${description})` : ''}, by ${recipient}. They are about to read your first message in a chat with you.`
+		: `You were just created in this workspace as "${args.agent.name}"${description ? ` (${description})` : ''}, for ${recipient}. They are about to read your first message in a chat with you.`
 	return [
-		`You were just created in this workspace as "${args.agent.name}"${description ? ` (${description})` : ''}, for ${recipient}. They are about to read your first message in a chat with you.`,
+		opening,
 		'',
 		'Before they see suggestions, take a quick look around so the suggestions fit this workspace. Be quick and read-only: do not write, send or change anything. You may be asked to stop and answer with what you have so far; if so, reply with the JSON straight away.',
 		'1. list_integrations: which tools are connected and active.',
 		'2. list_keychain_credentials: which credentials exist. Look at names only.',
 		'3. list_objects (and list_loops if useful): what is going on right now, such as open bets and tasks.',
+		...(firstLook
+			? [
+					`4. First look for your job: ${firstLook} Search knowledge pages (list_objects with type knowledge and q) and files (list_files) as well, not only connected tools and open items.`,
+				]
+			: []),
 		'',
 		'Then reply with ONLY a JSON object, no other text and no code fence:',
 		'{"steps":[{"label":"...","prompt":"...","action":"send"|"fill"}],"needed_integrations":["linear"]}',
@@ -50,6 +65,11 @@ export function buildIntroScanPrompt(args: IntroScanArgs): string {
 		'- action "send" is for a step that only reads and reports. A tap sends the prompt as written, so prompt must be identical to label.',
 		'- action "fill" is for a step that needs words only the person can supply, or that writes, sends, spends or deletes. prompt is max 200 characters and may end in a space.',
 		'- If the workspace has nothing relevant yet, write steps that start from your job alone. Never invent tools or work you did not see.',
+		...(firstLook
+			? [
+					'- Your first step answers the first look: if you found what it asks for, offer to use it, naming what you found (action "send", label starting with "Use"). If you found nothing, ask for it (action "fill", prompt ending in a space so the person can type or attach a file).',
+				]
+			: []),
 		'needed_integrations: provider names (for example "linear", "gmail", "slack", "github") of tools your job needs. Include ones that are NOT connected yet, so the person can add them. Use [] if none.',
 	].join('\n')
 }

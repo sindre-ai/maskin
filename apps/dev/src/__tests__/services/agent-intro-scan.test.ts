@@ -65,4 +65,30 @@ describe('buildIntroScanPrompt', () => {
 		expect(prompt).toContain('list_integrations')
 		expect(prompt).toContain('list_keychain_credentials')
 	})
+
+	it('adds no first look and keeps the created wording when the agent was not installed', () => {
+		const prompt = buildIntroScanPrompt({
+			workspaceId: 'ws',
+			agent: { id: 'a', name: 'Scout', description: null },
+			recipient: { id: 'h', name: 'Sam Rivers' },
+		})
+		expect(prompt).toContain('You were just created in this workspace')
+		expect(prompt).not.toContain('First look')
+		expect(prompt).not.toContain('list_files')
+	})
+
+	it('tells an installed agent to search knowledge pages and files for its first look', () => {
+		const prompt = buildIntroScanPrompt({
+			workspaceId: 'ws',
+			agent: { id: 'a', name: 'Scout', description: null },
+			recipient: { id: 'h', name: 'Sam Rivers' },
+			firstLook: 'Find a design style.',
+		})
+		expect(prompt).toContain('installed from the marketplace')
+		expect(prompt).toContain('First look for your job: Find a design style.')
+		expect(prompt).toContain('list_objects with type knowledge')
+		expect(prompt).toContain('list_files')
+		// The first step either uses what was found or asks for it, as a step to type into.
+		expect(prompt).toContain('action "fill"')
+	})
 })

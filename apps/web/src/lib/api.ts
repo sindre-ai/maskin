@@ -3949,6 +3949,8 @@ export interface MarketplaceLoopSummary {
 	version: string
 	use_case: string | null
 	item_types: MarketplaceItemType[]
+	/** A listing that is one agent with no flow page: shown with an Agent label, opens a chat on install. */
+	agent_only?: boolean
 	created_at: string | null
 	updated_at: string | null
 }
@@ -4013,7 +4015,7 @@ export interface InstalledLoopsListResponse {
 	installs: InstalledLoopRow[]
 }
 
-interface InstalledLoopInstallResponse {
+export interface InstalledLoopInstallResponse {
 	id: string
 	workspaceId: string
 	sourceLoopId: string
@@ -4024,6 +4026,8 @@ interface InstalledLoopInstallResponse {
 	installedAt: string | null
 	updatedAt: string | null
 	provisioned: { actors: number; triggers: number; skills: number; integrations: number }
+	/** Agent-only installs: the direct message where the agent says hello (null when it could not be opened). */
+	chatId?: string | null
 }
 
 interface InstalledLoopForkResponse {

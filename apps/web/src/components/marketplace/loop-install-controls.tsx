@@ -37,6 +37,7 @@ export function LoopInstallControls({
 	if (row) {
 		return (
 			<>
+				{loop.agent_only ? <RowPill>Agent</RowPill> : null}
 				{install && locked && install.hasUpdate ? (
 					<RowPill tone="tint">v{install.availableVersion} available</RowPill>
 				) : null}

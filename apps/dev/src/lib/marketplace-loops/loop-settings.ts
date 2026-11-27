@@ -34,6 +34,14 @@ export const loopSettingsSchema = z.object({
 	// With adoptExisting: names of the adopted flow's old triggers this bundle replaces. Only a trigger
 	// with one of these names, running on an agent the install bound, is switched off.
 	replacesTriggerNames: z.array(z.string().min(1)).optional(),
+	// A listing that is one agent, not a flow: install creates the agent, its skills and the install
+	// record, but no flow page, no flow setup chat and no checklist. The agent says hello in a direct
+	// message instead (see routes/installed-loops.ts). Without this field here the zod parse would
+	// drop it and the listing would install as an empty flow.
+	agentOnly: z.boolean().optional(),
+	// With agentOnly: where the new agent should look first to fit the person, in plain words (for
+	// example knowledge pages and files for a design style). Passed to the hello scan.
+	firstLook: z.string().min(1).optional(),
 })
 export type LoopSettings = z.infer<typeof loopSettingsSchema>
 

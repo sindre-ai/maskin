@@ -31,6 +31,7 @@ import { type SQL, and, asc, eq, ilike, inArray, isNull, or, sql } from 'drizzle
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
+import { readLoopSettings } from '../lib/marketplace-loops/loop-settings'
 import { errorSchema, idParamSchema, jsonbField } from '../lib/openapi-schemas'
 import { isWorkspaceMember, isWorkspaceWriter } from '../lib/workspace-auth'
 import { type AgentStorageManager, workspaceSkillKey } from '../services/agent-storage'
@@ -85,6 +86,8 @@ const marketplaceLoopSummarySchema = z.object({
 	version: z.string(),
 	use_case: z.string().nullable(),
 	item_types: z.array(itemTypeSchema),
+	// True for a listing that is one agent with no flow page (shown with an Agent label).
+	agent_only: z.boolean(),
 	created_at: z.string().nullable(),
 	updated_at: z.string().nullable(),
 })
@@ -141,6 +144,7 @@ function toMarketplaceLoopSummary(
 		version: row.version,
 		use_case: row.useCase,
 		item_types: itemTypes,
+		agent_only: readLoopSettings(row.loopSettings)?.agentOnly === true,
 		created_at: isoOrNull(row.createdAt),
 		updated_at: isoOrNull(row.updatedAt),
 	}
