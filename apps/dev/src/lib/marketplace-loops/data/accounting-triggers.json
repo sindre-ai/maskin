@@ -48,5 +48,17 @@
 		"actionPrompt": "Run the VAT return check for the flow named Accounting (find it with list_loops). If this session starts more than 1 hour after its scheduled time, do nothing, say nothing and stop. Load the skill vat-return-check and follow it. It reads the next VAT due date from Skat, and does nothing at all while that date is more than 28 days away, so on most Mondays stay silent. When the due date is near, it reads the VAT report with get_vat_report, writes the draft check note and posts one short comment on the flow with the link. Never file anything, and never claim that a return went out.",
 		"targetActorId": "2efeee74-29d6-4ef6-854a-e8c05cecfe9b",
 		"enabled": true
+	},
+	"e343972d-f4bd-4dd0-bf3f-d647bf835366": {
+		"id": "e343972d-f4bd-4dd0-bf3f-d647bf835366",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Monthly close (3rd 07:00 UTC)",
+		"type": "cron",
+		"config": {
+			"expression": "0 7 3 * *"
+		},
+		"actionPrompt": "Run the monthly close for the flow named Accounting (find it with list_loops). If this session starts more than 1 hour after 07:00 UTC on the 3rd, do nothing and end with one line. Otherwise load the skill accounting-monthly-close and run it exactly as it says for the month before today: bank lines matched to receipts, missing receipts, sales differences, accrual drafts, the VAT draft check, and one close note with open items, an owner and a date. Draft only: never post, file, pay, sign or send anything, and never try to fix a problem by calling a tool that is not on the allowed list.",
+		"targetActorId": "2efeee74-29d6-4ef6-854a-e8c05cecfe9b",
+		"enabled": true
 	}
 }
