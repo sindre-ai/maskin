@@ -116,6 +116,13 @@ public final class TriggersStore {
 		listener = nil
 	}
 
+	/// `deinit` may run on any thread, so it only touches the (thread-safe) task handle. A screen
+	/// that goes away without calling `stop()` must not leave its event subscription in the hub for
+	/// the life of the process.
+	deinit {
+		listener?.cancel()
+	}
+
 	/// Overlapping calls coalesce into one trailing reload.
 	public func refresh() async {
 		if refreshing {

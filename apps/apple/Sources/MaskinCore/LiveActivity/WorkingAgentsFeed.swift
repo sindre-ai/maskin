@@ -74,6 +74,13 @@ public final class WorkingAgentsFeed {
 		debouncer.cancel()
 	}
 
+	/// `deinit` may run on any thread, so it only touches the (thread-safe) task handle. A feed
+	/// that goes away without calling `stop()` must not leave its event subscription in the hub for
+	/// the life of the process.
+	deinit {
+		listener?.cancel()
+	}
+
 	/// Overlapping calls coalesce into one trailing reload. A failed fetch keeps the last result:
 	/// a network blip must not make every agent vanish from the card.
 	public func refresh() async {
