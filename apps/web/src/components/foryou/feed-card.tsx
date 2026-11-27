@@ -321,16 +321,18 @@ export function FeedCard({
 						className="flex min-w-0 items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground hover:underline"
 					>
 						<ObjectIcon size={13} aria-hidden className="shrink-0" />
-						{/* Narrow widths get two lines for the title; one ellipsised line from sm up. */}
-						<span className="min-w-0 line-clamp-2 sm:line-clamp-1">
+						{/* Keyed to the card's own width, not the window's: at 768 the sidebar takes
+						    248px, so the card is narrower there than at 640. Narrow gets two lines;
+						    a wide card keeps one ellipsised line. */}
+						<span className="min-w-0 line-clamp-2 @lg:line-clamp-1">
 							{object?.title?.trim() || 'Open'}
 						</span>
 					</Link>
 				)}
-				{/* Who wrote it, then its controls. Stacked on narrow screens so the name stays whole
+				{/* Who wrote it, then its controls. Stacked on a narrow card so the name stays whole
 				    and the controls get their own line instead of crowding the byline. */}
-				<div className="flex flex-col gap-y-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-2.5">
-					<div className="flex min-w-0 items-center gap-2.5 sm:flex-1">
+				<div className="flex flex-col gap-y-1.5 @lg:flex-row @lg:flex-wrap @lg:items-center @lg:gap-x-2.5">
+					<div className="flex min-w-0 items-center gap-2.5 @lg:flex-1">
 						<ActorAvatar
 							id={senderId ?? undefined}
 							name={sender?.name ?? 'Agent'}
@@ -587,7 +589,9 @@ function CardShell({
 			ref={shellRef}
 			data-testid="foryou-feed-card"
 			className={cn(
-				'overflow-clip rounded-[20px] border border-border bg-card',
+				// The card is its own container: the sidebar and page padding decide how much
+				// room it really has, so the header keys off the card's width, not the window's.
+				'@container overflow-clip rounded-[20px] border border-border bg-card',
 				expanded ? 'shadow-sm' : 'shadow-xs',
 			)}
 		>

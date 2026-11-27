@@ -3,20 +3,31 @@ import { expect, test } from '../fixtures/auth.fixture'
 import { VIEWPORTS } from '../helpers/viewports'
 
 /**
- * For You — a card at phone width.
+ * For You — a card when it has little room.
  *
  * At 375 and 517 the card header used to cut the object line to one truncated
  * line ("…: st…") and the agent to "Chief of…", while the timeline control,
  * status, age and close crowded one line. A long email address in a draft
- * broke mid-word. The card must read at phone widths, and look exactly as it
- * does on desktop.
+ * broke mid-word. 768 has the same problem for a different reason: the sidebar
+ * appears there and takes 248px, so the card is about 456px, narrower than the
+ * 477px card at 517. The header therefore keys off the card's own width, not the
+ * window's, and must read at all three, while a wide card looks as it does today.
  */
 
 const SENDER_NAME = 'Chief of Staff'
 const OBJECT_TITLE = 'Reply to Jonas Vestergaard (Hotel Solsiden): start the reply'
 const ADDRESS = 'jonas.vestergaard@hotelsolside-n.example'
 const DRAFT_ID = '22222222-2222-4222-8222-222222222222'
-const PHONE_WIDTHS = [375, 517] as const
+
+/** Widths where the card is too narrow for a single line, with a height that matches. */
+const NARROW_VIEWPORTS = [
+	{ width: VIEWPORTS.mobile.width, height: VIEWPORTS.mobile.height },
+	{ width: 517, height: 812 },
+	{ width: VIEWPORTS.tabletPortrait.width, height: VIEWPORTS.tabletPortrait.height },
+] as const
+
+/** Widths where the card is wide enough for one line and one meta row. */
+const WIDE_VIEWPORTS = [VIEWPORTS.tabletLandscape, VIEWPORTS.desktop] as const
 
 function narrowCardItem(workspaceId: string, senderId: string) {
 	const createdAt = new Date(Date.now() - 3 * 3_600_000).toISOString()
@@ -133,7 +144,7 @@ function required<T>(value: T | null): T {
 	return value
 }
 
-/** Open the card's meta controls, which the fix must keep apart at phone width. */
+/** Open the card's meta controls, which the fix must keep apart on a narrow card. */
 function metaControls(card: ReturnType<Page['getByTestId']>) {
 	return {
 		timeline: card.getByRole('button', { name: 'Show timeline history' }),
@@ -143,16 +154,23 @@ function metaControls(card: ReturnType<Page['getByTestId']>) {
 	}
 }
 
-test.describe('For You — a card at phone width', () => {
-	for (const width of PHONE_WIDTHS) {
+test.describe('For You — a card with little room', () => {
+	for (const { width, height } of NARROW_VIEWPORTS) {
 		test(`reads and keeps its controls apart @ ${width}`, async ({ page, account }) => {
-			await page.setViewportSize({ width, height: 812 })
+			await page.setViewportSize({ width, height })
 			const sender = await account.api.createAgentActor(SENDER_NAME, account.workspaceId)
 			await mockFeed(page, narrowCardItem(account.workspaceId, sender.id))
 			await page.goto(`/${account.workspaceId}`)
 
 			const card = page.getByTestId('foryou-feed-card').first()
 			await expect(card).toBeVisible()
+
+			// The card, not the window, is what has to have room. At 768 the sidebar takes
+			// 248px, so this card is narrower than the one at 517 despite the wider window.
+			const cardBox = required(await card.boundingBox())
+			if (width === VIEWPORTS.tabletPortrait.width) {
+				expect(cardBox.width, 'the card is narrower at 768 than at 517').toBeLessThan(490)
+			}
 
 			// The object line wraps to two lines instead of being cut to one.
 			const objectLink = card.locator('a').first()
@@ -161,7 +179,7 @@ test.describe('For You — a card at phone width', () => {
 				.locator('span')
 				.first()
 				.evaluate((el) => getComputedStyle(el).webkitLineClamp)
-			expect(clamp, 'object line should wrap to two lines at phone width').toBe('2')
+			expect(clamp, 'object line should wrap to two lines on a narrow card').toBe('2')
 
 			// The agent name is shown whole, not truncated to "Chief of…".
 			const byline = card.getByText(SENDER_NAME, { exact: true })
@@ -217,31 +235,35 @@ test.describe('For You — a card at phone width', () => {
 		await assertNoHorizontalOverflow(page, '517px dark')
 	})
 
-	test('looks as it does today on desktop', async ({ page, account }) => {
-		await page.setViewportSize(VIEWPORTS.desktop)
-		const sender = await account.api.createAgentActor(SENDER_NAME, account.workspaceId)
-		await mockFeed(page, narrowCardItem(account.workspaceId, sender.id))
-		await page.goto(`/${account.workspaceId}`)
+	for (const { width, height } of WIDE_VIEWPORTS) {
+		test(`looks as it does today on a wide card @ ${width}`, async ({ page, account }) => {
+			await page.setViewportSize({ width, height })
+			const sender = await account.api.createAgentActor(SENDER_NAME, account.workspaceId)
+			await mockFeed(page, narrowCardItem(account.workspaceId, sender.id))
+			await page.goto(`/${account.workspaceId}`)
 
-		const card = page.getByTestId('foryou-feed-card').first()
-		await expect(card).toBeVisible()
+			const card = page.getByTestId('foryou-feed-card').first()
+			await expect(card).toBeVisible()
 
-		// One ellipsised line, as before.
-		const clamp = await card
-			.locator('a')
-			.first()
-			.locator('span')
-			.first()
-			.evaluate((el) => getComputedStyle(el).webkitLineClamp)
-		expect(clamp, 'the object line should be one line on desktop').toBe('1')
+			// One ellipsised line, as before.
+			const clamp = await card
+				.locator('a')
+				.first()
+				.locator('span')
+				.first()
+				.evaluate((el) => getComputedStyle(el).webkitLineClamp)
+			expect(clamp, 'the object line should be one line on a wide card').toBe('1')
 
-		// Name and controls share one row again.
-		const bylineBox = required(await card.getByText(SENDER_NAME, { exact: true }).boundingBox())
-		const timelineBox = required(
-			await card.getByRole('button', { name: 'Show timeline history' }).boundingBox(),
-		)
-		const bylineCentre = bylineBox.y + bylineBox.height / 2
-		const timelineCentre = timelineBox.y + timelineBox.height / 2
-		expect(Math.abs(bylineCentre - timelineCentre)).toBeLessThan(8)
-	})
+			// Name and controls share one row again.
+			const bylineBox = required(await card.getByText(SENDER_NAME, { exact: true }).boundingBox())
+			const timelineBox = required(
+				await card.getByRole('button', { name: 'Show timeline history' }).boundingBox(),
+			)
+			const bylineCentre = bylineBox.y + bylineBox.height / 2
+			const timelineCentre = timelineBox.y + timelineBox.height / 2
+			expect(Math.abs(bylineCentre - timelineCentre)).toBeLessThan(8)
+
+			await assertNoHorizontalOverflow(page, `${width}px wide`)
+		})
+	}
 })
