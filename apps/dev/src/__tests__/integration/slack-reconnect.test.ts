@@ -173,17 +173,17 @@ async function seededTriggers(workspaceId: string) {
 describe('Slack OAuth reconnect lifecycle (integration)', () => {
 	let workspaceId: string
 	let teamId: string
-	let driverId: string
+	let targetAgentId: string
 
 	beforeEach(async () => {
 		const ws = await insertWorkspace(db, getTestActorId())
 		workspaceId = ws.id
-		// The default-trigger seeding targets the Workspace Driver agent.
-		const driver = await insertActor(db, { type: 'agent', name: 'Workspace Driver' })
-		driverId = driver.id
+		// The default-trigger seeding targets the Chief of Staff agent.
+		const chiefOfStaff = await insertActor(db, { type: 'agent', name: 'Chief of Staff' })
+		targetAgentId = chiefOfStaff.id
 		await db.insert(workspaceMembers).values({
 			workspaceId,
-			actorId: driverId,
+			actorId: targetAgentId,
 			role: 'member',
 		})
 		teamId = `T${randomBytes(4).toString('hex').toUpperCase()}`
@@ -201,14 +201,14 @@ describe('Slack OAuth reconnect lifecycle (integration)', () => {
 		expect(firstRow?.status).toBe('active')
 
 		// postInstall seeded the default mention/DM responder triggers targeting
-		// the Workspace Driver agent.
+		// the Chief of Staff agent.
 		const seededAfterConnect = await seededTriggers(workspaceId)
 		expect(seededAfterConnect).toHaveLength(2)
 		expect(
 			new Set(seededAfterConnect.map((t) => (t.config as { entity_type: string }).entity_type)),
 		).toEqual(new Set(['slack.direct_message', 'slack.app_mention']))
 		for (const trigger of seededAfterConnect) {
-			expect(trigger.targetActorId).toBe(driverId)
+			expect(trigger.targetActorId).toBe(targetAgentId)
 			expect(trigger.enabled).toBe(true)
 		}
 

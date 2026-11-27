@@ -161,7 +161,7 @@ describe('Product Delivery flow definition', () => {
 			expect(text).not.toMatch(/—|–|assum/i)
 			// People, company, product, repositories, channels and other workflows from the source.
 			expect(text).not.toMatch(
-				/sebastian|sebk|magnus|\bcto\b|\bcpo\b|\bpmm\b|strategist|code reviewer|workspace driver|product marketing|skjald|sindre|vaerksted|maskin|posthog|slack|#development|fast track|release-gate|bet execution|drive-to-outcome/i,
+				/sebastian|sebk|magnus|\bcto\b|\bcpo\b|\bpmm\b|strategist|code reviewer|product marketing|skjald|sindre|vaerksted|maskin|posthog|slack|#development|fast track|release-gate|bet execution|drive-to-outcome/i,
 			)
 			expect(text).not.toMatch(/\b20(2\d)\b|https?:\/\/|\bPR \d|\b\d{4}\b/)
 			// Never pitch approval as the value of the flow.

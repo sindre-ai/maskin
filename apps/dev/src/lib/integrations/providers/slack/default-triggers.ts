@@ -13,11 +13,10 @@ import type { PostInstallContext, PreDisconnectContext } from '../../types'
 export const SLACK_DEFAULT_TRIGGER_MARKER = 'slack-integration-default'
 
 /**
- * The real-time operational agent from the Development template — it already
- * owns live triage (unsticking stalled objects, reacting to runtime alerts),
- * which is the same job as responding to an incoming Slack message.
+ * The agent that routes incoming work. A Slack DM or mention is a request with
+ * no object driver yet, so it goes to the Chief of Staff, which owns routing.
  */
-const DEFAULT_TARGET_AGENT_NAME = 'Workspace Driver'
+const DEFAULT_TARGET_AGENT_NAME = 'Chief of Staff'
 
 const DEFAULT_TRIGGERS: ReadonlyArray<{ entityType: string; name: string }> = [
 	{ entityType: 'slack.direct_message', name: 'Slack: respond to direct messages' },
@@ -51,7 +50,7 @@ export async function seedSlackDefaultTriggers(ctx: PostInstallContext): Promise
 			)
 			.limit(1)
 		if (!targetAgent) {
-			logger.warn('Slack default triggers: no Workspace Driver agent in workspace; skipping', {
+			logger.warn('Slack default triggers: no Chief of Staff agent in workspace; skipping', {
 				workspaceId: ctx.workspaceId,
 				integrationId: ctx.integrationId,
 			})
