@@ -297,6 +297,21 @@ describe('parseListSource: objects', () => {
 	})
 })
 
+describe('parseListSource: custom types', () => {
+	it('lists a custom type and status whose names carry digits, as the object schema allows', () => {
+		const source = parseListSource({
+			list: 'objects',
+			params: { type: 'stage_2_review', status: ['phase_2'] },
+		})
+		expect(source).toMatchObject({ list: 'objects', type: 'stage_2_review', statuses: ['phase_2'] })
+	})
+
+	it('still refuses a name that starts with a digit or is longer than the schema allows', () => {
+		expect(parseListSource({ list: 'objects', params: { type: '2fast' } })).toBeNull()
+		expect(parseListSource({ list: 'objects', params: { type: `a${'b'.repeat(50)}` } })).toBeNull()
+	})
+})
+
 describe('parseListSource: CRM category fields', () => {
 	const categoryKeys = [
 		'role',

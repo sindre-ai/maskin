@@ -32,8 +32,11 @@ const MAX_OBJECT_LIST_STATUSES = 10
 const MAX_OBJECT_LIST_WHERE = 4
 const MAX_OBJECT_LIST_FIELDS = 20
 const MAX_WHERE_VALUE_LENGTH = 200
-const TYPE_RE = /^[a-z][a-z_]{0,39}$/
-const STATUS_RE = /^[a-z][a-z_]{0,39}$/
+// A type is any name the object schema accepts (lowercase, digits, underscores, up to 50), so a
+// custom type such as "stage_2" lists like the built-in ones. Statuses are workspace-defined
+// free text; the same plain-name shape keeps the value safe to send as a filter.
+const TYPE_RE = /^[a-z][a-z0-9_]{0,49}$/
+const STATUS_RE = /^[a-z][a-z0-9_]{0,49}$/
 
 /**
  * The only metadata keys a view may name, to filter on, sort by or get back. Body text and
