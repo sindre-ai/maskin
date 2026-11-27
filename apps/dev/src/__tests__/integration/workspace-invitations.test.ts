@@ -218,7 +218,7 @@ describe('seat cap on invite accept (per-seat plans)', () => {
 
 	it('blocks a fourth human on Free and leaves the invite pending', async () => {
 		const owner = getTestActorId()
-		const ws = await insertWorkspace(db, owner)
+		const ws = await insertWorkspace(db, owner, { enterpriseGranted: false })
 		await seedHumans(ws.id, 2) // owner + 2 = 3, Free's cap
 		expect(await countHumanMembers(db, ws.id)).toBe(3)
 		const { email, token } = await seedInvite(ws.id, owner)
@@ -236,7 +236,7 @@ describe('seat cap on invite accept (per-seat plans)', () => {
 
 	it('admits a fourth human when Starter pays for four seats', async () => {
 		const owner = getTestActorId()
-		const ws = await insertWorkspace(db, owner)
+		const ws = await insertWorkspace(db, owner, { enterpriseGranted: false })
 		await seedHumans(ws.id, 2)
 		await setBilling(ws.id, { plan: 'starter', status: 'active', seats: 4 })
 		const { email, token } = await seedInvite(ws.id, owner)
@@ -249,7 +249,7 @@ describe('seat cap on invite accept (per-seat plans)', () => {
 
 	it('blocks the join when the paid seat count is already reached', async () => {
 		const owner = getTestActorId()
-		const ws = await insertWorkspace(db, owner)
+		const ws = await insertWorkspace(db, owner, { enterpriseGranted: false })
 		await seedHumans(ws.id, 2)
 		await setBilling(ws.id, { plan: 'pro', status: 'active', seats: 3 })
 		const { email, token } = await seedInvite(ws.id, owner)
@@ -262,7 +262,7 @@ describe('seat cap on invite accept (per-seat plans)', () => {
 
 	it('keeps the static cap for a legacy paid workspace with no seats stored', async () => {
 		const owner = getTestActorId()
-		const ws = await insertWorkspace(db, owner)
+		const ws = await insertWorkspace(db, owner, { enterpriseGranted: false })
 		await seedHumans(ws.id, 2) // 3 humans, below Starter's legacy cap of 5
 		await setBilling(ws.id, { plan: 'starter', status: 'active' })
 		const { email, token } = await seedInvite(ws.id, owner)

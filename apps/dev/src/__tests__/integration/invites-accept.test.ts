@@ -467,6 +467,13 @@ describe('Invites — POST /:token/accept', () => {
 					name: 'Allowlisted Owner WS',
 					enterpriseGranted: false,
 				})
+				// Free caps at 3 humans; fill it so the invitee is the fourth.
+				for (let i = 0; i < 2; i++) {
+					const human = await insertActor(db, { type: 'human' })
+					await db
+						.insert(workspaceMembers)
+						.values({ workspaceId: ws.id, actorId: human.id, role: 'member' })
+				}
 				const invitee = await insertActor(db, {
 					email: 'allowlisted-invitee@example.com',
 					apiKey: generateApiKey().key,
@@ -496,11 +503,17 @@ describe('Invites — POST /:token/accept', () => {
 		})
 
 		it('seat cap on new-signup rolls back the actor insert (invite pending, no actor)', async () => {
-			// Same fresh trial-tier workspace: 1 seat, filled by the owner.
+			// Free caps at 3 humans; the owner plus two members fill it.
 			const seatCapWs = await insertWorkspace(db, inviterId, {
 				name: 'Seat Cap Signup WS',
 				enterpriseGranted: false,
 			})
+			for (let i = 0; i < 2; i++) {
+				const human = await insertActor(db, { type: 'human' })
+				await db
+					.insert(workspaceMembers)
+					.values({ workspaceId: seatCapWs.id, actorId: human.id, role: 'member' })
+			}
 
 			const { rawToken, invite } = await seedPendingInvite({
 				workspaceId: seatCapWs.id,
