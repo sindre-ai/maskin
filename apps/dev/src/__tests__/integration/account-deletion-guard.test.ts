@@ -69,6 +69,8 @@ const KEPT: Record<string, string> = {
 	workspaces: 'created_by / billing_owner_id; deletion is blocked until billing is handed over',
 	triggers: 'created_by / target agent on workspace automation',
 	sessions: 'agent run history; actor is the agent or the person who started it',
+	trash:
+		'deleted_by is who deleted a restorable row in a kept workspace (ON DELETE SET NULL); the row stays, attributed to the deleted user',
 	voice_sessions: 'call record in a kept workspace',
 	imports: 'import record in a kept workspace',
 	orphan_thread_detections: 'internal detector state keyed on a kept thread',

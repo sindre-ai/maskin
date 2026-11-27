@@ -25,6 +25,7 @@ import {
 	sessions,
 	starState,
 	subscriptions,
+	trash,
 	triggers,
 	webhookDeliveries,
 	workspaceCreditLedger,
@@ -93,6 +94,7 @@ export const WORKSPACE_PURGE_EXPLICIT = [
 	'orphan_thread_detections',
 	'awaiting_vies',
 	'agent_files',
+	'trash',
 	'imports',
 	'integrations',
 	'events',
@@ -368,6 +370,16 @@ export async function purgeWorkspace(
 			.from(sessions)
 			.where(eq(sessions.workspaceId, workspaceId)),
 	)
+	// Trashed files and workspace skills keep their stored bytes until the 30 day window ends,
+	// so the rows are gone here but their bytes still need removing.
+	const trashed = await tx
+		.select({ row: trash.row })
+		.from(trash)
+		.where(eq(trash.workspaceId, workspaceId))
+	for (const entry of trashed) {
+		const key = (entry.row as Record<string, unknown>).storageKey
+		if (typeof key === 'string' && key.length > 0) storageKeys.add(key)
+	}
 
 	// Unfinished sessions that own a sandbox. Read now: the rows are deleted below, and stopping
 	// needs the container / agent-server id.
@@ -406,6 +418,7 @@ export async function purgeWorkspace(
 		)
 	await tx.delete(webhookDeliveries).where(eq(webhookDeliveries.workspaceId, workspaceId))
 	await tx.delete(linkedinActions).where(eq(linkedinActions.workspaceId, workspaceId))
+	await tx.delete(trash).where(eq(trash.workspaceId, workspaceId))
 
 	// installed_loops points at objects (NO ACTION), so it goes before them.
 	await tx.delete(installedLoops).where(eq(installedLoops.workspaceId, workspaceId))

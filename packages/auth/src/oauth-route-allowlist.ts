@@ -199,6 +199,9 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'GET /api/subscriptions/subscribers',
 	'POST /api/subscriptions/unread',
 	'GET /api/telemetry/mcp/summary',
+	// The Settings Trash view is a person's own recovery surface, and no MCP tool calls it.
+	'GET /api/trash',
+	'POST /api/trash/:id/restore',
 	// The iPhone app's analytics batch: it needs a person signed in on the phone, and no MCP tool calls it.
 	'POST /api/telemetry/client',
 	'GET /api/user-display-settings',
