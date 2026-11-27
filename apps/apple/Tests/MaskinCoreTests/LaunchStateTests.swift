@@ -254,6 +254,12 @@ struct LaunchStateTests {
 		defaults.set(corrupt, forKey: "live.calls.v1")
 		#expect(log.all().isEmpty)
 
+		// A record from before this build's required fields existed is a miss, not a half-read call.
+		defaults.set(
+			json(#"[{"id":"c1","conversationID":"chat","leadName":"Lead","startedAt":0,"spoken":[]}]"#),
+			forKey: "live.calls.v1")
+		#expect(log.all().isEmpty)
+
 		for index in 0..<(LiveCallLog.limit + 10) {
 			log.save(
 				LiveCallRecord(
@@ -345,5 +351,184 @@ struct LaunchStateTests {
 		let policy = NotificationPromptPolicy(storage: storage)
 
 		#expect(policy.shouldOffer(permission: .notDetermined, now: Date()))
+	}
+
+	// MARK: The small preference stores (a value of the wrong type must read as "not set")
+
+	@Test("a lock delay of the wrong type keeps the default instead of meaning 'immediately'")
+	func appLockDelay() {
+		let defaults = scratchDefaults()
+		let storage = UserDefaultsAppLockStorage(defaults: defaults)
+
+		#expect(storage.loadDelay() == nil, "nothing stored is the default, not a zero delay")
+		defaults.set("soon", forKey: "app-lock.delay")
+		#expect(storage.loadDelay() == nil, "a string is not 0 seconds, it is a miss")
+
+		storage.saveDelay(.fiveMinutes)
+		#expect(storage.loadDelay() == .fiveMinutes)
+	}
+
+	@Test("first-use, appearance, preview, sort, pace and autonomy read an unknown value as unset")
+	func typedPreferences() {
+		let defaults = scratchDefaults()
+
+		defaults.set("maybe", forKey: "auth.firstUsePending.v1.actor-1")
+		#expect(!UserDefaultsFirstUseStore(defaults: defaults).isPending(actorId: "actor-1"))
+
+		defaults.set("purple", forKey: AppearancePreference.storageKey)
+		#expect(AppearancePreference.stored(in: defaults) == .system)
+
+		defaults.set("sideways", forKey: StatePreview.screenKey)
+		#expect(StatePreview.stored(in: defaults) == nil)
+
+		defaults.set("newest", forKey: "flows.sort.v1")
+		#expect(UserDefaultsLoopsSortStorage(defaults: defaults).load() == nil)
+
+		defaults.set("frantic", forKey: "live.pace.v1")
+		#expect(LiveCallPace.stored(defaults) == .relaxed)
+
+		defaults.set("yolo", forKey: "autonomy.chief")
+		#expect(UserDefaultsAutonomyStorage(defaults: defaults).level(for: "chief") == nil)
+	}
+
+	@Test("seen stories of the wrong type read as none, and the list never grows past its bound")
+	func seenStories() {
+		let defaults = scratchDefaults()
+		defaults.set(42, forKey: "forYou.seenStories")
+		let seen = SeenStories(defaults: defaults)
+		let card = StoryCard(
+			id: "story-1", unit: "Briefing", headline: "One", updatedAt: nil,
+			content: .briefing(headline: "One", script: "Script"))
+
+		#expect(!seen.isSeen(card))
+
+		seen.markSeen(card)
+		#expect(seen.isSeen(card))
+
+		for index in 0..<220 {
+			let extra = StoryCard(
+				id: "story-\(index)", unit: "Briefing", headline: "Two", updatedAt: nil,
+				content: .briefing(headline: "Two", script: "Script"))
+			seen.markSeen(extra)
+		}
+		let stored = defaults.stringArray(forKey: "forYou.seenStories") ?? []
+		#expect(stored.count == 200, "the oldest stamps fall off instead of growing forever")
+	}
+
+	@Test("a pinned message id of the wrong type or zero is no pin")
+	func chatPins() {
+		let defaults = scratchDefaults()
+		let pins = UserDefaultsChatPinStore(defaults: defaults)
+
+		defaults.set("pinned", forKey: "chat.pinnedMessage.c1")
+		#expect(pins.pinnedMessageID(conversationID: "c1") == nil)
+
+		defaults.set(0, forKey: "chat.pinnedMessage.c1")
+		#expect(pins.pinnedMessageID(conversationID: "c1") == nil)
+
+		pins.setPinnedMessageID(42, conversationID: "c1")
+		#expect(pins.pinnedMessageID(conversationID: "c1") == 42)
+	}
+
+	@Test("share-agent memory of the wrong shape reads as empty and keeps only the last two")
+	func shareAgentMemory() {
+		let defaults = scratchDefaults()
+		defaults.set(["ws-1": "not-an-array"], forKey: "maskin.share.recentAgents")
+		let memory = ShareAgentMemory(defaults: defaults)
+
+		#expect(memory.recent(workspaceId: "ws-1").isEmpty)
+
+		memory.remember("a1", workspaceId: "ws-1")
+		memory.remember("a2", workspaceId: "ws-1")
+		memory.remember("a3", workspaceId: "ws-1")
+		#expect(memory.recent(workspaceId: "ws-1") == ["a3", "a2"])
+	}
+
+	@Test("cycle opt-ins of the wrong type read as none")
+	func cycleOptIns() {
+		let defaults = scratchDefaults()
+		defaults.set("all", forKey: "cycle-activity.opted-in-flows")
+		let storage = UserDefaultsCycleOptInStorage(defaults: defaults)
+
+		#expect(storage.load().isEmpty)
+	}
+
+	// MARK: The other Keychain items
+
+	@Test("a corrupt or older push registration is a miss, not a Keychain read that traps")
+	func pushRegistration() throws {
+		let corruptStore = KeychainDeviceRegistrationStore(secrets: InMemorySecretStore(corrupt))
+		#expect(corruptStore.load() == nil)
+
+		// Written before `deviceId` existed: optional, so it still decodes.
+		let older = KeychainDeviceRegistrationStore(
+			secrets: InMemorySecretStore(
+				json(#"{"token":"t","environment":"production","secret":"s"}"#)))
+		#expect(older.load()?.token == "t")
+		#expect(older.load()?.deviceId == nil)
+
+		// Missing a field this build requires is a miss rather than a stored half-registration.
+		let broken = KeychainDeviceRegistrationStore(
+			secrets: InMemorySecretStore(json(#"{"token":"t","environment":"production"}"#)))
+		#expect(broken.load() == nil)
+	}
+
+	@Test("a corrupt watch handoff is ignored, and an empty context means signed out")
+	func watchHandoff() {
+		#expect(WatchHandoff(context: [WatchHandoff.contextKey: corrupt]) == nil)
+		#expect(WatchHandoff(context: [:])?.session == nil)
+
+		let older = json(#"{"apiKey":"k","actorId":"a1"}"#)
+		let handoff = WatchHandoff(context: [WatchHandoff.contextKey: older])
+		#expect(handoff?.session?.apiKey == "k")
+		#expect(handoff?.session?.name == "")
+	}
+
+	// MARK: The two file-backed queues read at startup
+
+	private func failedQueue(_ file: URL) -> ChatSendQueue {
+		ChatSendQueue(
+			outbox: Outbox(
+				fileURL: temporaryOutboxFile(), executor: ScriptedExecutor(),
+				workspaceId: { "ws-1" }),
+			failedFileURL: file)
+	}
+
+	@Test("a corrupt failed-send file is a miss; an older row still loads and a broken one is dropped")
+	func failedSends() throws {
+		let file = FileManager.default.temporaryDirectory
+			.appendingPathComponent("launch-failed-\(UUID().uuidString).json")
+		defer { try? FileManager.default.removeItem(at: file) }
+
+		try corrupt.write(to: file)
+		#expect(failedQueue(file).failed.isEmpty)
+
+		// Written before `thread` existed: the optional field is simply absent.
+		let older = json(
+			#"[{"payload":{"clientID":"m1","conversationID":"c1","content":"keep","createdAt":0},"reason":"Rejected."}]"#)
+		try older.write(to: file)
+		#expect(failedQueue(file).failed.first?.content == "keep")
+
+		// A row the current shape cannot read drops the list rather than half-loading it.
+		let broken = json(#"[{"payload":{"clientID":"m1"},"reason":"Rejected."}]"#)
+		try broken.write(to: file)
+		#expect(failedQueue(file).failed.isEmpty)
+	}
+
+	@Test("a corrupt intents memory file reads as an empty memory")
+	func intentsMemory() throws {
+		let file = FileManager.default.temporaryDirectory
+			.appendingPathComponent("launch-intents-\(UUID().uuidString).json")
+		defer { try? FileManager.default.removeItem(at: file) }
+
+		try corrupt.write(to: file)
+		let memory = FileIntentsMemory(fileURL: file)
+		let scope = IntentScope(actorId: "actor-1", workspaceId: "ws-1")
+
+		#expect(memory.load(scope) == IntentsMemory())
+
+		// A file from before these fields existed decodes to nothing, which is the same empty memory.
+		try json(#"{"actor-1|ws-1":{}}"#).write(to: file)
+		#expect(memory.load(scope) == IntentsMemory())
 	}
 }

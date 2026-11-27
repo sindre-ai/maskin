@@ -68,9 +68,12 @@ public struct UserDefaultsAppLockStorage: AppLockStoring, @unchecked Sendable {
 
 	public func loadEnabled() -> Bool { defaults.bool(forKey: key) }
 	public func saveEnabled(_ enabled: Bool) { defaults.set(enabled, forKey: key) }
+	/// Only a number is a delay. A value of another type (a corrupt plist, an older build's guess)
+	/// reads as nil, so the controller keeps its default. Asking `double(forKey:)` for a string
+	/// answers 0, which would quietly mean "lock immediately" on every return to the app.
 	public func loadDelay() -> AppLockDelay? {
-		defaults.object(forKey: "app-lock.delay") == nil
-			? nil : AppLockDelay(rawValue: defaults.double(forKey: "app-lock.delay"))
+		guard let stored = defaults.object(forKey: "app-lock.delay") as? NSNumber else { return nil }
+		return AppLockDelay(rawValue: stored.doubleValue)
 	}
 	public func saveDelay(_ delay: AppLockDelay) { defaults.set(delay.rawValue, forKey: "app-lock.delay") }
 }
