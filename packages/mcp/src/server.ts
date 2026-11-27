@@ -733,6 +733,32 @@ function countNonMaskinMcpServers(tools: unknown): number {
 }
 
 /**
+ * Whether `actorId` is already a member of `workspaceId`, and with what role.
+ * Returns null when the lookup itself fails, so callers can fall back to the
+ * add-member call and report its error honestly rather than guess.
+ */
+async function lookupWorkspaceMembership(
+	config: McpConfig,
+	workspaceId: string,
+	actorId: string,
+): Promise<{ isMember: boolean; role?: string } | null> {
+	try {
+		const members = (await apiCall(
+			config,
+			'GET',
+			`/api/workspaces/${workspaceId}/members`,
+			undefined,
+			{ workspaceId },
+		)) as Array<{ actorId?: string; role?: string }>
+		if (!Array.isArray(members)) return null
+		const match = members.find((member) => member.actorId === actorId)
+		return match ? { isMember: true, role: match.role } : { isMember: false }
+	} catch {
+		return null
+	}
+}
+
+/**
  * The stored status of every loop in the workspace, keyed by loop id. A status filter
  * reads the objects route, which returns the status as stored. Walks the route's own keyset to
  * the end, archived loops included.
@@ -5710,21 +5736,46 @@ export function createMcpServer(config: McpConfig) {
 			// Optionally add the actor to a workspace, mirroring create_actor's
 			// pattern — a membership failure is reported inline rather than thrown,
 			// so a bad workspace_id doesn't discard an otherwise-successful update.
+			//
+			// Adding an existing member is a no-op that only a human admin or owner
+			// may call, so asking for it made every agent caller see a false
+			// partial failure (attach worked, the add-member call came back 403).
+			// Check membership first and only call add-member when the actor is
+			// actually missing, or a different role was requested.
 			let membershipError: string | undefined
 			if (workspace_id) {
-				try {
-					await apiCall(
-						config,
-						'POST',
-						`/api/workspaces/${workspace_id}/members`,
-						{ actor_id: id, role },
-						{ skipWorkspace: true },
-					)
+				const membership = await lookupWorkspaceMembership(config, workspace_id, id)
+				const currentRole = membership?.role
+				const alreadyMember = membership?.isMember === true
+				const roleChangeRequested = alreadyMember && role !== undefined && role !== currentRole
+
+				if (alreadyMember && !roleChangeRequested) {
 					;(actor as Record<string, unknown>).workspace_id = workspace_id
-					;(actor as Record<string, unknown>).role = role
-				} catch (error) {
-					membershipError = String(error)
-					;(actor as Record<string, unknown>).workspace_membership_error = membershipError
+					;(actor as Record<string, unknown>).role = currentRole ?? role
+				} else {
+					try {
+						await apiCall(
+							config,
+							'POST',
+							`/api/workspaces/${workspace_id}/members`,
+							{ actor_id: id, role },
+							{ skipWorkspace: true },
+						)
+						;(actor as Record<string, unknown>).workspace_id = workspace_id
+						;(actor as Record<string, unknown>).role = role
+					} catch (error) {
+						// A refusal is only a failure when the actor is not a member.
+						// If membership exists anyway (already a member, or the insert
+						// lost a race), the outcome the caller asked for is true.
+						const after = await lookupWorkspaceMembership(config, workspace_id, id)
+						if (after?.isMember) {
+							;(actor as Record<string, unknown>).workspace_id = workspace_id
+							;(actor as Record<string, unknown>).role = after.role ?? role
+						} else {
+							membershipError = String(error)
+							;(actor as Record<string, unknown>).workspace_membership_error = membershipError
+						}
+					}
 				}
 			}
 

@@ -6640,7 +6640,7 @@ describe('tool handlers', () => {
 			// attach workspace_id/role, and mockActor is shared across this describe
 			// block, so reusing it here would leak state into later tests.
 			const freshActor = { id: actorId, name: 'Test Actor' }
-			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
 				const u = String(url)
 				if (u.endsWith(`/api/actors/${actorId}`)) {
 					return {
@@ -6650,10 +6650,13 @@ describe('tool handlers', () => {
 					} as Response
 				}
 				if (u.endsWith(`/api/workspaces/${workspaceId}/members`)) {
+					// The membership pre-check lists members (GET); the actor is not
+					// one yet, so the add-member POST that follows succeeds.
+					const body = init?.method === 'GET' ? [] : { actorId, workspaceId, role: 'admin' }
 					return {
 						ok: true,
 						headers: new Headers(),
-						json: () => Promise.resolve({ actorId, workspaceId, role: 'admin' }),
+						json: () => Promise.resolve(body),
 					} as Response
 				}
 				return { ok: true, headers: new Headers(), json: () => Promise.resolve([]) } as Response
@@ -6682,13 +6685,30 @@ describe('tool handlers', () => {
 		it('records workspace_membership_error without throwing when add-member fails', async () => {
 			const workspaceId = '770e8400-e29b-41d4-a716-446655440003'
 			const freshActor = { id: actorId, name: 'Test Actor' }
-			vi.spyOn(globalThis, 'fetch')
-				.mockResolvedValueOnce({
-					ok: true,
-					headers: new Headers(),
-					json: () => Promise.resolve(freshActor),
-				} as Response)
-				.mockRejectedValueOnce(new Error('workspace not found'))
+			let memberLookups = 0
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+				const u = String(url)
+				if (u.endsWith(`/api/actors/${actorId}`)) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve(freshActor),
+					} as Response
+				}
+				if (u.endsWith(`/api/workspaces/${workspaceId}/members`)) {
+					if (init?.method === 'GET') {
+						// Not a member before or after the failed add — an honest error.
+						memberLookups += 1
+						return {
+							ok: true,
+							headers: new Headers(),
+							json: () => Promise.resolve([]),
+						} as Response
+					}
+					throw new Error('workspace not found')
+				}
+				return { ok: true, headers: new Headers(), json: () => Promise.resolve([]) } as Response
+			})
 
 			const handler = getHandler('update_actor')
 			const result = (await handler({
@@ -6700,24 +6720,37 @@ describe('tool handlers', () => {
 			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed.workspace_membership_error).toContain('workspace not found')
 			expect(parsed.workspace_id).toBeUndefined()
+			expect(memberLookups).toBe(2)
 		})
 
 		it('folds a membership failure into partial_failure when combined with skill ops', async () => {
 			const workspaceId = '770e8400-e29b-41d4-a716-446655440003'
 			const freshActor = { id: actorId, name: 'Test Actor' }
-			vi.spyOn(globalThis, 'fetch')
-				.mockResolvedValueOnce({
-					ok: true,
-					headers: new Headers(),
-					json: () => Promise.resolve(freshActor),
-				} as Response)
-				.mockRejectedValueOnce(new Error('workspace not found'))
-				.mockResolvedValueOnce({
-					ok: true,
-					headers: new Headers(),
-					json: () =>
-						Promise.resolve([{ workspaceSkillId: skillId1, success: true, skill: mockSkill }]),
-				} as Response)
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+				const u = String(url)
+				if (u.endsWith(`/api/actors/${actorId}`)) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve(freshActor),
+					} as Response
+				}
+				if (u.endsWith(`/api/workspaces/${workspaceId}/members`)) {
+					if (init?.method === 'GET') {
+						return { ok: true, headers: new Headers(), json: () => Promise.resolve([]) } as Response
+					}
+					throw new Error('workspace not found')
+				}
+				if (u.endsWith('/workspace-skills/batch')) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () =>
+							Promise.resolve([{ workspaceSkillId: skillId1, success: true, skill: mockSkill }]),
+					} as Response
+				}
+				return { ok: true, headers: new Headers(), json: () => Promise.resolve([]) } as Response
+			})
 
 			const handler = getHandler('update_actor')
 			const result = (await handler({
@@ -6730,6 +6763,120 @@ describe('tool handlers', () => {
 			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed.partial_failure).toBe(true)
 			expect(parsed.actor.workspace_membership_error).toContain('workspace not found')
+			expect(parsed.attached_skills).toHaveLength(1)
+		})
+
+		it('skips the add-member call when the actor is already a member', async () => {
+			const workspaceId = '770e8400-e29b-41d4-a716-446655440003'
+			const freshActor = { id: actorId, name: 'Test Actor' }
+			const memberWrites: string[] = []
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+				const u = String(url)
+				if (u.endsWith(`/api/actors/${actorId}`)) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve(freshActor),
+					} as Response
+				}
+				if (u.endsWith(`/api/workspaces/${workspaceId}/members`)) {
+					if (init?.method === 'POST') memberWrites.push(u)
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve([{ actorId, role: 'member' }]),
+					} as Response
+				}
+				if (u.endsWith('/workspace-skills/batch')) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () =>
+							Promise.resolve([{ workspaceSkillId: skillId1, success: true, skill: mockSkill }]),
+					} as Response
+				}
+				return { ok: true, headers: new Headers(), json: () => Promise.resolve([]) } as Response
+			})
+
+			const handler = getHandler('update_actor')
+			const result = (await handler({
+				id: actorId,
+				workspace_id: workspaceId,
+				attach_skill_ids: [skillId1],
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			// An existing membership needs no invite, and asking for one only ever
+			// gets a 403 from an agent caller — the bug this fixes.
+			expect(memberWrites).toHaveLength(0)
+			expect(parsed.partial_failure).toBeUndefined()
+			expect(parsed.actor.workspace_membership_error).toBeUndefined()
+			expect(parsed.actor.workspace_id).toBe(workspaceId)
+			expect(parsed.actor.role).toBe('member')
+			expect(parsed.attached_skills).toHaveLength(1)
+		})
+
+		it('treats a refused add-member as success when the actor is already a member', async () => {
+			const workspaceId = '770e8400-e29b-41d4-a716-446655440003'
+			const freshActor = { id: actorId, name: 'Test Actor' }
+			let memberLookups = 0
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+				const u = String(url)
+				if (u.endsWith(`/api/actors/${actorId}`)) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve(freshActor),
+					} as Response
+				}
+				if (u.endsWith(`/api/workspaces/${workspaceId}/members`)) {
+					if (init?.method === 'GET') {
+						memberLookups += 1
+						// Not visible before the attempt, already a member after it.
+						const body = memberLookups === 1 ? [] : [{ actorId, role: 'member' }]
+						return {
+							ok: true,
+							headers: new Headers(),
+							json: () => Promise.resolve(body),
+						} as Response
+					}
+					return {
+						ok: false,
+						status: 403,
+						text: () =>
+							Promise.resolve(
+								JSON.stringify({
+									error: {
+										code: 'FORBIDDEN',
+										message: 'Only a human admin or owner can add workspace members',
+									},
+								}),
+							),
+					} as Response
+				}
+				if (u.endsWith('/workspace-skills/batch')) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () =>
+							Promise.resolve([{ workspaceSkillId: skillId1, success: true, skill: mockSkill }]),
+					} as Response
+				}
+				return { ok: true, headers: new Headers(), json: () => Promise.resolve([]) } as Response
+			})
+
+			const handler = getHandler('update_actor')
+			const result = (await handler({
+				id: actorId,
+				workspace_id: workspaceId,
+				attach_skill_ids: [skillId1],
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.actor.workspace_membership_error).toBeUndefined()
+			expect(parsed.actor.workspace_id).toBe(workspaceId)
+			expect(parsed.actor.role).toBe('member')
+			expect(parsed.partial_failure).toBeUndefined()
 			expect(parsed.attached_skills).toHaveLength(1)
 		})
 
