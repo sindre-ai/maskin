@@ -19,9 +19,15 @@ export function isPaidPlan(plan: string | null | undefined): plan is PaidPlan {
 	return (PAID_PLANS as readonly string[]).includes(plan ?? '')
 }
 
-/** Max total human members a workspace on this plan may hold. `null` = unlimited. */
+/**
+ * Max total human members a workspace on this plan may hold. `null` = unlimited.
+ * The Free plan (stored as `trial`) is capped at 3. The paid plans are limited
+ * only by the seats actually paid for (see `settings.billing.seats`, written by
+ * the Stripe webhook); the numbers here are the fallback for a workspace on an
+ * old price that predates per-seat billing, so a legacy payer keeps its old cap.
+ */
 export const SEAT_CAPS: Record<BillingPlan, number | null> = {
-	trial: 1,
+	trial: 3,
 	starter: 5,
 	pro: 5,
 	team: 25,
@@ -32,9 +38,9 @@ export const SEAT_CAPS: Record<BillingPlan, number | null> = {
 /**
  * Max total workspaces a human actor may be `billing_owner_id` of, once their
  * effective tier (the highest plan among workspaces they currently own) is
- * this tier. `null` = unlimited. Deliberately the same numbers as SEAT_CAPS
- * today — kept as a separate table (not a shared constant) so the two caps
- * can diverge later without every call site needing to change.
+ * this tier. `null` = unlimited. The numbers match SEAT_CAPS except on the
+ * Free tier: Free allows 3 members in a workspace but still one owned
+ * workspace. Kept as a separate table so the two caps can diverge freely.
  */
 export const OWNERSHIP_CAPS: Record<BillingPlan, number | null> = {
 	trial: 1,

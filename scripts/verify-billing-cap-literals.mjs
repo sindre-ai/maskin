@@ -80,12 +80,13 @@ const expected = {}
 				continue
 			}
 			price[plan] = priceMap[plan]
-			// Included usage is a fifth of the price, in whole kroner (99 kr gives 20).
-			if (included[plan] !== Math.round(price[plan] / 5)) {
-				errors.push(
-					`${path}: ${plan} includes ${included[plan]} kr but a fifth of ${price[plan]} kr is ${Math.round(price[plan] / 5)}`,
-				)
-			}
+		}
+		// Included usage is no longer a fixed share of the price: the plan moved
+		// to per-seat pricing (27 Nov 2026) while the included usage stayed put.
+		// The caps below are derived from INCLUDED_USAGE_DKK alone; the prices
+		// are recorded so the checkout UI reads them from one place.
+		if (typeof source.match(/ULTRA_EXTRA_USER_DKK\s*=\s*([\d_]+)/)?.[1] !== 'string') {
+			errors.push(`${path}: ULTRA_EXTRA_USER_DKK is missing`)
 		}
 		if (!(rate > 0)) errors.push(`${path}: DKK_PER_USD must be positive, got ${rate}`)
 		observed.push({ path, rate, included, price, capCents: expected })

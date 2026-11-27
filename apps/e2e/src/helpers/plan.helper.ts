@@ -36,10 +36,10 @@ async function testGrant(
 }
 
 /**
- * Every workspace is created on the `trial` tier, which caps an actor at ONE
- * human seat and ONE owned workspace (`SEAT_CAPS` / `OWNERSHIP_CAPS` in
- * packages/shared/src/billing-caps.ts). Specs that legitimately need a second
- * member or a second workspace must first put the account on a tier with
+ * Every workspace is created on the `trial` (Free) tier, which caps a workspace
+ * at three human seats and an actor at ONE owned workspace (`SEAT_CAPS` /
+ * `OWNERSHIP_CAPS` in packages/shared/src/billing-caps.ts). Specs that need
+ * more members or a second workspace must first put the account on a tier with
  * headroom — otherwise the create/add call 403s. See PR #970.
  */
 export async function grantPlanHeadroom(

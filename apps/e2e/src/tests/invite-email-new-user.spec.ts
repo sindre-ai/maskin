@@ -20,7 +20,7 @@ for (const viewport of SHIP_GATE_VIEWPORTS) {
 	}) => {
 		// Two browser contexts, a signup and several cold route loads: past the 30s default.
 		test.slow()
-		// A trial workspace caps humans at one seat, so accepting would 403.
+		// Grant headroom so the seat cap is never what this invite test trips on.
 		await grantPlanHeadroom(account.apiKey, account.workspaceId)
 		await clearSentEmails()
 		const inviteeEmail = `invitee-${Date.now()}-${Math.floor(Math.random() * 1e6)}@test.com`

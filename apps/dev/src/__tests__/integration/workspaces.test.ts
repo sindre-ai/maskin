@@ -298,10 +298,9 @@ describe('Workspaces Integration', () => {
 			expect(soloRow.memberCount).toBe(1)
 
 			// Add a second human — the count moves; adding an agent would not.
-			// A trial workspace seats exactly one human (SEAT_CAPS.trial), so the
-			// add would be rejected on the seat cap and the count would never
-			// move. Raise the plan first, and assert the add actually landed —
-			// otherwise a rejected member reads here as a wrong count.
+			// Raise the plan first so the add is on a paid seat, then assert the
+			// add actually landed — otherwise a rejected member reads here as a
+			// wrong count.
 			await setWorkspacePlan(db, workspace.id, 'pro')
 			const teammate = await insertActor(db)
 			// People can't be added by id any more; seed the membership directly.
