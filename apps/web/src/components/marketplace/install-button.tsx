@@ -2,6 +2,7 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useInstallLoop } from '@/hooks/use-installed-loops'
 import { cn } from '@/lib/cn'
+import { useNavigate } from '@tanstack/react-router'
 
 interface InstallButtonProps {
 	workspaceId: string
@@ -25,6 +26,7 @@ export function InstallButton({
 	source,
 }: InstallButtonProps) {
 	const install = useInstallLoop(workspaceId)
+	const navigate = useNavigate()
 	const isInstalling = install.isPending
 
 	return (
@@ -33,7 +35,23 @@ export function InstallButton({
 			variant={variant}
 			className={cn('relative rounded-full font-semibold', className)}
 			disabled={disabled || isInstalling}
-			onClick={() => install.mutate({ loopId, source })}
+			onClick={() =>
+				install.mutate(
+					{ loopId, source },
+					{
+						// An agent-only install has no flow page: its hello waits in a direct message.
+						// A flow install stays where it is, as before.
+						onSuccess: (row) => {
+							if (row?.chatId) {
+								navigate({
+									to: '/$workspaceId/chats/$conversationId',
+									params: { workspaceId, conversationId: row.chatId },
+								})
+							}
+						},
+					},
+				)
+			}
 		>
 			{isInstalling ? (
 				<>

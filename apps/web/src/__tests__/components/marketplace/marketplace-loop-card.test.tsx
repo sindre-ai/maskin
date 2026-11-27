@@ -1,5 +1,8 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const mockNavigate = vi.fn()
 
 vi.mock('@/lib/api', () => ({
 	api: {
@@ -17,10 +20,11 @@ vi.mock('sonner', () => ({
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../../mocks/router')
-	return mockTanStackRouter()
+	return { ...mockTanStackRouter(), useNavigate: () => mockNavigate }
 })
 
 import { MarketplaceLoopCard } from '@/components/marketplace/marketplace-loop-card'
+import { api } from '@/lib/api'
 import type { InstalledLoopRow, MarketplaceLoopItem, MarketplaceLoopSummary } from '@/lib/api'
 import { TestWrapper } from '../../setup'
 
@@ -99,6 +103,59 @@ describe('MarketplaceLoopCard', () => {
 		)
 		expect(screen.queryByRole('link', { name: 'Open' })).not.toBeInTheDocument()
 		expect(screen.getByRole('button', { name: /remove/i })).toBeInTheDocument()
+	})
+
+	it('shows the Agent label beside the status label for an agent-only listing', () => {
+		render(
+			<MarketplaceLoopCard
+				workspaceId={workspaceId}
+				loop={loop({ agent_only: true, item_types: ['actor'] })}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		const add = screen.getByRole('button', { name: /^add$/i })
+		expect(within(add.parentElement as HTMLElement).getByText('Agent')).toBeInTheDocument()
+	})
+
+	it('shows no Agent label on a flow card', () => {
+		render(<MarketplaceLoopCard workspaceId={workspaceId} loop={loop()} />, {
+			wrapper: TestWrapper,
+		})
+		const add = screen.getByRole('button', { name: /^add$/i })
+		expect(within(add.parentElement as HTMLElement).queryByText('Agent')).not.toBeInTheDocument()
+	})
+
+	it('opens the new agent chat after an agent-only install from the card', async () => {
+		vi.mocked(api.installedLoops.install).mockResolvedValue({
+			objectId: null,
+			chatId: 'chat-1',
+		} as never)
+		render(
+			<MarketplaceLoopCard
+				workspaceId={workspaceId}
+				loop={loop({ agent_only: true, item_types: ['actor'] })}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		await userEvent.setup().click(screen.getByRole('button', { name: /^add$/i }))
+
+		await waitFor(() =>
+			expect(mockNavigate).toHaveBeenCalledWith({
+				to: '/$workspaceId/chats/$conversationId',
+				params: { workspaceId, conversationId: 'chat-1' },
+			}),
+		)
+	})
+
+	it('stays on the catalogue after a flow install, which has no chat', async () => {
+		vi.mocked(api.installedLoops.install).mockResolvedValue({ objectId: 'obj-9' } as never)
+		render(<MarketplaceLoopCard workspaceId={workspaceId} loop={loop()} />, {
+			wrapper: TestWrapper,
+		})
+		await userEvent.setup().click(screen.getByRole('button', { name: /^add$/i }))
+
+		await waitFor(() => expect(api.installedLoops.install).toHaveBeenCalled())
+		expect(mockNavigate).not.toHaveBeenCalled()
 	})
 
 	it('renders the v-available pill when a locked install trails the marketplace version', () => {
