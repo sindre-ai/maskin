@@ -81,15 +81,10 @@ describe('toolsForIdentity — §2 filter matrix', () => {
 		expect(toolsForIdentity(personal)).toContain('withdraw_invitation')
 	})
 
-	it('personal registers the outreach verbs list_user_posts, get_company and react_to_post', () => {
+	it('personal registers the outreach verbs list_user_posts and get_company', () => {
 		const verbs = toolsForIdentity(personal)
 		expect(verbs).toContain('list_user_posts')
 		expect(verbs).toContain('get_company')
-		expect(verbs).toContain('react_to_post')
-	})
-
-	it('personal registers the outreach verb send_inmail', () => {
-		expect(toolsForIdentity(personal)).toContain('send_inmail')
 	})
 
 	it('page with messagingEnabled=true registers posts + messaging suites but never personal-only ones', () => {
@@ -114,8 +109,6 @@ describe('toolsForIdentity — §2 filter matrix', () => {
 		expect(verbs.has('withdraw_invitation')).toBe(false)
 		expect(verbs.has('list_user_posts')).toBe(false)
 		expect(verbs.has('get_company')).toBe(false)
-		expect(verbs.has('react_to_post')).toBe(false)
-		expect(verbs.has('send_inmail')).toBe(false)
 	})
 
 	it('page with messagingEnabled=false registers posts suite only', () => {
@@ -141,8 +134,6 @@ describe('toolsForIdentity — §2 filter matrix', () => {
 		expect(verbs.has('withdraw_invitation')).toBe(false)
 		expect(verbs.has('list_user_posts')).toBe(false)
 		expect(verbs.has('get_company')).toBe(false)
-		expect(verbs.has('react_to_post')).toBe(false)
-		expect(verbs.has('send_inmail')).toBe(false)
 	})
 
 	it('preserves canonical order (spec order, not alphabetical) — stable tools/list diffs', () => {

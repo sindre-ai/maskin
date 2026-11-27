@@ -17,8 +17,6 @@ import {
 } from './action-log'
 import type { CapSpec } from './caps'
 import { LinkedInIntegrationError, isLinkedInIntegrationError } from './errors'
-import { INMAIL_DAILY_CAP } from './inmail'
-import { sendInmailDirect } from './inmail-send'
 import {
 	REINVITE_LOCK_DAYS,
 	WITHDRAW_DAILY_CAP,
@@ -47,8 +45,8 @@ import {
 	withdrawLinkedInInvitation,
 } from './operations'
 import { POST_ID_DESCRIPTION } from './post-id'
-import { getLinkedInCompany, listLinkedInUserPosts, reactToLinkedInPost } from './posts-operations'
-import { PROFILE_VIEW_CAP, type PostsToolDeps, REACT_TO_POST_CAP } from './posts-tools'
+import { getLinkedInCompany, listLinkedInUserPosts } from './posts-operations'
+import { PROFILE_VIEW_CAP, type PostsToolDeps } from './posts-tools'
 import {
 	commentOnApprovedLinkedInPost,
 	editApprovedLinkedInPost,
@@ -605,7 +603,7 @@ export function registerLinkedInMcpInstance(
 			toolName(cfg, 'send_message'),
 			{
 				description: scopedDescription(
-					'Send a LinkedIn direct message. Pass recipient_urn, body and idempotency_key and it sends; plain text only, this tool takes no attachments. If this agent is set to ask first, pass only object_id instead (the task or object that holds the draft): the text sent is the approved text read from the object, and it is refused until a person has approved it. The recipient (recipient_provider_id) and an optional file (attachment_file_id) are filed on the object, and a message with a thread_id on the object goes into that conversation. Then recipient_urn, body and idempotency_key are not used',
+					'Send a LinkedIn direct message. Pass recipient_urn, body and idempotency_key and it sends; plain text only, this tool takes no attachments. If this agent is set to ask first, pass only object_id instead (the task or object that holds the draft): the text sent is the approved text read from the object, and it is refused until a person has approved it. The recipient (recipient_provider_id) is filed on the object, and a message with a thread_id on the object goes into that conversation. Files on messages are no longer sent: a draft that carries an attachment_file_id is refused. Then recipient_urn, body and idempotency_key are not used',
 					cfg,
 				),
 				// Passthrough so a call that still sends the removed `attachments` reaches the handler and
@@ -992,7 +990,7 @@ export function registerLinkedInMcpInstance(
 			toolName(cfg, 'list_user_posts'),
 			{
 				description: scopedDescription(
-					'List the recent posts of one person or one company. Pass exactly one of person (public handle, provider id or member URN) or company (numeric id, slug or company URL). Returns author (provider_id, type, name, public_identifier), posts (post_id, posted_at, text cut to 500 characters, is_repost, reactions, comments, already_liked, url) and next_cursor. Use post_id exactly as returned for react_to_post and read_post_comments. A handle or slug costs two profile views, a provider id or numeric company id costs one; profile views share a budget of 100 a day with get_profile and get_company.',
+					'List the recent posts of one person or one company. Pass exactly one of person (public handle, provider id or member URN) or company (numeric id, slug or company URL). Returns author (provider_id, type, name, public_identifier), posts (post_id, posted_at, text cut to 500 characters, is_repost, reactions, comments, already_liked, url) and next_cursor. Use post_id exactly as returned for read_post_comments. A handle or slug costs two profile views, a provider id or numeric company id costs one; profile views share a budget of 100 a day with get_profile and get_company.',
 					cfg,
 				),
 				inputSchema: {
@@ -1049,122 +1047,6 @@ export function registerLinkedInMcpInstance(
 					)
 				} catch (err) {
 					return toolError(toolName(cfg, 'get_company'), err)
-				}
-			},
-		)
-	}
-
-	if (allowed.has('react_to_post')) {
-		server.registerTool(
-			toolName(cfg, 'react_to_post'),
-			{
-				description: scopedDescription(
-					'Like one LinkedIn post. Pass post_id exactly as list_user_posts returned it and author_provider_id (author.provider_id from the same call). Only a like is supported. Limits: 15 likes a day, and one like per author per 7 days; a post this account already liked returns already_liked: true and sends nothing.',
-					cfg,
-				),
-				inputSchema: {
-					post_id: z.string().trim().min(1),
-					author_provider_id: z.string().trim().min(1),
-					reaction: z.enum(['like']).optional(),
-				},
-			},
-			async (args) => {
-				try {
-					return jsonResult(
-						await logged(
-							'react_to_post',
-							'write',
-							args.author_provider_id,
-							async (rec) => {
-								const result = await reactToLinkedInPost(opCtx, logCtx, args)
-								rec.set({ refId: result.post_id })
-								if (result.already_liked) rec.markNoop()
-								return result
-							},
-							REACT_TO_POST_CAP,
-						),
-					)
-				} catch (err) {
-					return toolError(toolName(cfg, 'react_to_post'), err)
-				}
-			},
-		)
-	}
-
-	if (allowed.has('send_inmail')) {
-		server.registerTool(
-			toolName(cfg, 'send_inmail'),
-			{
-				description: scopedDescription(
-					'Send a LinkedIn InMail to someone you are not connected to, spending exactly one InMail credit. Pass recipient_provider_id, body (at most 1900 characters, no subject, plain text) and idempotency_key and it sends. If this agent is set to ask first, pass only object_id instead: the task or object that holds a linkedin_inmail draft (recipient_provider_id, body, optional attachment_file_id); the text, recipient and file sent are the ones on the object, and it is refused until a person has approved it, again after any edit, and once it has been sent. Refused with nothing sent when the recipient is already a 1st-degree connection (use send_message), when classic credits are 2 or fewer (LINKEDIN_INMAIL_UNAVAILABLE: stop drafting InMails for this account and use another channel; check get_inmail_balance first), or after 5 InMails in a rolling 24 hours (RATE_LIMITED_LINKEDIN). Returns message_id, chat_id, sent_at, credits_before and credits_after.',
-					cfg,
-				),
-				inputSchema: {
-					object_id: z.string().uuid().optional(),
-					recipient_provider_id: z.string().min(1).optional(),
-					body: z.string().min(1).max(1900).optional(),
-					idempotency_key: z
-						.string()
-						.min(1)
-						.max(128)
-						.optional()
-						.describe(
-							'Required for a direct send: a retry with the same key cannot spend a second credit. Not used with object_id.',
-						),
-				},
-			},
-			async (args) => {
-				try {
-					return await logged(
-						'send_inmail',
-						'send',
-						args.recipient_provider_id,
-						async (rec) => {
-							const decision = await sendDecision('linkedin_inmail', 'LinkedIn InMails')
-							if (args.object_id) {
-								rec.set({ objectId: args.object_id })
-								if (
-									args.recipient_provider_id !== undefined ||
-									args.body !== undefined ||
-									args.idempotency_key !== undefined
-								) {
-									throw new LinkedInIntegrationError(
-										'INVALID_INPUT',
-										'Do not pass recipient_provider_id, body or idempotency_key with object_id: the InMail sent is the one on the object.',
-									)
-								}
-								const sent = await sendApprovedLinkedInObject(opCtx, {
-									object_id: args.object_id,
-									requireApproval: decision === 'needs_approval',
-									onResolved: (resolved) => rec.set(resolved),
-									inmail: { onCredits: (data) => rec.set({ data }) },
-								})
-								return jsonResult(learned(rec, sent, { refId: sent.message_id }))
-							}
-							if (decision === 'needs_approval') {
-								throw heldForApproval('An InMail', 'linkedin_inmail', pilotHeld)
-							}
-							if (!args.recipient_provider_id || !args.body || !args.idempotency_key) {
-								throw new LinkedInIntegrationError(
-									'INVALID_INPUT',
-									'Give recipient_provider_id, body and idempotency_key, or object_id for a draft.',
-								)
-							}
-							const sent = await sendInmailDirect(
-								opCtx,
-								{
-									recipient_provider_id: args.recipient_provider_id,
-									body: args.body,
-									idempotency_key: args.idempotency_key,
-								},
-								(data) => rec.set({ data }),
-							)
-							return jsonResult(learned(rec, sent, { refId: sent.message_id }))
-						},
-						INMAIL_DAILY_CAP,
-					)
-				} catch (err) {
-					return toolError(toolName(cfg, 'send_inmail'), err)
 				}
 			},
 		)

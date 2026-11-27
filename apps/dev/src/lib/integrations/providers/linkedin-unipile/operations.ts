@@ -1117,11 +1117,11 @@ const BLANK_BODY_MESSAGE =
 	'body is blank: it has no text besides spaces or line breaks. Nothing was sent.'
 
 /**
- * What a caller gets for passing raw `attachments` to `send_message`. A file only goes out
- * on a message a person approved, through the object it is filed on.
+ * What a caller gets for passing raw `attachments` to `send_message`. Files on messages are
+ * retired (2026-11-27, task e8c8277a), so there is no route for a file to go out at all.
  */
 export const ATTACHMENTS_REFUSED_MESSAGE =
-	'send_message does not take attachments. File the workspace file on the draft instead: set metadata.attachment_file_id on the object, have a person approve it, then send with object_id.'
+	'send_message does not take attachments, and files on LinkedIn messages are no longer sent. Send the text on its own.'
 
 function validateSendPayload(input: {
 	recipient_urn?: unknown
