@@ -444,14 +444,16 @@ export function FeedCard({
 						    feed while the card is on screen and back in flow after the draft at
 						    the card's end. Nothing is reordered and the draft stays whole. The
 						    card frame is overflow-clip (not overflow-hidden) so sticky resolves
-						    against the feed scroller instead of the card. */}
+						    against the feed scroller instead of the card. -bottom-14 cancels the
+						    scroller's own pb-14, so the bar sits flush with the feed's bottom
+						    edge; bottom-0 leaves it floating 56px above it. */}
 						{/* biome-ignore lint/a11y/useSemanticElements: a docked bar of answer buttons is a group, not a form fieldset */}
 						<div
 							role="group"
 							aria-label="Answer this decision"
 							data-testid="foryou-decision-dock"
 							data-docked={docked ? 'true' : 'false'}
-							className="sticky bottom-0 z-10 -mx-[22px] border-t border-border bg-card px-[22px] pb-[max(0.25rem,env(safe-area-inset-bottom))] pt-3 data-[docked=true]:shadow-md"
+							className="sticky -bottom-14 z-10 -mx-[22px] border-t border-border bg-card px-[22px] pb-[max(0.25rem,env(safe-area-inset-bottom))] pt-3 transition-shadow duration-150 ease-brand data-[docked=true]:shadow-md"
 						>
 							<DecisionOptions
 								variant="row"
@@ -463,9 +465,10 @@ export function FeedCard({
 							/>
 						</div>
 						{/* Zero-height marker, out of view while the footer is docked. The
-						    negative margin cancels the column's gap so adding it does not push
-						    the composer further from the answers than it already sits. */}
-						<div ref={dockSentinelRef} aria-hidden className={cn('h-0', showComposer && '-mb-3')} />
+						    negative margin cancels the column's gap on both sides of it, so
+						    adding it does not push the card's bottom away from the answers
+						    whether or not a composer follows. */}
+						<div ref={dockSentinelRef} aria-hidden className="h-0 -mb-3" />
 					</>
 				)}
 

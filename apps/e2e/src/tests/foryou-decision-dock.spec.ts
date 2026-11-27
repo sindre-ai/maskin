@@ -148,6 +148,28 @@ test.describe('For You — the decision answers dock', () => {
 			const dock = card.getByTestId('foryou-decision-dock')
 			await expect(dock).toHaveAttribute('data-docked', 'true')
 
+			// Docked means flush with the feed's bottom edge, not merely on screen. The
+			// scroller carries 56px of bottom padding, so a bar that only clears the
+			// viewport can still float most of a finger above the edge with draft
+			// showing beneath it. Measure the two edges, not just the button's box.
+			const dockedEdges = await dock.evaluate((node) => {
+				let ancestor: HTMLElement | null = node.parentElement
+				while (ancestor && getComputedStyle(ancestor).overflowY !== 'auto') {
+					ancestor = ancestor.parentElement
+				}
+				return {
+					dockBottom: node.getBoundingClientRect().bottom,
+					feedBottom: ancestor?.getBoundingClientRect().bottom ?? null,
+				}
+			})
+			expect(dockedEdges.feedBottom, `${vp.label}: no feed scroller above the card`).not.toBeNull()
+			if (dockedEdges.feedBottom !== null) {
+				expect(
+					Math.abs(dockedEdges.dockBottom - dockedEdges.feedBottom),
+					`${vp.label}: the docked bar is not flush with the feed's bottom edge`,
+				).toBeLessThanOrEqual(2)
+			}
+
 			// The draft is whole: its last line is rendered, not folded or clipped away.
 			await expect(card.getByText(DRAFT_LAST_LINE, { exact: false })).toBeVisible()
 
