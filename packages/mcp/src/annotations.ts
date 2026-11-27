@@ -73,6 +73,8 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
 	'list_file_tags',
 	'gmail_search_mail',
 	'gmail_read_thread',
+	'google_calendar_list_calendars',
+	'google_calendar_list_events',
 ])
 
 interface Row {
@@ -211,6 +213,8 @@ const ROWS: Record<string, Row> = {
 	gmail_search_mail: row('Search Gmail', { openWorld: true }),
 	gmail_read_thread: row('Read Gmail thread', { openWorld: true }),
 	gmail_change_labels: row('Archive or label Gmail thread', { openWorld: true }),
+	google_calendar_list_calendars: row('List calendars', { openWorld: true }),
+	google_calendar_list_events: row('List calendar events', { openWorld: true }),
 	resend_send_email: row('Send Resend email', { openWorld: true }),
 	update_integration_access: row('Update integration access', {
 		idempotent: true,

@@ -54,6 +54,7 @@ export const CORE_TOOLS: ReadonlySet<string> = new Set([
 
 export const TOOL_GROUPS = {
 	// The agent's own computer. Every desktop_* tool belongs here too (see groupOfTool).
+	calendar: ['google_calendar_list_calendars', 'google_calendar_list_events'],
 	computer: ['show_computer'],
 	automation: [
 		'create_loop',

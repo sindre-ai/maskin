@@ -149,6 +149,8 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'DELETE /api/integrations/google-meet/mcp',
 	'GET /api/integrations/gmail/search',
 	'GET /api/integrations/gmail/thread',
+	'GET /api/integrations/google-calendar/calendars',
+	'GET /api/integrations/google-calendar/events',
 	'GET /api/integrations/google-meet/mcp',
 	'POST /api/integrations/google-meet/mcp',
 	'GET /api/integrations/linkedin-unipile/get-post-engagement',
