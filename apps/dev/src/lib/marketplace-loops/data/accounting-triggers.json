@@ -48,5 +48,17 @@
 		"actionPrompt": "Run the VAT return check for the flow named Accounting (find it with list_loops). If this session starts more than 1 hour after its scheduled time, do nothing, say nothing and stop. Load the skill vat-return-check and follow it. It reads the next VAT due date from Skat, and does nothing at all while that date is more than 28 days away, so on most Mondays stay silent. When the due date is near, it reads the VAT report with get_vat_report, writes the draft check note and posts one short comment on the flow with the link. Never file anything, and never claim that a return went out.",
 		"targetActorId": "2efeee74-29d6-4ef6-854a-e8c05cecfe9b",
 		"enabled": true
+	},
+	"35091252-a7b4-477c-871a-4fd70f1f49c7": {
+		"id": "35091252-a7b4-477c-871a-4fd70f1f49c7",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Tax instalment check (10th of Jan, Mar, Nov, 07:00 UTC)",
+		"type": "cron",
+		"config": {
+			"expression": "0 7 10 1,3,11 *"
+		},
+		"actionPrompt": "Run the scheduled tax instalment check for the flow named Accounting (find it with list_loops). If the session starts more than 1 hour after its scheduled time, do nothing and say so in one line. Load the skill accounting-connection-check and run its check without any receipt. If the connection fails, end the session without a comment: the weekly connection check already tells the owner what to fix, and the owner can ask in the chat at any time. Otherwise load the skill accounting-tax-instalment-check and follow it: read the corporation tax on-account rules at Skat and cite the page, compare each amount with the year's result so far in the accounting system, and draft a recommendation in kroner to raise, lower or keep it. In January always make the recommendation. In March and November make it only if an instalment falls due within 14 days of today, by the Skat page, and otherwise say nothing and end the session. Draft only: changing an amount or paying is always the owner's, at Skat, and the flow never does either. Never try to fix anything by calling a tool that is not on the allowed list.",
+		"targetActorId": "2efeee74-29d6-4ef6-854a-e8c05cecfe9b",
+		"enabled": true
 	}
 }
