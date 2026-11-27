@@ -78,6 +78,9 @@ type Env = {
 		agentStorage: AgentStorageManager
 		storageProvider: StorageProvider
 		sessionManager: SessionManager
+		// The caller's running session, when the install came from one. Read by the
+		// agent-only hello so the intro scan is attributed to the same session.
+		maskinSessionId?: string
 	}
 }
 
