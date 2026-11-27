@@ -1,5 +1,6 @@
+import { cn } from '@/lib/cn'
 import type { ObjectPreview } from '@maskin/shared'
-import { useLayoutEffect, useRef, useState } from 'react'
+import { Fragment, useLayoutEffect, useRef, useState } from 'react'
 
 interface ObjectPreviewMetaProps {
 	preview: ObjectPreview
@@ -15,9 +16,12 @@ interface ObjectPreviewMetaProps {
 export function ObjectPreviewMeta({ preview }: ObjectPreviewMetaProps) {
 	const to = preview.recipients.filter((r) => r.role === 'to')
 	const cc = preview.recipients.filter((r) => r.role === 'cc')
-	const rows: Array<{ label: string; value: string }> = []
-	if (to.length > 0) rows.push({ label: 'To', value: to.map(formatRecipient).join(', ') })
-	if (cc.length > 0) rows.push({ label: 'Cc', value: cc.map(formatRecipient).join(', ') })
+	// `address` rows break only at an address's own separators, never mid-word.
+	const rows: Array<{ label: string; value: string; address?: boolean }> = []
+	if (to.length > 0)
+		rows.push({ label: 'To', value: to.map(formatRecipient).join(', '), address: true })
+	if (cc.length > 0)
+		rows.push({ label: 'Cc', value: cc.map(formatRecipient).join(', '), address: true })
 	if (preview.subject) rows.push({ label: 'Subject', value: preview.subject })
 	// Where else it goes or when: the account a post is published as, a Slack channel.
 	for (const detail of preview.details ?? []) rows.push(detail)
@@ -42,7 +46,9 @@ export function ObjectPreviewMeta({ preview }: ObjectPreviewMetaProps) {
 					{rows.map((row) => (
 						<div key={row.label} className="flex gap-2">
 							<dt className="w-20 shrink-0 text-muted-foreground">{row.label}</dt>
-							<dd className="min-w-0 break-words text-foreground">{row.value}</dd>
+							<dd className={cn('min-w-0 text-foreground', !row.address && 'break-words')}>
+								{row.address ? breakableAddress(row.value) : row.value}
+							</dd>
 						</div>
 					))}
 				</dl>
@@ -104,4 +110,24 @@ function ReplyContext({ text, label }: { text: string; label: string }) {
 function formatRecipient(r: ObjectPreview['recipients'][number]): string {
 	if (r.name && r.address) return `${r.name} <${r.address}>`
 	return r.name ?? r.address ?? ''
+}
+
+/**
+ * An address may break only where an address can: after the @, a dot or a hyphen.
+ * Without this a long address either overflows the row or, with `break-words`,
+ * splits mid-word and reads as two.
+ */
+function breakableAddress(value: string) {
+	const parts = value.split(/(?<=[@.-])/)
+	let offset = 0
+	return parts.map((part) => {
+		const key = offset
+		offset += part.length
+		return (
+			<Fragment key={key}>
+				{part}
+				{key + part.length < value.length ? <wbr /> : null}
+			</Fragment>
+		)
+	})
 }
