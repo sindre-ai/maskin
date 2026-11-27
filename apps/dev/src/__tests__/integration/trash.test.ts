@@ -1,13 +1,32 @@
 import { randomUUID } from 'node:crypto'
-import { objects, relationships, trash } from '@maskin/db/schema'
+import {
+	agentSkills,
+	files,
+	objects,
+	relationships,
+	trash,
+	triggers,
+	workspaceSkills,
+} from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
-import { insertActor, insertObject, insertRelationship, insertWorkspace } from '../factories'
+import {
+	buildFile,
+	buildWorkspaceSkill,
+	insertActor,
+	insertObject,
+	insertRelationship,
+	insertTrigger,
+	insertWorkspace,
+} from '../factories'
 import { jsonRequest } from '../helpers'
 import { createIntegrationApp, db, getTestActorId } from './global-setup'
 
 const { default: objectsRoutes } = await import('../../routes/objects')
 const { default: trashRoutes } = await import('../../routes/trash')
 const { default: relationshipsRoutes } = await import('../../routes/relationships')
+const { default: filesRoutes } = await import('../../routes/files')
+const { default: triggersRoutes } = await import('../../routes/triggers')
+const { default: workspaceSkillsRoutes } = await import('../../routes/workspace-skills')
 
 /**
  * Trash — reversible deletes.
@@ -23,6 +42,9 @@ function createApp() {
 		{ path: '/api/objects', module: objectsRoutes },
 		{ path: '/api/trash', module: trashRoutes },
 		{ path: '/api/relationships', module: relationshipsRoutes },
+		{ path: '/api/files', module: filesRoutes },
+		{ path: '/api/triggers', module: triggersRoutes },
+		{ path: '/api/workspaces', module: workspaceSkillsRoutes },
 	)
 }
 
@@ -161,6 +183,125 @@ describe('Trash — reversible deletes', () => {
 			.from(relationships)
 			.where(eq(relationships.id, relationship.id))
 		expect(back).toBeTruthy()
+	})
+
+	it('trashes a deleted file row and restores it with the same id and dates', async () => {
+		const [file] = await db
+			.insert(files)
+			.values(buildFile({ workspaceId, createdBy: actorId }))
+			.returning()
+		const app = createApp()
+
+		const del = await app.request(
+			jsonRequest('DELETE', `/api/files/${file.id}`, undefined, {
+				'x-workspace-id': workspaceId,
+			}),
+		)
+		expect(del.status).toBe(200)
+		expect(await db.select().from(files).where(eq(files.id, file.id))).toHaveLength(0)
+
+		const [entry] = await trashRows()
+		expect(entry.kind).toBe('file')
+		expect(entry.entityId).toBe(file.id)
+
+		const restore = await app.request(
+			jsonRequest('POST', `/api/trash/${entry.id}/restore`, undefined, {
+				'x-workspace-id': workspaceId,
+			}),
+		)
+		expect(restore.status).toBe(200)
+
+		const [back] = await db.select().from(files).where(eq(files.id, file.id))
+		expect(back?.name).toBe(file.name)
+		expect(back?.createdAt.getTime()).toBe(file.createdAt.getTime())
+		expect(await trashRows()).toHaveLength(0)
+	})
+
+	it('restores a workspace skill together with its agent attachment', async () => {
+		const agent = await insertActor(db, { type: 'agent', name: 'Skill Agent' })
+		const [skill] = await db
+			.insert(workspaceSkills)
+			.values(buildWorkspaceSkill({ workspaceId, createdBy: actorId }))
+			.returning()
+		const [attachment] = await db
+			.insert(agentSkills)
+			.values({ actorId: agent.id, workspaceSkillId: skill.id })
+			.returning()
+		const app = createApp()
+
+		const del = await app.request(
+			jsonRequest('DELETE', `/api/workspaces/${workspaceId}/skills/${skill.id}`, undefined, {
+				'x-workspace-id': workspaceId,
+			}),
+		)
+		expect(del.status).toBe(200)
+		expect(
+			await db.select().from(workspaceSkills).where(eq(workspaceSkills.id, skill.id)),
+		).toHaveLength(0)
+		expect(
+			await db.select().from(agentSkills).where(eq(agentSkills.workspaceSkillId, skill.id)),
+		).toHaveLength(0)
+
+		const [entry] = await trashRows()
+		expect(entry.kind).toBe('workspace_skill')
+
+		const restore = await app.request(
+			jsonRequest('POST', `/api/trash/${entry.id}/restore`, undefined, {
+				'x-workspace-id': workspaceId,
+			}),
+		)
+		expect(restore.status).toBe(200)
+
+		const [skillBack] = await db
+			.select()
+			.from(workspaceSkills)
+			.where(eq(workspaceSkills.id, skill.id))
+		expect(skillBack?.name).toBe(skill.name)
+		const attachmentsBack = await db
+			.select()
+			.from(agentSkills)
+			.where(eq(agentSkills.workspaceSkillId, skill.id))
+		expect(attachmentsBack).toHaveLength(1)
+		expect(attachmentsBack[0].actorId).toBe(agent.id)
+		expect(attachmentsBack[0].createdAt.getTime()).toBe(attachment.createdAt.getTime())
+	})
+
+	it('restores a trigger into the flow steps it was pruned from', async () => {
+		const agent = await insertActor(db, { type: 'agent', name: 'Trigger Agent' })
+		const trigger = await insertTrigger(db, workspaceId, actorId, agent.id)
+		const flow = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			title: 'A flow with a step',
+			metadata: { trigger_ids: [trigger.id] },
+		})
+		const app = createApp()
+
+		const del = await app.request(
+			jsonRequest('DELETE', `/api/triggers/${trigger.id}`, undefined, {
+				'x-workspace-id': workspaceId,
+			}),
+		)
+		expect(del.status).toBe(200)
+		expect(await db.select().from(triggers).where(eq(triggers.id, trigger.id))).toHaveLength(0)
+		const [flowAfterDelete] = await db.select().from(objects).where(eq(objects.id, flow.id))
+		expect((flowAfterDelete.metadata as { trigger_ids: string[] }).trigger_ids).toEqual([])
+
+		const [entry] = await trashRows()
+		expect(entry.kind).toBe('trigger')
+		expect((entry.extra as { flow_ids?: string[] }).flow_ids).toEqual([flow.id])
+
+		const restore = await app.request(
+			jsonRequest('POST', `/api/trash/${entry.id}/restore`, undefined, {
+				'x-workspace-id': workspaceId,
+			}),
+		)
+		expect(restore.status).toBe(200)
+
+		const [triggerBack] = await db.select().from(triggers).where(eq(triggers.id, trigger.id))
+		expect(triggerBack?.name).toBe(trigger.name)
+		const [flowBack] = await db.select().from(objects).where(eq(objects.id, flow.id))
+		expect((flowBack.metadata as { trigger_ids: string[] }).trigger_ids).toEqual([trigger.id])
+		expect(await trashRows()).toHaveLength(0)
 	})
 
 	it('answers 404 for a trash entry in another workspace', async () => {

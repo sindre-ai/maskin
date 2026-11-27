@@ -20,7 +20,7 @@ export interface MoveToTrashParams {
 	entityId: string
 	/** The full deleted row, as Drizzle selected it. */
 	row: object
-	/** Restore aid: a loop's in_loop edges, or a workspace skill's agent attachments. */
+	/** Restore aid: a loop's in_loop edges, a workspace skill's agent attachments, or the flows a trigger was pruned from. */
 	extra?: Record<string, unknown> | null
 	deletedBy: string
 	/** Overrides the default deleted_at + retention window. Tests use this. */
@@ -62,13 +62,13 @@ const TIMESTAMP_KEYS: Record<TrashKind, readonly string[]> = {
 	workspace_skill: ['createdAt', 'updatedAt'],
 }
 
-/** Return a copy of `row` with the kind's timestamp columns as Date objects. */
-export function reviveDates(
-	kind: TrashKind,
+/** Return a copy of `row` with the given timestamp keys as Date objects. */
+export function reviveDatesForKeys(
+	keys: readonly string[],
 	row: Record<string, unknown>,
 ): Record<string, unknown> {
 	const out: Record<string, unknown> = { ...row }
-	for (const key of TIMESTAMP_KEYS[kind]) {
+	for (const key of keys) {
 		const value = out[key]
 		if (typeof value === 'string' && value.length > 0) {
 			out[key] = new Date(value)
@@ -76,3 +76,14 @@ export function reviveDates(
 	}
 	return out
 }
+
+/** Return a copy of `row` with the kind's timestamp columns as Date objects. */
+export function reviveDates(
+	kind: TrashKind,
+	row: Record<string, unknown>,
+): Record<string, unknown> {
+	return reviveDatesForKeys(TIMESTAMP_KEYS[kind], row)
+}
+
+/** Timestamp columns on an agent_skills attachment captured in a skill's `extra`. */
+export const AGENT_SKILL_TIMESTAMP_KEYS = ['createdAt'] as const

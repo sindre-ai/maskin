@@ -10,11 +10,17 @@ import {
 	triggers,
 	workspaceSkills,
 } from '@maskin/db/schema'
-import { and, count, desc, eq } from 'drizzle-orm'
+import { and, count, desc, eq, sql } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { errorSchema, idParamSchema, workspaceIdHeader } from '../lib/openapi-schemas'
-import { TRASH_RETENTION_DAYS, type TrashKind, reviveDates } from '../lib/trash'
+import {
+	AGENT_SKILL_TIMESTAMP_KEYS,
+	TRASH_RETENTION_DAYS,
+	type TrashKind,
+	reviveDates,
+	reviveDatesForKeys,
+} from '../lib/trash'
 import { isWorkspaceWriter } from '../lib/workspace-auth'
 
 type Env = {
@@ -234,6 +240,8 @@ app.openapi(restoreTrashRoute, (async (c) => {
 	const extra = (entry.extra ?? {}) as {
 		loop_membership?: Array<Record<string, unknown>>
 		agent_skills?: Array<Record<string, unknown>>
+		/** Flows whose step list the trigger delete pruned this trigger from. */
+		flow_ids?: string[]
 	}
 
 	let restored = false
@@ -270,7 +278,35 @@ app.openapi(restoreTrashRoute, (async (c) => {
 				.values(reviveDates(kind, row) as unknown as typeof triggers.$inferInsert)
 				.onConflictDoNothing()
 				.returning({ id: triggers.id })
-			restored = !!inserted
+			if (!inserted) return
+			// The delete pruned this id from each flow's step list; put it back in the same
+			// spot, and only when the flow still exists and does not already list it.
+			if (Array.isArray(extra.flow_ids)) {
+				for (const flowId of extra.flow_ids) {
+					await tx
+						.update(objects)
+						.set({
+							metadata: sql`jsonb_set(
+								COALESCE(${objects.metadata}, '{}'::jsonb),
+								'{trigger_ids}',
+								CASE
+									WHEN COALESCE(${objects.metadata} -> 'trigger_ids', '[]'::jsonb) @> to_jsonb(${entry.entityId}::text)
+										THEN ${objects.metadata} -> 'trigger_ids'
+									ELSE COALESCE(${objects.metadata} -> 'trigger_ids', '[]'::jsonb) || to_jsonb(${entry.entityId}::text)
+								END
+							)`,
+							updatedAt: new Date(),
+						})
+						.where(
+							and(
+								eq(objects.id, flowId),
+								eq(objects.workspaceId, entry.workspaceId),
+								eq(objects.type, 'loop'),
+							),
+						)
+				}
+			}
+			restored = true
 		} else if (kind === 'relationship') {
 			const [inserted] = await tx
 				.insert(relationships)
@@ -290,7 +326,12 @@ app.openapi(restoreTrashRoute, (async (c) => {
 				for (const attachment of extra.agent_skills) {
 					await tx
 						.insert(agentSkills)
-						.values(attachment as unknown as typeof agentSkills.$inferInsert)
+						.values(
+							reviveDatesForKeys(
+								AGENT_SKILL_TIMESTAMP_KEYS,
+								attachment,
+							) as unknown as typeof agentSkills.$inferInsert,
+						)
 						.onConflictDoNothing()
 				}
 			}

@@ -632,11 +632,25 @@ app.openapi(deleteTriggerRoute, (async (c) => {
 	}
 
 	await db.transaction(async (tx) => {
+		// Capture the flows whose step list the prune below will drop this trigger from, so
+		// a restore can put the id back in them.
+		const affectedFlows = await tx
+			.select({ id: objects.id })
+			.from(objects)
+			.where(
+				and(
+					eq(objects.workspaceId, existing.workspaceId),
+					eq(objects.type, 'loop'),
+					sql`${objects.metadata} -> 'trigger_ids' ? ${id}`,
+				),
+			)
+
 		await moveToTrash(tx, {
 			workspaceId: existing.workspaceId,
 			kind: 'trigger',
 			entityId: id,
 			row: existing,
+			extra: affectedFlows.length > 0 ? { flow_ids: affectedFlows.map((flow) => flow.id) } : null,
 			deletedBy: actorId,
 		})
 		await tx.delete(triggers).where(eq(triggers.id, id))
