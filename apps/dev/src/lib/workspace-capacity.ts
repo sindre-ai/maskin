@@ -39,6 +39,32 @@ export function seatCapForPlan(plan: BillingPlan): number | null {
 	return SEAT_CAPS[plan]
 }
 
+/**
+ * Seat cap for a workspace, reading the seats it actually pays for.
+ *
+ * Starter, Pro and Ultra are per-seat: the webhook stores the total paid seats
+ * in `settings.billing.seats`, and that number is the cap. A workspace still on
+ * an old price has no `seats`, so it keeps the static cap for its plan (Starter
+ * and Pro 5, Ultra 25) — the one legacy payer is not cut to one seat. Free
+ * (`trial`) is always 3; Enterprise is unlimited. Returns the resolved plan
+ * alongside the cap so callers can report it on a rejection.
+ */
+export function seatCapForWorkspace(settings: unknown): {
+	plan: BillingPlan
+	cap: number | null
+} {
+	const parsed = workspaceSettingsSchema.partial().safeParse(settings ?? {})
+	const billing = parsed.success ? parsed.data.billing : undefined
+	const plan = billing?.plan ?? 'trial'
+	if (plan === 'starter' || plan === 'pro' || plan === 'ultra') {
+		const seats = billing?.seats
+		if (typeof seats === 'number' && Number.isInteger(seats) && seats > 0) {
+			return { plan, cap: seats }
+		}
+	}
+	return { plan, cap: SEAT_CAPS[plan] }
+}
+
 /** Resolve a workspace's plan tier from its settings JSON, defaulting to 'trial'. */
 export function resolvePlanTier(settings: unknown): BillingPlan {
 	const parsed = workspaceSettingsSchema.partial().safeParse(settings ?? {})

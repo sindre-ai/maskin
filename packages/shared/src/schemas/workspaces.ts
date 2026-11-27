@@ -206,6 +206,11 @@ export const workspaceSettingsSchema = z.object({
 			// cap (and the usage compared against it) is tracked in actual dollar
 			// cost rather than a token count — see lib/llm-routing.ts.
 			hard_cap_usd_cents: z.number().nullable().optional(),
+			// Total paid user seats on a per-seat subscription (Starter, Pro and
+			// Ultra). Written by the Stripe webhook from the subscription's line
+			// items; the seat cap reads it. Absent on Free and on workspaces still
+			// on a legacy price, which fall back to the static cap for their plan.
+			seats: z.number().int().positive().optional(),
 			// Card-at-sign-up trial (bet "A card to start a 7-day trial"). Absent on every workspace
 			// that did not go through the card step. `awaiting_card`: signed up, no card yet, so no
 			// session starts. `started`: the card is saved and the 7 days run (period_start /

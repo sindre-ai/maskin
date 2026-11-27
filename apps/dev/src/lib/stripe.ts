@@ -125,11 +125,24 @@ export interface StripeEnv {
 	/** The old dollar Team price ($200). Still mapped so a subscription on it keeps its plan; never sold. */
 	priceTeam: string
 	/**
-	 * The kroner prices checkout sells (tax exclusive), one per paid plan. Null
-	 * when the id is not set in this environment: checkout for that plan then
-	 * fails with a clear message, and the webhook cannot recognise the price.
+	 * The old kroner prices (one per plan, tax exclusive). No longer sold, but
+	 * still read so the webhook recognises a subscription that is already on
+	 * one and keeps its plan. Null when the id is not set in this environment.
 	 */
 	priceDkk: Record<PaidMaskinPlan, string | null>
+	/**
+	 * The per-seat kroner prices checkout sells (tax exclusive). Starter and Pro
+	 * are one line at the seat price with quantity = seats; Ultra is a base
+	 * price (one user) plus an extra-user price for every user beyond the first.
+	 * Null when unset: checkout for that plan then fails with a clear message
+	 * and the webhook cannot recognise the price.
+	 */
+	priceSeat: {
+		starter: string | null
+		pro: string | null
+		ultraBase: string | null
+		ultraSeat: string | null
+	}
 	/**
 	 * Recurring $49/month price for one connected LinkedIn identity. Optional,
 	 * unlike the plan prices: a deployment that has not created the Stripe
@@ -152,7 +165,9 @@ export interface StripeEnv {
 
 interface CheckoutInputs {
 	workspaceId: string
-	plan: PaidMaskinPlan
+	plan: SellablePlan
+	/** Total user seats to bill. Starter and Pro charge every seat; Ultra charges the base plus seats - 1. */
+	seatCount: number
 	successUrl: string
 	cancelUrl: string
 	existingCustomerId?: string | null
@@ -205,6 +220,12 @@ export function readStripeEnv(env: NodeJS.ProcessEnv = process.env): StripeEnv {
 			team: env.STRIPE_PRICE_TEAM_DKK || null,
 			ultra: env.STRIPE_PRICE_ULTRA_DKK || null,
 		},
+		priceSeat: {
+			starter: env.STRIPE_PRICE_STARTER_SEAT_DKK || null,
+			pro: env.STRIPE_PRICE_PRO_SEAT_DKK || null,
+			ultraBase: env.STRIPE_PRICE_ULTRA_BASE_DKK || null,
+			ultraSeat: env.STRIPE_PRICE_ULTRA_SEAT_DKK || null,
+		},
 		priceLinkedinIdentity: env.STRIPE_PRICE_LINKEDIN_IDENTITY || null,
 		priceCreditsCustom: env.STRIPE_PRICE_CREDITS_CUSTOM || null,
 	}
@@ -231,13 +252,41 @@ export function resetStripeClientForTests() {
 	cachedClient = null
 }
 
-/** The kroner price checkout sells for a plan. Throws when this environment has no id for it. */
-export function priceIdForPlan(plan: PaidMaskinPlan, env: StripeEnv): string {
-	const priceId = env.priceDkk[plan]
-	if (!priceId) {
-		throw new Error(`STRIPE_PRICE_${plan.toUpperCase()}_DKK is not configured`)
+/** The plans checkout can sell. Team is legacy: it is no longer sold. */
+export const SELLABLE_PLANS = ['starter', 'pro', 'ultra'] as const
+export type SellablePlan = (typeof SELLABLE_PLANS)[number]
+
+/**
+ * The line items for a per-seat checkout. Starter and Pro are one line at the
+ * seat price with quantity = seats. Ultra is the base price for the first user
+ * plus the extra-user price for every user beyond the first (omitted at one
+ * seat). Throws when this environment has no id for a line it needs.
+ */
+export function seatPriceLines(
+	plan: SellablePlan,
+	seatCount: number,
+	env: StripeEnv,
+): Stripe.Checkout.SessionCreateParams.LineItem[] {
+	if (plan === 'starter' || plan === 'pro') {
+		const price = env.priceSeat[plan]
+		if (!price) {
+			throw new Error(`STRIPE_PRICE_${plan.toUpperCase()}_SEAT_DKK is not configured`)
+		}
+		return [{ price, quantity: seatCount }]
 	}
-	return priceId
+	const base = env.priceSeat.ultraBase
+	if (!base) {
+		throw new Error('STRIPE_PRICE_ULTRA_BASE_DKK is not configured')
+	}
+	const lines: Stripe.Checkout.SessionCreateParams.LineItem[] = [{ price: base, quantity: 1 }]
+	if (seatCount > 1) {
+		const extra = env.priceSeat.ultraSeat
+		if (!extra) {
+			throw new Error('STRIPE_PRICE_ULTRA_SEAT_DKK is not configured')
+		}
+		lines.push({ price: extra, quantity: seatCount - 1 })
+	}
+	return lines
 }
 
 /**
@@ -254,10 +303,14 @@ export function isLinkedInAddonPrice(priceId: string | null, env: StripeEnv): bo
 }
 
 /**
- * Which plan a Stripe price id stands for: the four kroner prices, plus the two
- * old dollar prices (Pro, Team) that exist until the paying customer is moved.
+ * Which plan a Stripe price id stands for: the per-seat kroner prices checkout
+ * sells (both Ultra lines map to ultra), the old kroner prices, plus the two old
+ * dollar prices (Pro, Team) that exist until the paying customer is moved.
  */
 export function planForPriceId(priceId: string, env: StripeEnv): PaidMaskinPlan | null {
+	if (priceId === env.priceSeat.starter) return 'starter'
+	if (priceId === env.priceSeat.pro) return 'pro'
+	if (priceId === env.priceSeat.ultraBase || priceId === env.priceSeat.ultraSeat) return 'ultra'
 	for (const plan of PAID_PLANS) {
 		if (env.priceDkk[plan] === priceId) return plan
 	}
@@ -295,17 +348,19 @@ export async function createCheckoutSession(
 	inputs: CheckoutInputs,
 	env: StripeEnv,
 ): Promise<Stripe.Checkout.Session> {
-	const priceId = priceIdForPlan(inputs.plan, env)
+	const metadata = {
+		workspace_id: inputs.workspaceId,
+		plan: inputs.plan,
+		seats: String(inputs.seatCount),
+	}
 	const params: Stripe.Checkout.SessionCreateParams = {
 		mode: 'subscription',
 		client_reference_id: inputs.workspaceId,
 		success_url: inputs.successUrl,
 		cancel_url: inputs.cancelUrl,
-		line_items: [{ price: priceId, quantity: 1 }],
-		metadata: { workspace_id: inputs.workspaceId, plan: inputs.plan },
-		subscription_data: {
-			metadata: { workspace_id: inputs.workspaceId, plan: inputs.plan },
-		},
+		line_items: seatPriceLines(inputs.plan, inputs.seatCount, env),
+		metadata,
+		subscription_data: { metadata },
 		// Delta 1 (VAT bet). customer_update is conditional on there being a
 		// customer to update — see the helper.
 		...vatCheckoutSessionParams({ hasCustomer: Boolean(inputs.existingCustomerId) }),
@@ -317,6 +372,7 @@ export async function createCheckoutSession(
 	logger.info('Stripe checkout session created', {
 		workspaceId: inputs.workspaceId,
 		plan: inputs.plan,
+		seats: inputs.seatCount,
 		sessionId: session.id,
 	})
 	return session
@@ -497,6 +553,35 @@ export function priceIdsFromSubscription(subscription: Stripe.Subscription): str
 		if (item?.price?.id) ids.push(item.price.id)
 	}
 	return ids
+}
+
+/**
+ * Total paid user seats on a per-seat subscription, read from its line items.
+ * Starter and Pro are one line at the seat price; Ultra is a base line (one
+ * user) plus an extra-user line. Returns null for a subscription on the old
+ * USD or old DKK prices, so the webhook never writes seats for a legacy payer.
+ */
+export function seatsForSubscription(
+	subscription: Stripe.Subscription,
+	env: StripeEnv,
+): number | null {
+	let starter = 0
+	let pro = 0
+	let ultraBase = 0
+	let ultraSeat = 0
+	for (const item of subscription.items?.data ?? []) {
+		const priceId = item?.price?.id
+		if (!priceId) continue
+		const quantity = typeof item.quantity === 'number' ? item.quantity : 1
+		if (priceId === env.priceSeat.starter) starter += quantity
+		else if (priceId === env.priceSeat.pro) pro += quantity
+		else if (priceId === env.priceSeat.ultraBase) ultraBase += quantity
+		else if (priceId === env.priceSeat.ultraSeat) ultraSeat += quantity
+	}
+	if (starter > 0) return starter
+	if (pro > 0) return pro
+	if (ultraBase > 0 || ultraSeat > 0) return ultraBase + ultraSeat
+	return null
 }
 
 /**

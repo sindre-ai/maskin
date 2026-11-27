@@ -1,9 +1,19 @@
 import { randomUUID } from 'node:crypto'
 import { workspaceInvitations, workspaceMembers, workspaces } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
-import { beforeEach, describe, expect, it } from 'vitest'
-import { insertWorkspace } from '../factories'
-import { db, getTestActorId } from './global-setup'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { hashInviteToken } from '../../lib/invites-token'
+import { countHumanMembers } from '../../lib/workspace-capacity'
+import workspaceInvitationsRoutes from '../../routes/workspace-invitations'
+import { insertActor, insertWorkspace } from '../factories'
+import { jsonRequest } from '../helpers'
+import { createIntegrationApp, db, getTestActorId } from './global-setup'
+
+// The accept route fires an analytics event on a successful join; mock it so
+// the seat-cap tests never touch live ingestion.
+vi.mock('../../lib/analytics/posthog', () => ({
+	capturePosthogEvent: vi.fn(async () => 'sent' as const),
+}))
 
 describe('workspace_invitations schema', () => {
 	let workspaceId: string
@@ -160,5 +170,106 @@ describe('workspace_invitations schema', () => {
 
 		expect(rows).toHaveLength(1)
 		expect(rows[0].tokenHash).toBe(tokenHash)
+	})
+})
+
+describe('seat cap on invite accept (per-seat plans)', () => {
+	function invitesApp() {
+		return createIntegrationApp({ path: '/api/invites', module: workspaceInvitationsRoutes })
+	}
+
+	async function seedHumans(workspaceId: string, count: number) {
+		for (let i = 0; i < count; i++) {
+			const actor = await insertActor(db, { type: 'human' })
+			await db.insert(workspaceMembers).values({ workspaceId, actorId: actor.id, role: 'member' })
+		}
+	}
+
+	async function seedInvite(workspaceId: string, inviterId: string) {
+		const email = `invitee-${randomUUID()}@test.com`
+		const token = randomUUID().replace(/-/g, '') + randomUUID().replace(/-/g, '')
+		await db.insert(workspaceInvitations).values({
+			workspaceId,
+			email,
+			role: 'member',
+			tokenHash: hashInviteToken(token),
+			invitedByActorId: inviterId,
+			expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+		})
+		return { email, token }
+	}
+
+	async function setBilling(
+		workspaceId: string,
+		billing: { plan: string; status: string; seats?: number },
+	) {
+		await db.update(workspaces).set({ settings: { billing } }).where(eq(workspaces.id, workspaceId))
+	}
+
+	async function accept(token: string, email: string) {
+		return invitesApp().request(
+			jsonRequest('POST', `/api/invites/${token}/accept`, {
+				email,
+				password: 'a-long-enough-password',
+				name: 'Invitee',
+			}),
+		)
+	}
+
+	it('blocks a fourth human on Free and leaves the invite pending', async () => {
+		const owner = getTestActorId()
+		const ws = await insertWorkspace(db, owner)
+		await seedHumans(ws.id, 2) // owner + 2 = 3, Free's cap
+		expect(await countHumanMembers(db, ws.id)).toBe(3)
+		const { email, token } = await seedInvite(ws.id, owner)
+
+		const res = await accept(token, email)
+
+		expect(res.status).toBe(403)
+		expect((await res.json()).error).toMatchObject({
+			code: 'SEAT_CAP_EXCEEDED',
+			plan: 'trial',
+			cap: 3,
+		})
+		expect(await countHumanMembers(db, ws.id)).toBe(3)
+	})
+
+	it('admits a fourth human when Starter pays for four seats', async () => {
+		const owner = getTestActorId()
+		const ws = await insertWorkspace(db, owner)
+		await seedHumans(ws.id, 2)
+		await setBilling(ws.id, { plan: 'starter', status: 'active', seats: 4 })
+		const { email, token } = await seedInvite(ws.id, owner)
+
+		const res = await accept(token, email)
+
+		expect(res.status).toBe(201)
+		expect(await countHumanMembers(db, ws.id)).toBe(4)
+	})
+
+	it('blocks the join when the paid seat count is already reached', async () => {
+		const owner = getTestActorId()
+		const ws = await insertWorkspace(db, owner)
+		await seedHumans(ws.id, 2)
+		await setBilling(ws.id, { plan: 'pro', status: 'active', seats: 3 })
+		const { email, token } = await seedInvite(ws.id, owner)
+
+		const res = await accept(token, email)
+
+		expect(res.status).toBe(403)
+		expect((await res.json()).error).toMatchObject({ code: 'SEAT_CAP_EXCEEDED', cap: 3 })
+	})
+
+	it('keeps the static cap for a legacy paid workspace with no seats stored', async () => {
+		const owner = getTestActorId()
+		const ws = await insertWorkspace(db, owner)
+		await seedHumans(ws.id, 2) // 3 humans, below Starter's legacy cap of 5
+		await setBilling(ws.id, { plan: 'starter', status: 'active' })
+		const { email, token } = await seedInvite(ws.id, owner)
+
+		const res = await accept(token, email)
+
+		expect(res.status).toBe(201)
+		expect(await countHumanMembers(db, ws.id)).toBe(4)
 	})
 })

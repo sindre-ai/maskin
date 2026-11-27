@@ -2213,7 +2213,9 @@ export type BillingPlan = 'trial' | 'starter' | 'pro' | 'team' | 'ultra' | 'ente
 export type BillingStatus = 'active' | 'past_due' | 'canceled' | 'incomplete'
 
 export interface BillingCheckoutInput {
-	plan: 'starter' | 'pro' | 'team' | 'ultra'
+	plan: 'starter' | 'pro' | 'ultra'
+	/** Total user seats to bill. Omitted means the server uses the current human member count. */
+	seat_count?: number
 	success_url: string
 	cancel_url: string
 }

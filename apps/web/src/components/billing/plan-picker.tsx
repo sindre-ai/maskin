@@ -11,10 +11,18 @@ export const PLAN_NAME: Record<PaidPlan, string> = {
 	ultra: 'Ultra',
 }
 
+/** A paid plan checkout can still sell. Team is legacy and is not offered. */
+export type SellablePlan = Exclude<PaidPlan, 'team'>
+
+/** Plans checkout can still sell. Team is legacy and is not offered. */
+const SELLABLE_PLANS: SellablePlan[] = PAID_PLANS.filter(
+	(plan): plan is SellablePlan => plan !== 'team',
+)
+
 /**
- * The four paid plans as a radio group of prices in kroner, with one button for
- * the selected plan. Price only: the included usage is not shown here (design
- * spec D2). Prices come from `PLAN_PRICE_DKK` in `@maskin/shared`.
+ * The sellable paid plans as a radio group of prices in kroner, with one button
+ * for the selected plan. Price only: the included usage is not shown here
+ * (design spec D2). Prices come from `PLAN_PRICE_DKK` in `@maskin/shared`.
  */
 export function PlanPicker({
 	current,
@@ -24,10 +32,10 @@ export function PlanPicker({
 	/** The plan the workspace is on now, preselected. Anything else starts on Pro. */
 	current: string
 	pending: boolean
-	onContinue: (plan: PaidPlan) => void
+	onContinue: (plan: SellablePlan) => void
 }) {
-	const [selected, setSelected] = useState<PaidPlan>(
-		(PAID_PLANS as readonly string[]).includes(current) ? (current as PaidPlan) : 'pro',
+	const [selected, setSelected] = useState<SellablePlan>(
+		(SELLABLE_PLANS as readonly string[]).includes(current) ? (current as SellablePlan) : 'pro',
 	)
 
 	return (
@@ -35,10 +43,10 @@ export function PlanPicker({
 			<p className="text-xs text-muted-foreground">Prices are per month, excluding VAT.</p>
 			<RadioGroup
 				value={selected}
-				onValueChange={(value) => setSelected(value as PaidPlan)}
+				onValueChange={(value) => setSelected(value as SellablePlan)}
 				aria-label="Choose a plan"
 			>
-				{PAID_PLANS.map((plan) => (
+				{SELLABLE_PLANS.map((plan) => (
 					<Label
 						key={plan}
 						htmlFor={`plan-picker-${plan}`}

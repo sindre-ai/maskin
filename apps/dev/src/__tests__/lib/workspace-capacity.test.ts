@@ -4,6 +4,7 @@ import {
 	ownershipCapForTier,
 	resolvePlanTier,
 	seatCapForPlan,
+	seatCapForWorkspace,
 } from '../../lib/workspace-capacity'
 
 describe('seatCapForPlan / ownershipCapForTier', () => {
@@ -11,7 +12,7 @@ describe('seatCapForPlan / ownershipCapForTier', () => {
 	// pinning pattern already used for token caps, so a future bump to these
 	// numbers is a deliberate, visible change rather than a silent drift.
 	it.each([
-		['trial', 1],
+		['trial', 3],
 		['starter', 5],
 		['pro', 5],
 		['team', 25],
@@ -30,6 +31,51 @@ describe('seatCapForPlan / ownershipCapForTier', () => {
 		['enterprise', null],
 	] as const)('ownershipCapForTier(%s) === %s', (tier, expected) => {
 		expect(ownershipCapForTier(tier)).toBe(expected)
+	})
+})
+
+describe('seatCapForWorkspace', () => {
+	it('caps Free (trial) at 3 humans, whatever seats say', () => {
+		expect(seatCapForWorkspace({})).toEqual({ plan: 'trial', cap: 3 })
+		expect(seatCapForWorkspace({ billing: { plan: 'trial', seats: 10 } })).toEqual({
+			plan: 'trial',
+			cap: 3,
+		})
+	})
+
+	it('follows the seats paid on starter, pro and ultra', () => {
+		for (const plan of ['starter', 'pro', 'ultra'] as const) {
+			expect(seatCapForWorkspace({ billing: { plan, seats: 7 } })).toEqual({
+				plan,
+				cap: 7,
+			})
+		}
+	})
+
+	it('falls back to the static cap when a paid workspace has no seats (legacy payer)', () => {
+		expect(seatCapForWorkspace({ billing: { plan: 'starter' } })).toEqual({
+			plan: 'starter',
+			cap: 5,
+		})
+		expect(seatCapForWorkspace({ billing: { plan: 'pro' } })).toEqual({ plan: 'pro', cap: 5 })
+		expect(seatCapForWorkspace({ billing: { plan: 'ultra' } })).toEqual({ plan: 'ultra', cap: 25 })
+	})
+
+	it('ignores a malformed seats value and uses the static cap', () => {
+		for (const seats of [0, -1, 1.5]) {
+			expect(seatCapForWorkspace({ billing: { plan: 'pro', seats } })).toEqual({
+				plan: 'pro',
+				cap: 5,
+			})
+		}
+	})
+
+	it('keeps team at 25 and enterprise unlimited', () => {
+		expect(seatCapForWorkspace({ billing: { plan: 'team' } })).toEqual({ plan: 'team', cap: 25 })
+		expect(seatCapForWorkspace({ billing: { plan: 'enterprise' } })).toEqual({
+			plan: 'enterprise',
+			cap: null,
+		})
 	})
 })
 

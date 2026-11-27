@@ -42,6 +42,7 @@ import { shouldSkipOnboardingKickoff } from '../lib/onboarding/chief-of-staff-ki
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import {
 	CREDIT_TOPUP_BOUNDS_MINOR,
+	SELLABLE_PLANS,
 	createCheckoutSession,
 	getStripeClient,
 	readStripeEnv,
@@ -61,6 +62,7 @@ import {
 import { extractClientIp } from '../lib/trusted-proxy'
 import type { WorkspaceSettings } from '../lib/types'
 import { assertWorkspaceWriterRole, isWorkspaceHumanAdminOrOwner } from '../lib/workspace-auth'
+import { countHumanMembers } from '../lib/workspace-capacity'
 import { startChiefOfStaffWelcome } from '../services/workspace-bootstrap'
 
 /**
@@ -92,7 +94,10 @@ type Env = {
 const app = new OpenAPIHono<Env>()
 
 const checkoutBodySchema = z.object({
-	plan: z.enum(PAID_PLANS),
+	plan: z.enum(SELLABLE_PLANS),
+	// Total user seats to bill. Omitted means "the workspace's current human
+	// members", resolved from the DB with a floor of 1.
+	seat_count: z.number().int().min(1).max(100).optional(),
 	success_url: z.string().url(),
 	cancel_url: z.string().url(),
 })
@@ -533,7 +538,7 @@ app.openapi(invoicesRoute, async (c) => {
 app.openapi(checkoutRoute, async (c) => {
 	const db = c.get('db')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
-	const { plan, success_url, cancel_url } = c.req.valid('json')
+	const { plan, seat_count, success_url, cancel_url } = c.req.valid('json')
 
 	const [workspace] = await db
 		.select({ id: workspaces.id, settings: workspaces.settings })
@@ -576,6 +581,11 @@ app.openapi(checkoutRoute, async (c) => {
 		return c.json(createApiError('INTERNAL_ERROR', 'Stripe is not configured'), 500)
 	}
 
+	// Omitted seat_count means "the people already in the workspace". The floor
+	// of 1 keeps a workspace whose count query reads 0 (a race with a removal,
+	// or a mock) from starting a zero-seat subscription.
+	const seatCount = seat_count ?? Math.max(1, await countHumanMembers(db, workspaceId))
+
 	const stripe = getStripeClient(stripeEnv)
 	try {
 		const session = await createCheckoutSession(
@@ -583,6 +593,7 @@ app.openapi(checkoutRoute, async (c) => {
 			{
 				workspaceId,
 				plan,
+				seatCount,
 				successUrl: success_url,
 				cancelUrl: cancel_url,
 				existingCustomerId,

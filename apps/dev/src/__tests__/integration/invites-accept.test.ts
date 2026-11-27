@@ -374,12 +374,18 @@ describe('Invites — POST /:token/accept', () => {
 		})
 
 		it('rejects with 403 SEAT_CAP_EXCEEDED and leaves the invite pending', async () => {
-			// Fresh trial-tier workspace: seat cap is 1 (owner alone), so the
-			// invitee overflow trips the cap.
+			// Free (trial) caps at 3 humans. The owner plus two seeded members
+			// fill it, so the fourth invitee trips the cap.
 			const seatCapWs = await insertWorkspace(db, inviterId, {
 				name: 'Seat Cap WS',
 				enterpriseGranted: false,
 			})
+			for (let i = 0; i < 2; i++) {
+				const human = await insertActor(db, { type: 'human' })
+				await db
+					.insert(workspaceMembers)
+					.values({ workspaceId: seatCapWs.id, actorId: human.id, role: 'member' })
+			}
 
 			const invitee = await insertActor(db, {
 				email: 'overflow@example.com',
@@ -402,7 +408,8 @@ describe('Invites — POST /:token/accept', () => {
 			expect(body.error.code).toBe('SEAT_CAP_EXCEEDED')
 			expect(body.error.workspace_id).toBe(seatCapWs.id)
 			expect(body.error.plan).toBe('trial')
-			expect(body.error.cap).toBe(1)
+			expect(body.error.cap).toBe(3)
+			expect(body.error.used).toBe(3)
 
 			// Invite must remain pending so the admin can upgrade + the invitee retries.
 			const [after] = await db

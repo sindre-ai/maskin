@@ -19,6 +19,11 @@ vi.mock('@/lib/api', () => ({
 			checkout: vi.fn(),
 			buyCredits: vi.fn(),
 		},
+		workspaces: {
+			members: {
+				list: vi.fn(),
+			},
+		},
 	},
 }))
 
@@ -63,6 +68,14 @@ describe('BillingSection', () => {
 	beforeEach(() => {
 		vi.mocked(api.billing.usage).mockReset()
 		vi.mocked(api.billing.checkout).mockReset()
+		vi.mocked(api.workspaces.members.list).mockReset()
+		// Three people and one agent: the agent must not count as a seat.
+		vi.mocked(api.workspaces.members.list).mockResolvedValue([
+			{ actorId: 'a1', role: 'owner', joinedAt: null, name: 'Ada', type: 'human' },
+			{ actorId: 'a2', role: 'member', joinedAt: null, name: 'Bo', type: 'human' },
+			{ actorId: 'a3', role: 'member', joinedAt: null, name: 'Cy', type: 'human' },
+			{ actorId: 'ag', role: 'member', joinedAt: null, name: 'Agent', type: 'agent' },
+		])
 	})
 
 	it('renders trial plan with an upgrade button per paid plan and the usage line', async () => {
@@ -77,12 +90,12 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Trial')
-		expect(screen.getByText('$1.25 / $2.86 used')).toBeInTheDocument()
-		// Trial (non-paid-active) plans start with the comparison grid expanded.
-		for (const plan of ['Starter', 'Pro', 'Team', 'Ultra']) {
+		expect(await screen.findByText('$1.25 / $2.86 used')).toBeInTheDocument()
+		// Free (non-paid-active) plans start with the comparison grid expanded.
+		for (const plan of ['Starter', 'Pro', 'Ultra']) {
 			expect(screen.getByRole('button', { name: `Upgrade to ${plan}` })).toBeInTheDocument()
 		}
+		expect(screen.queryByRole('button', { name: 'Upgrade to Team' })).not.toBeInTheDocument()
 		expect(
 			screen.queryByRole('button', { name: /Switch to bring-your-own/ }),
 		).not.toBeInTheDocument()
@@ -135,11 +148,11 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Pro — 249 kr/mo')
+		await screen.findByText('Pro — 995 kr/user/mo')
 		expect(screen.queryByTestId('trial-banner')).not.toBeInTheDocument()
 	})
 
-	it('renders Pro plan with Team and Ultra upgrades + Switch-to-BYO + Manage in Stripe', async () => {
+	it('renders Pro plan with an Ultra upgrade + Switch-to-BYO + Manage in Stripe', async () => {
 		const user = userEvent.setup()
 		vi.mocked(api.billing.usage).mockResolvedValue({
 			...baseUsage,
@@ -159,24 +172,25 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Pro — 249 kr/mo')
+		await screen.findByText('Pro — 995 kr/user/mo')
 		expect(screen.getByText(/\$2\.50 \/ \$7\.14 used/)).toBeInTheDocument()
 		expect(screen.getByText(/resets in 23d/)).toBeInTheDocument()
 		expect(screen.getByRole('link', { name: /Manage in Stripe/ })).toBeInTheDocument()
 
 		// Paid+active plans start with the comparison grid collapsed.
-		expect(screen.queryByRole('button', { name: 'Upgrade to Team' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Upgrade to Ultra' })).not.toBeInTheDocument()
 		await user.click(screen.getByRole('button', { name: 'Compare plans' }))
 
-		expect(screen.getByRole('button', { name: 'Upgrade to Team' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Upgrade to Ultra' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Downgrade to Free' })).toBeInTheDocument()
 		// Only dearer plans are offered: not the one it is on, not the cheaper one.
 		expect(screen.queryByRole('button', { name: 'Upgrade to Pro' })).not.toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: 'Upgrade to Starter' })).not.toBeInTheDocument()
+		// Team is no longer sold, so it is not offered at all.
+		expect(screen.queryByRole('button', { name: 'Upgrade to Team' })).not.toBeInTheDocument()
 	})
 
-	it('renders Team plan with an Ultra upgrade and Switch-to-BYO', async () => {
+	it('renders a legacy Team workspace with its old price and the dearer plans only', async () => {
 		const user = userEvent.setup()
 		vi.mocked(api.billing.usage).mockResolvedValue({
 			...baseUsage,
@@ -197,7 +211,11 @@ describe('BillingSection', () => {
 		await screen.findByText('Team — 549 kr/mo')
 		await user.click(screen.getByRole('button', { name: 'Compare plans' }))
 
-		expect(screen.getAllByRole('button', { name: /Upgrade/ })).toHaveLength(1)
+		// Team is legacy: no Team card. Starter (349) is cheaper than the old
+		// Team price (549), so only Pro and Ultra are offered as upgrades.
+		expect(screen.queryByRole('button', { name: 'Upgrade to Team' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Upgrade to Starter' })).not.toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Upgrade to Pro' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Upgrade to Ultra' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Downgrade to Free' })).toBeInTheDocument()
 	})
@@ -219,7 +237,7 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Starter — 99 kr/mo')
+		await screen.findByText('Starter — 349 kr/user/mo')
 		expect(screen.getByText(/\$1\.00 \/ \$2\.86 used/)).toBeInTheDocument()
 	})
 
@@ -241,7 +259,7 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Ultra — 1.499 kr/mo')
+		await screen.findByText('Ultra — 4.995 kr/mo')
 		expect(screen.getByText(/\$1\.00 \/ \$42\.86 used/)).toBeInTheDocument()
 		await user.click(screen.getByRole('button', { name: 'Compare plans' }))
 		expect(screen.queryByRole('button', { name: /Upgrade/ })).not.toBeInTheDocument()
@@ -265,7 +283,7 @@ describe('BillingSection', () => {
 		await screen.findByText('Enterprise')
 		expect(screen.getByText(/Using your own Claude subscription/)).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Upgrade to Pro' })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'Upgrade to Team' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Upgrade to Ultra' })).toBeInTheDocument()
 		expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
 	})
 
@@ -295,9 +313,9 @@ describe('BillingSection', () => {
 		// `closest('div')` is the PlanCard root — the button is its direct child.
 		const currentCard = current[0].closest('div')
 		expect(currentCard?.textContent).toContain('ENTERPRISE')
-		expect(currentCard?.textContent).not.toContain('TRIAL')
+		expect(currentCard?.textContent).not.toContain('FREE')
 		expect(screen.queryByRole('button', { name: 'Upgrade to Pro' })).not.toBeInTheDocument()
-		expect(screen.queryByRole('button', { name: 'Upgrade to Team' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Upgrade to Ultra' })).not.toBeInTheDocument()
 		expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
 	})
 
@@ -323,12 +341,14 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
+		// Wait for the members query so the click sends the real seat count.
+		await screen.findByText('3 users · 2.985 kr/mo')
 		await user.click(await screen.findByRole('button', { name: 'Upgrade to Pro' }))
 
 		await vi.waitFor(() => {
 			expect(api.billing.checkout).toHaveBeenCalledWith(
 				'ws-1',
-				expect.objectContaining({ plan: 'pro' }),
+				expect.objectContaining({ plan: 'pro', seat_count: 3 }),
 			)
 		})
 		await vi.waitFor(() => {
@@ -354,7 +374,7 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Pro — 249 kr/mo')
+		await screen.findByText('Pro — 995 kr/user/mo')
 		await user.click(screen.getByRole('button', { name: 'Compare plans' }))
 		await user.click(screen.getByRole('button', { name: 'Downgrade to Free' }))
 		expect(screen.getByRole('dialog')).toBeInTheDocument()
@@ -379,7 +399,7 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Pro — 249 kr/mo')
+		await screen.findByText('Pro — 995 kr/user/mo')
 		await user.click(screen.getByRole('button', { name: 'Compare plans' }))
 		await user.click(screen.getByRole('button', { name: 'Downgrade to Free' }))
 		const dialog = screen.getByRole('dialog')
@@ -404,7 +424,7 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Pro — 249 kr/mo')
+		await screen.findByText('Pro — 995 kr/user/mo')
 		await user.click(screen.getByRole('button', { name: 'Compare plans' }))
 
 		expect(screen.queryByRole('button', { name: 'Downgrade to Free' })).not.toBeInTheDocument()
@@ -425,7 +445,7 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Trial')
+		await screen.findByText('$1.25 / $2.86 used')
 		const currentPlanButton = screen.getByRole('button', { name: 'Current plan' })
 		expect(currentPlanButton).toBeDisabled()
 	})
@@ -448,7 +468,7 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Pro — 249 kr/mo')
+		await screen.findByText('Pro — 995 kr/user/mo')
 		expect(screen.getByText('$40.00 usage credits')).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Buy usage credits' })).toBeInTheDocument()
 		// A spendable balance is expected, already-paid-for usage — the bar must not read as an error.
@@ -474,7 +494,7 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Pro — 249 kr/mo')
+		await screen.findByText('Pro — 995 kr/user/mo')
 		expect(screen.getByText('$40.00 usage credits')).toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: 'Buy usage credits' })).not.toBeInTheDocument()
 	})
@@ -497,7 +517,7 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Pro — 249 kr/mo')
+		await screen.findByText('Pro — 995 kr/user/mo')
 		expect(screen.queryByText(/^\$[\d.,]+ usage credits$/)).not.toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: 'Buy usage credits' })).not.toBeInTheDocument()
 	})
@@ -519,7 +539,7 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Pro — 249 kr/mo')
+		await screen.findByText('Pro — 995 kr/user/mo')
 		await user.click(screen.getByRole('button', { name: 'Compare plans' }))
 		expect(screen.getAllByText('Usage included each month').length).toBeGreaterThan(0)
 		expect(screen.queryByText(/kr of usage|on the house/)).not.toBeInTheDocument()
@@ -544,7 +564,7 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Pro — 249 kr/mo')
+		await screen.findByText('Pro — 995 kr/user/mo')
 		expect(screen.getByText('$0.00 usage credits')).toBeInTheDocument()
 		const bar = screen.getByRole('progressbar')
 		expect(bar.className).toContain('bg-error')
@@ -578,7 +598,7 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Pro — 249 kr/mo')
+		await screen.findByText('Pro — 995 kr/user/mo')
 		await user.click(screen.getByRole('button', { name: 'Buy usage credits' }))
 		expect(await screen.findByRole('dialog')).toBeInTheDocument()
 
@@ -615,7 +635,7 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Pro — 249 kr/mo')
+		await screen.findByText('Pro — 995 kr/user/mo')
 		expect(screen.queryByRole('button', { name: 'Downgrade to Free' })).not.toBeInTheDocument()
 
 		await user.click(screen.getByRole('button', { name: 'Compare plans' }))
@@ -637,7 +657,7 @@ describe('BillingSection', () => {
 				<BillingSection workspaceId="ws-1" enterprise />
 			</TestWrapper>,
 		)
-		await screen.findByText('Trial')
+		await screen.findByText('$0.00 / $2.86 used')
 		expect(screen.queryByText('LinkedIn Identity')).not.toBeInTheDocument()
 		expect(screen.queryByTestId('linkedin-identity-addon')).not.toBeInTheDocument()
 	})

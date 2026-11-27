@@ -228,9 +228,8 @@ describe('Workspace capacity (seat cap + ownership cap) Integration', () => {
 				jsonRequest('POST', '/api/workspaces', { name: 'Transfer Target' }),
 			)
 			const ws = await createRes.json()
-			// Trial's seat cap is 1 (owner only) — bump to pro so a second member
-			// can actually be added below; the point of this test is the
-			// member-required invariant, not the seat cap.
+			// Bump to pro so the second member has a paid seat; the point of this
+			// test is the member-required invariant, not the seat cap.
 			await setWorkspacePlan(db, ws.id, 'pro')
 			const newOwner = await insertActor(db, { name: 'Future Owner' })
 
