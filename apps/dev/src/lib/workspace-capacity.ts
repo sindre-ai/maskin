@@ -53,9 +53,22 @@ export function seatCapForWorkspace(settings: unknown): {
 	plan: BillingPlan
 	cap: number | null
 } {
-	const parsed = workspaceSettingsSchema.partial().safeParse(settings ?? {})
-	const billing = parsed.success ? parsed.data.billing : undefined
-	const plan = billing?.plan ?? 'trial'
+	// Read plan and seats independently of the strict settings schema. A single
+	// malformed field (say a fractional seats value) must not fail the whole
+	// billing object and drop a paid workspace to Free.
+	const rawBilling =
+		settings && typeof settings === 'object'
+			? (settings as { billing?: unknown }).billing
+			: undefined
+	const billing =
+		rawBilling && typeof rawBilling === 'object'
+			? (rawBilling as { plan?: unknown; seats?: unknown })
+			: undefined
+	const rawPlan = billing?.plan
+	const plan: BillingPlan =
+		typeof rawPlan === 'string' && Object.hasOwn(SEAT_CAPS, rawPlan)
+			? (rawPlan as BillingPlan)
+			: 'trial'
 	if (plan === 'starter' || plan === 'pro' || plan === 'ultra') {
 		const seats = billing?.seats
 		if (typeof seats === 'number' && Number.isInteger(seats) && seats > 0) {
