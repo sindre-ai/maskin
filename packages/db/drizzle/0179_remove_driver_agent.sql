@@ -55,7 +55,10 @@ BEGIN
 				SELECT wm.actor_id
 				FROM workspace_members wm
 				JOIN actors h ON h.id = wm.actor_id
-				WHERE wm.workspace_id = ws.id AND h.type = 'human' AND wm.role = 'owner'
+				WHERE wm.workspace_id = (
+					SELECT wm2.workspace_id FROM workspace_members wm2 WHERE wm2.actor_id = target.id LIMIT 1
+				)
+					AND h.type = 'human' AND wm.role = 'owner'
 				ORDER BY wm.joined_at NULLS LAST
 				LIMIT 1
 			),
@@ -63,22 +66,24 @@ BEGIN
 				SELECT wm.actor_id
 				FROM workspace_members wm
 				JOIN actors h ON h.id = wm.actor_id
-				WHERE wm.workspace_id = ws.id AND h.type = 'human'
+				WHERE wm.workspace_id = (
+					SELECT wm2.workspace_id FROM workspace_members wm2 WHERE wm2.actor_id = target.id LIMIT 1
+				)
+					AND h.type = 'human'
 				ORDER BY wm.joined_at NULLS LAST
 				LIMIT 1
 			),
-			ws.created_by,
+			(
+				SELECT w.created_by
+				FROM workspaces w
+				WHERE w.id = (
+					SELECT wm2.workspace_id FROM workspace_members wm2 WHERE wm2.actor_id = target.id LIMIT 1
+				)
+			),
 			(SELECT a.created_by FROM actors a WHERE a.id = target.id),
 			(SELECT a.id FROM actors a WHERE a.id <> target.id ORDER BY a.created_at NULLS LAST LIMIT 1)
 		)
-		INTO fallback
-		FROM (
-			SELECT w.id, w.created_by
-			FROM workspaces w
-			JOIN workspace_members wm ON wm.workspace_id = w.id
-			WHERE wm.actor_id = target.id
-			LIMIT 1
-		) ws;
+		INTO fallback;
 
 		-- Sessions owned by the agent, and the logs under them. Any retry pointer
 		-- from another session is cleared first so the session self-FKs release.
