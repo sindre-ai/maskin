@@ -1,10 +1,11 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
+import { openIntegrationCard } from '../helpers/integrations.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
-// Settings → Dinero review: the log of what the flow did in Dinero, a reversal of a booked item,
-// and Approve the books. The flag and the review answers are route-mocked: a test account has no
-// Dinero connection, and the flag is on only for named testers. The routes themselves (who may call
+// Settings → Integrations → Dinero: the log of what the flow did in Dinero, a reversal of a booked
+// item, and Approve the books, inside the connected Dinero card. The connection and the review
+// answers are route-mocked: a test account has no Dinero connection. The routes themselves (who may call
 // them, the counter-posting, the approval record and the lock) run against real Postgres in
 // apps/dev/src/__tests__/integration/dinero-review.test.ts.
 
@@ -87,14 +88,32 @@ const log = (over: Record<string, unknown> = {}) => ({
 
 async function mock(
 	page: Page,
+	workspaceId: string,
 	state: { log: ReturnType<typeof log>; vat?: ReturnType<typeof vatReport> },
 ) {
-	await page.route('**/api/feature-flags', (route) =>
-		route.fulfill({
-			status: 200,
-			contentType: 'application/json',
-			body: JSON.stringify({ flags: { 'dinero-review-screen': true } }),
-		}),
+	// The collection endpoint only: /api/integrations/providers must still reach the real backend,
+	// or no Dinero row renders.
+	await page.route(
+		(url) => url.pathname === '/api/integrations',
+		(route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify([
+					{
+						id: '11111111-1111-4111-8111-111111111111',
+						workspaceId,
+						provider: 'dinero',
+						status: 'active',
+						externalId: 'dinero-test',
+						config: {},
+						actorId: null,
+						createdBy: '22222222-2222-4222-8222-222222222222',
+						createdAt: '2026-11-20T07:00:00.000Z',
+						updatedAt: '2026-11-20T07:00:00.000Z',
+					},
+				]),
+			}),
 	)
 	await page.route('**/api/dinero-review/vat-report?**', (route) =>
 		route.fulfill({
@@ -112,15 +131,21 @@ async function mock(
 	)
 }
 
-test.describe('Settings — Dinero review', () => {
+async function openDinero(page: Page, workspaceId: string) {
+	await page.goto(`/${workspaceId}/settings/integrations`)
+	await page.waitForLoadState('load')
+	await openIntegrationCard(page, /Dinero/)
+}
+
+test.describe('Settings — Dinero review in the Dinero integration', () => {
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
 		test(`shows the log, and Reverse and Approve are reachable at ${viewport.label}`, async ({
 			page,
 			account,
 		}) => {
-			await mock(page, { log: log() })
+			await mock(page, account.workspaceId, { log: log() })
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
-			await page.goto(`/${account.workspaceId}/settings/dinero-review`)
+			await openDinero(page, account.workspaceId)
 			await page.waitForLoadState('load')
 
 			await expect(page.getByRole('heading', { name: 'Dinero review' })).toBeVisible()
@@ -131,7 +156,7 @@ test.describe('Settings — Dinero review', () => {
 	}
 
 	test('reversing asks first, then sends the item to Dinero', async ({ page, account }) => {
-		await mock(page, { log: log() })
+		await mock(page, account.workspaceId, { log: log() })
 		let body: unknown = null
 		await page.route('**/api/dinero-review/reverse', async (route) => {
 			body = route.request().postDataJSON()
@@ -141,7 +166,7 @@ test.describe('Settings — Dinero review', () => {
 				body: JSON.stringify({ outcome: 'success', message: 'ok', reversal_event_id: 2 }),
 			})
 		})
-		await page.goto(`/${account.workspaceId}/settings/dinero-review`)
+		await openDinero(page, account.workspaceId)
 		await page.getByRole('button', { name: 'Reverse', exact: true }).click()
 		await expect(page.getByText('A booked voucher cannot be deleted in Dinero.')).toBeVisible()
 		await page.getByRole('button', { name: 'Reverse in Dinero' }).click()
@@ -149,7 +174,7 @@ test.describe('Settings — Dinero review', () => {
 	})
 
 	test('approving sends the hash of the figures that were shown', async ({ page, account }) => {
-		await mock(page, { log: log() })
+		await mock(page, account.workspaceId, { log: log() })
 		let body: unknown = null
 		await page.route('**/api/dinero-review/approve', async (route) => {
 			body = route.request().postDataJSON()
@@ -159,7 +184,7 @@ test.describe('Settings — Dinero review', () => {
 				body: JSON.stringify(log()),
 			})
 		})
-		await page.goto(`/${account.workspaceId}/settings/dinero-review`)
+		await openDinero(page, account.workspaceId)
 		await page.getByRole('button', { name: 'Approve the books' }).first().click()
 		await page.getByRole('dialog').getByRole('button', { name: 'Approve the books' }).click()
 		await expect
@@ -168,7 +193,7 @@ test.describe('Settings — Dinero review', () => {
 	})
 
 	test('an approved period is closed: no Reverse, Approve is off', async ({ page, account }) => {
-		await mock(page, {
+		await mock(page, account.workspaceId, {
 			log: log({
 				approval: {
 					approved_by: '00000000-0000-4000-8000-000000000001',
@@ -177,7 +202,7 @@ test.describe('Settings — Dinero review', () => {
 				},
 			}),
 		})
-		await page.goto(`/${account.workspaceId}/settings/dinero-review`)
+		await openDinero(page, account.workspaceId)
 		await expect(page.getByRole('status')).toContainText('The period is closed')
 		await expect(page.getByRole('button', { name: 'Reverse', exact: true })).toHaveCount(0)
 		await expect(page.getByRole('button', { name: 'Approve the books' })).toBeDisabled()
@@ -187,8 +212,8 @@ test.describe('Settings — Dinero review', () => {
 		page,
 		account,
 	}) => {
-		await mock(page, { log: log() })
-		await page.goto(`/${account.workspaceId}/settings/dinero-review`)
+		await mock(page, account.workspaceId, { log: log() })
+		await openDinero(page, account.workspaceId)
 		await expect(
 			page.getByText('The filing hand-off is available after you approve the books.'),
 		).toBeVisible()
@@ -199,7 +224,7 @@ test.describe('Settings — Dinero review', () => {
 		page,
 		account,
 	}) => {
-		await mock(page, {
+		await mock(page, account.workspaceId, {
 			log: log({
 				approval: {
 					approved_by: '00000000-0000-4000-8000-000000000001',
@@ -228,7 +253,7 @@ test.describe('Settings — Dinero review', () => {
 				}),
 			})
 		})
-		await page.goto(`/${account.workspaceId}/settings/dinero-review`)
+		await openDinero(page, account.workspaceId)
 		await page.getByRole('button', { name: 'Get the filing hand-off' }).click()
 		await expect(page.getByRole('region', { name: 'Filing hand-off' })).toContainText(
 			'VAT I25: 1.250,00 incl. VAT, VAT 250,00, 2 lines',
@@ -242,8 +267,8 @@ test.describe('Settings — Dinero review', () => {
 		page,
 		account,
 	}) => {
-		await mock(page, { log: log() })
-		await page.goto(`/${account.workspaceId}/settings/dinero-review`)
+		await mock(page, account.workspaceId, { log: log() })
+		await openDinero(page, account.workspaceId)
 		await expect(page.getByRole('heading', { name: 'VAT report (draft)' })).toBeVisible()
 		const row = page.getByTestId('vat-code-I25')
 		await expect(row).toContainText('1.250,00')
@@ -262,7 +287,7 @@ test.describe('Settings — Dinero review', () => {
 		page,
 		account,
 	}) => {
-		await mock(page, { log: log() })
+		await mock(page, account.workspaceId, { log: log() })
 		let url = ''
 		await page.route('**/api/dinero-review/vat-report/csv?**', async (route) => {
 			url = route.request().url()
@@ -272,7 +297,7 @@ test.describe('Settings — Dinero review', () => {
 				body: 'Row;VAT code\r\n',
 			})
 		})
-		await page.goto(`/${account.workspaceId}/settings/dinero-review`)
+		await openDinero(page, account.workspaceId)
 		const download = page.waitForEvent('download')
 		await page.getByRole('button', { name: 'Download spreadsheet' }).click()
 		expect((await download).suggestedFilename()).toBe('vat-report-draft-2026-10-24-2026-11-23.csv')
@@ -280,10 +305,23 @@ test.describe('Settings — Dinero review', () => {
 	})
 
 	test('an empty period says so', async ({ page, account }) => {
-		await mock(page, { log: log({ items: [] }) })
-		await page.goto(`/${account.workspaceId}/settings/dinero-review`)
+		await mock(page, account.workspaceId, { log: log({ items: [] }) })
+		await openDinero(page, account.workspaceId)
 		await expect(
 			page.getByText('The flow has not done anything in Dinero in this period.'),
 		).toBeVisible()
+	})
+
+	test('there is no separate Dinero review page or Settings entry', async ({ page, account }) => {
+		await mock(page, account.workspaceId, { log: log() })
+		await page.goto(`/${account.workspaceId}/settings/integrations`)
+		await page.waitForLoadState('load')
+		await expect(
+			page.getByRole('navigation', { name: 'Settings sections' }).getByRole('link', {
+				name: 'Dinero review',
+			}),
+		).toHaveCount(0)
+		await page.goto(`/${account.workspaceId}/settings/dinero-review`)
+		await expect(page.getByRole('heading', { name: 'Dinero review' })).toHaveCount(0)
 	})
 })
