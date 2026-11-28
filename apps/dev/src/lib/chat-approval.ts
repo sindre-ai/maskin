@@ -8,6 +8,7 @@ import {
 } from '@maskin/db/schema'
 import type { ObjectPreview } from '@maskin/shared'
 import { and, desc, eq, gte, isNull } from 'drizzle-orm'
+import { checkApprovalOwner } from './approval-owner'
 import { findCurrentApproval, recordObjectApproval } from './object-delivery'
 import { buildObjectPreview } from './object-preview'
 import { getWorkspaceRole } from './workspace-auth'
@@ -230,6 +231,15 @@ export async function approveDraftFromChat(
 			'The draft was not shown in this chat before that message, so a yes there may be about something else.',
 			SHOW_AGAIN,
 		)
+	}
+
+	const owner = await checkApprovalOwner(db, {
+		workspaceId,
+		actorId: message.actorId,
+		metadata: object.metadata,
+	})
+	if (!owner.ok) {
+		return refuse(403, 'FORBIDDEN', owner.message, 'Ask the owner of the account to say yes.')
 	}
 
 	const approval = await recordObjectApproval(db, {

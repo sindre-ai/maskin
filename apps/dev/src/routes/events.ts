@@ -474,6 +474,7 @@ app.openapi(createCommentRoute, (async (c) => {
 	const replyApprovals = mayApprove
 		? await resolveReplyApprovals(db, {
 				workspaceId,
+				actorId,
 				entityId: body.entity_id,
 				parentEventId: body.parent_event_id,
 				content: body.content,

@@ -276,6 +276,10 @@ export const workspaceSettingsSchema = z.object({
 	// dead-linking. PATCH /api/workspaces/:id shallow-merges top-level keys, so
 	// pin/unpin writes replace the whole array.
 	pinned_files: z.array(z.string().uuid()).default([]),
+	// Who may approve a post for an account: { account: [person actor ids] }, matched against the
+	// post's metadata.account with dash and underscore alike. Absent means no restriction. Read by
+	// apps/dev/src/lib/approval-owner.ts on every approval path.
+	approval_owners: z.record(z.string(), z.array(z.string().uuid())).optional(),
 	// Custom views shown as tabs on the Items list, keyed by object type ("all" for the list with
 	// no type picked): { name, file_id } rows, the same shape as a flow's metadata.views.
 	// References only, like pinned_files. PATCH /api/workspaces/:id replaces this top-level key

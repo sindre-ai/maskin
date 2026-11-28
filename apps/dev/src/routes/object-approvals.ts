@@ -3,6 +3,7 @@ import type { Database } from '@maskin/db'
 import { actors, objects } from '@maskin/db/schema'
 import { objectPreviewSchema } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
+import { checkApprovalOwner } from '../lib/approval-owner'
 import { approveDraftFromChat } from '../lib/chat-approval'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordObjectApproval, withDeliveryState } from '../lib/object-delivery'
@@ -116,6 +117,22 @@ app.openapi(approveRoute, async (c) => {
 		return c.json(
 			createApiError('BAD_REQUEST', 'This object is not a draft an integration can send.'),
 			400,
+		)
+	}
+	const owner = await checkApprovalOwner(db, {
+		workspaceId: object.workspaceId,
+		actorId,
+		metadata: object.metadata,
+	})
+	if (!owner.ok) {
+		return c.json(
+			createApiError(
+				'FORBIDDEN',
+				owner.message,
+				undefined,
+				'Ask the owner of the account to approve it.',
+			),
+			403,
 		)
 	}
 	if (preview.missing.length > 0) {
