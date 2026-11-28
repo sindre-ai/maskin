@@ -82,7 +82,7 @@ public enum LoopQuality {
 	}
 
 	/// Every real number the API has for a loop's health: open, closed, median time to close,
-	/// waiting, next run. Dashes for what is missing. The Outcome tab shows only `cardStats`.
+	/// waiting, next run. Dashes for what is missing.
 	public static func stats(
 		for loop: LoopSummary, nextRun: Date?, duration: (TimeInterval) -> String,
 		date: (Date) -> String
@@ -96,19 +96,40 @@ public enum LoopQuality {
 		]
 	}
 
-	/// The three labels the Outcome tab's QUALITY tiles show, in order. Only what is measured today:
-	/// median time and next run are not tiles (next run lives in Under the hood, Schedule), and
-	/// rework and edit rate wait for the API to record edits to approved drafts.
-	public static let cardLabels = ["Cycles done", "Decisions needed", "Failed steps"]
-
-	/// The quality tiles: cycles closed, decisions waiting on the viewer, and steps that failed in
-	/// the last seven days (`failedSteps`, from `FlowHealth.failedCount`).
-	public static func cardStats(for loop: LoopSummary, failedSteps: Int) -> [Stat] {
+	/// The five tiles at the top of a flow's Setup tab, worded and formatted as web writes them:
+	/// cycles running (only while the flow is live), closed, median cycle time, asks waiting and the
+	/// next fire. A dash for what is missing.
+	public static func setupStats(for loop: LoopSummary, nextRun: Date?, now: Date) -> [Stat] {
 		[
-			Stat(label: cardLabels[0], value: "\(loop.closedCount)"),
-			Stat(label: cardLabels[1], value: "\(loop.waitingCount)"),
-			Stat(label: cardLabels[2], value: "\(failedSteps)"),
+			Stat(label: "Cycles running", value: "\(loop.pill.isLive ? loop.inProgressCount : 0)"),
+			Stat(label: "Closed this month", value: "\(loop.closedCount)"),
+			Stat(label: "Median cycle time", value: loop.medianTimeToClose.flatMap(shortDuration) ?? "—"),
+			Stat(label: "Asks waiting", value: "\(loop.waitingCount)"),
+			Stat(label: "Next fire", value: nextRun.flatMap { nextFireLabel($0, now: now) } ?? "—"),
 		]
+	}
+
+	/// "12d", "3h", "9m", "45s": one unit, rounded. Nil for nothing to show yet.
+	static func shortDuration(_ seconds: TimeInterval) -> String? {
+		guard seconds.isFinite, seconds > 0 else { return nil }
+		let minutes = seconds / 60, hours = minutes / 60, days = hours / 24
+		if days >= 1 { return "\(Int(days.rounded()))d" }
+		if hours >= 1 { return "\(Int(hours.rounded()))h" }
+		if minutes >= 1 { return "\(Int(minutes.rounded()))m" }
+		return "\(Int(seconds.rounded()))s"
+	}
+
+	/// "in 4m", "in 3h", "in 2d", or a short date a week or more out. Nil when it is not in the future.
+	static func nextFireLabel(_ at: Date, now: Date) -> String? {
+		let seconds = at.timeIntervalSince(now)
+		guard seconds > 0 else { return nil }
+		let minutes = Int((seconds / 60).rounded())
+		if minutes < 60 { return "in \(minutes)m" }
+		let hours = Int((seconds / 3600).rounded())
+		if hours < 24 { return "in \(hours)h" }
+		let days = Int((seconds / 86400).rounded())
+		if days < 7 { return "in \(days)d" }
+		return at.formatted(.dateTime.month(.abbreviated).day())
 	}
 
 	/// When the loop next runs on its own: the earliest scheduled step; nil if paused or event-only.

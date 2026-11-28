@@ -3,8 +3,8 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// One loop (v19): status and stage, then the Overview tab, any custom views, then the Performance,
-/// Briefings, Items, Activity and Setup tabs, with the flow's composer pinned at the bottom.
+/// One loop (v19): status and stage, then Briefings and any custom views, then the Overview,
+/// Items, Activity and Setup tabs, with the flow's composer pinned at the bottom.
 struct LoopDetailView: View {
 	let store: LoopDetailStore
 	var install: LoopInstall?
@@ -114,18 +114,16 @@ struct LoopDetailView: View {
 	}
 }
 
-/// The loop page's tabs. Each custom view pinned to the loop is a tab of its own, right after
-/// Overview so it is on screen on a phone, named by whoever pinned it (same order and names as the
-/// web loop page).
+/// The loop page's tabs. Each custom view pinned to the loop is a tab of its own, ahead of
+/// Overview, named by whoever pinned it (same order and names as the web loop page).
 enum LoopDetailTab: Hashable, Identifiable {
-	case overview, performance, briefings, items, activity, setup
+	case overview, briefings, items, activity, setup
 	/// The index keeps two views that share a name apart.
 	case view(index: Int, LoopView)
 
 	var id: String {
 		switch self {
 		case .overview: "overview"
-		case .performance: "performance"
 		case .briefings: "briefings"
 		case .items: "items"
 		case .activity: "activity"
@@ -137,7 +135,6 @@ enum LoopDetailTab: Hashable, Identifiable {
 	var title: String {
 		switch self {
 		case .overview: "Overview"
-		case .performance: "Performance"
 		case .briefings: "Briefings"
 		case .items: "Items"
 		case .activity: "Activity"
@@ -146,14 +143,13 @@ enum LoopDetailTab: Hashable, Identifiable {
 		}
 	}
 
-	/// Overview, the loop's views, then the other fixed tabs. Briefings appears only once the flow
-	/// has published one; no views means no extra tab.
+	/// The web order: Briefings (once the flow has one), the loop's views, then Overview,
+	/// Items, Activity and Setup. No views means no extra tab.
 	static func tabs(views: [LoopView], hasBriefings: Bool) -> [LoopDetailTab] {
-		var tabs: [LoopDetailTab] = [.overview]
-		tabs += views.enumerated().map { .view(index: $0.offset, $0.element) }
-		tabs.append(.performance)
+		var tabs: [LoopDetailTab] = []
 		if hasBriefings { tabs.append(.briefings) }
-		tabs += [.items, .activity, .setup]
+		tabs += views.enumerated().map { .view(index: $0.offset, $0.element) }
+		tabs += [.overview, .items, .activity, .setup]
 		return tabs
 	}
 }
@@ -213,7 +209,6 @@ struct LoopDetailContent: View {
 		switch openTab {
 		case .overview: overview
 		case .view(_, let view): LoopCustomViewTab(view: view).id(view.fileID)
-		case .performance: performance
 		case .briefings: LoopBriefingsSection(loopID: store.loop.id)
 		case .items: LoopInMotionSection(store: store)
 		case .activity:
@@ -243,19 +238,10 @@ struct LoopDetailContent: View {
 	}
 
 	@ViewBuilder
-	private var performance: some View {
-		// Unknown is not empty: with the activity unread, the tiles and chart would show zeros.
-		if store.failed(.activity) {
-			blockError(.activity)
-		} else {
-			LoopStatsSection(loop: store.loop, failedSteps: store.failedSteps())
-			LoopHealthSection(loop: store.loop, activity: store.activity, loaded: store.phase == .loaded)
-			LoopRunChart(activity: store.activity, loaded: store.phase == .loaded)
-		}
-	}
-
-	@ViewBuilder
 	private var setup: some View {
+		LoopStatsSection(
+			loop: store.loop,
+			nextRun: LoopQuality.nextRun(steps: store.steps, now: Date(), paused: store.loop.isPaused), now: Date())
 		LoopAboutSection(loop: store.loop)
 		if store.failed(.steps) {
 			blockError(.steps)
@@ -344,33 +330,39 @@ struct LoopDetailContent: View {
 	}
 }
 
-/// Overview, the loop's views, Performance, Briefings, Items, Activity, Setup: text tabs with an
+/// Briefings, the loop's views, Overview, Items, Activity, Setup: text tabs with an
 /// ink underline under the open one, scrolling sideways when they don't fit.
 struct FlowTabBar: View {
 	let tabs: [LoopDetailTab]
 	@Binding var selection: LoopDetailTab
 
 	var body: some View {
-		ScrollView(.horizontal, showsIndicators: false) {
-			HStack(spacing: MaskinSpace.s10) {
-				ForEach(tabs) { tab in
-					let selected = tab == selection
-					Button {
-						MaskinHaptics.play(.selection)
-						withAnimation(MaskinMotion.quick) { selection = tab }
-					} label: {
-						Text(tab.title)
-							.font(MaskinTypeface.sans(MaskinFontSize.t17, weight: selected ? .bold : .medium, relativeTo: .headline))
-							.foregroundStyle(selected ? MaskinColor.ink : MaskinColor.ink4)
-							.frame(minHeight: MaskinSpace.touchMin)
-							.overlay(alignment: .bottom) {
-								Rectangle().fill(selected ? MaskinColor.ink : Color.clear).frame(height: 2)
-							}
+		// Views sit ahead of Overview, so on a phone the open tab can start off screen: scroll it in.
+		ScrollViewReader { proxy in
+			ScrollView(.horizontal, showsIndicators: false) {
+				HStack(spacing: MaskinSpace.s10) {
+					ForEach(tabs) { tab in
+						let selected = tab == selection
+						Button {
+							MaskinHaptics.play(.selection)
+							withAnimation(MaskinMotion.quick) { selection = tab }
+						} label: {
+							Text(tab.title)
+								.font(MaskinTypeface.sans(MaskinFontSize.t17, weight: selected ? .bold : .medium, relativeTo: .headline))
+								.foregroundStyle(selected ? MaskinColor.ink : MaskinColor.ink4)
+								.frame(minHeight: MaskinSpace.touchMin)
+								.overlay(alignment: .bottom) {
+									Rectangle().fill(selected ? MaskinColor.ink : Color.clear).frame(height: 2)
+								}
+						}
+						.buttonStyle(.plain)
+						.accessibilityAddTraits(selected ? .isSelected : [])
+						.id(tab.id)
 					}
-					.buttonStyle(.plain)
-					.accessibilityAddTraits(selected ? .isSelected : [])
 				}
 			}
+			.onAppear { proxy.scrollTo(selection.id, anchor: .center) }
+			.onChange(of: selection) { _, new in withAnimation(MaskinMotion.quick) { proxy.scrollTo(new.id, anchor: .center) } }
 		}
 		.overlay(alignment: .bottom) { Rectangle().fill(MaskinSurface.line).frame(height: 1) }
 	}

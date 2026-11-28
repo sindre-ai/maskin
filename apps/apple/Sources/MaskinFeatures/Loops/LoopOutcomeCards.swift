@@ -120,25 +120,27 @@ struct LoopTargetsSection: View {
 	}
 }
 
-/// STATS on a flow's Outcome tab: three small cards of what is measured today (cycles done,
-/// decisions needed, failed steps). Rework and edit rate wait for the API to record edits.
+/// The stat tiles at the top of a flow's Setup tab, as web shows them: cycles running, closed, median
+/// cycle time, asks waiting and next fire, two to a row with the last one on its own.
 struct LoopStatsSection: View {
 	let loop: LoopSummary
-	/// Steps that failed in the last seven days.
-	let failedSteps: Int
+	let nextRun: Date?
+	let now: Date
 
 	var body: some View {
-		let stats = LoopQuality.cardStats(for: loop, failedSteps: failedSteps)
-		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-			FlowSectionHeader("Stats")
-			HStack(alignment: .top, spacing: MaskinSpace.s4) {
-				ForEach(stats) { FlowStatTile(stat: $0) }
+		let stats = LoopQuality.setupStats(for: loop, nextRun: nextRun, now: now)
+		let rows = stride(from: 0, to: stats.count, by: 2).map { Array(stats[$0..<min($0 + 2, stats.count)]) }
+		VStack(spacing: MaskinSpace.s4) {
+			ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+				HStack(alignment: .top, spacing: MaskinSpace.s4) {
+					ForEach(row) { FlowStatTile(stat: $0) }
+				}
 			}
 		}
 	}
 }
 
-/// One number and its label on a small card: the flow's Performance tiles and the Flows overview strip.
+/// One number and its label on a small card: the flow's Setup tiles and the Flows overview strip.
 struct FlowStatTile: View {
 	let stat: LoopQuality.Stat
 

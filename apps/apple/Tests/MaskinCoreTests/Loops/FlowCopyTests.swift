@@ -173,12 +173,40 @@ struct FlowCopyTests {
 
 	// MARK: quality cards
 
-	@Test("quality shows three tiles: cycles done, decisions needed and failed steps")
-	func qualityCards() {
-		let loop = loopRow("l", waiting: 3, closed: 12)
-		let cards = LoopQuality.cardStats(for: loop, failedSteps: 2)
-		#expect(cards.map(\.label) == ["Cycles done", "Decisions needed", "Failed steps"])
-		#expect(cards.map(\.value) == ["12", "3", "2"])
+	@Test("setup shows web's five tiles: cycles running, closed, median cycle time, asks waiting, next fire")
+	func setupTiles() {
+		let now = Date(timeIntervalSince1970: 1_800_000_000)
+		var loop = loopRow("l", waiting: 3, inProgress: 4, closed: 12)
+		loop.medianTimeToClose = 3 * 3600
+		let tiles = LoopQuality.setupStats(for: loop, nextRun: now.addingTimeInterval(2 * 3600), now: now)
+		#expect(tiles.map(\.label) == ["Cycles running", "Closed this month", "Median cycle time", "Asks waiting", "Next fire"])
+		#expect(tiles.map(\.value) == ["4", "12", "3h", "3", "in 2h"])
+	}
+
+	@Test("setup tiles show dashes for what is missing, and no running cycles on a paused flow")
+	func setupTilesEmpty() {
+		let now = Date(timeIntervalSince1970: 1_800_000_000)
+		let paused = loopRow("l", status: .paused, inProgress: 4, closed: 0)
+		let tiles = LoopQuality.setupStats(for: paused, nextRun: nil, now: now)
+		#expect(tiles.map(\.value) == ["0", "0", "—", "0", "—"])
+	}
+
+	@Test("next fire reads in minutes, hours or days, and a date a week out")
+	func nextFireWording() {
+		let now = Date(timeIntervalSince1970: 1_800_000_000)
+		#expect(LoopQuality.nextFireLabel(now.addingTimeInterval(240), now: now) == "in 4m")
+		#expect(LoopQuality.nextFireLabel(now.addingTimeInterval(3 * 3600), now: now) == "in 3h")
+		#expect(LoopQuality.nextFireLabel(now.addingTimeInterval(2 * 86400), now: now) == "in 2d")
+		#expect(LoopQuality.nextFireLabel(now.addingTimeInterval(-60), now: now) == nil)
+	}
+
+	@Test("median cycle time rounds to one unit")
+	func shortDuration() {
+		#expect(LoopQuality.shortDuration(45) == "45s")
+		#expect(LoopQuality.shortDuration(9 * 60) == "9m")
+		#expect(LoopQuality.shortDuration(3 * 3600) == "3h")
+		#expect(LoopQuality.shortDuration(12 * 86400) == "12d")
+		#expect(LoopQuality.shortDuration(0) == nil)
 	}
 
 	// MARK: one-line card update

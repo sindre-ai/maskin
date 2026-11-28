@@ -209,7 +209,7 @@ final class ScreenTourTests: XCTestCase {
 			// A flow card by name; the loop screen is the one with the Setup / Briefings tabs.
 			for flow in ["Webinars", "Renewals", "Pipeline", "Outreach"] where exactText(flow).exists {
 				if tap(exactText(flow), "flow-detail") {
-					if capture("05-flow-detail", expect: ["Setup", "Briefings", "Performance"]),
+					if capture("05-flow-detail", expect: ["Setup", "Briefings", "Overview"]),
 						tap(exactText("Activity"), "flow-activity", wait: 3)
 					{
 						capture("05b-flow-activity", expect: ["Activity"])

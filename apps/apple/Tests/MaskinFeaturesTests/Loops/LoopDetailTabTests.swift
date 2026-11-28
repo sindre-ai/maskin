@@ -12,21 +12,21 @@ struct LoopDetailTabTests {
 	func none() {
 		#expect(
 			LoopDetailTab.tabs(views: [], hasBriefings: false).map(\.title)
-				== ["Overview", "Performance", "Items", "Activity", "Setup"])
+				== ["Overview", "Items", "Activity", "Setup"])
 	}
 
-	@Test("each view is a tab right after Overview, in order")
+	@Test("each view is a tab ahead of Overview, in order")
 	func order() {
 		#expect(
 			LoopDetailTab.tabs(views: [results, health], hasBriefings: false).map(\.title)
-				== ["Overview", "Results", "Pipeline health", "Performance", "Items", "Activity", "Setup"])
+				== ["Results", "Pipeline health", "Overview", "Items", "Activity", "Setup"])
 	}
 
-	@Test("Briefings joins after Performance once the flow has one")
+	@Test("Briefings comes first once the flow has one")
 	func briefings() {
 		#expect(
 			LoopDetailTab.tabs(views: [results], hasBriefings: true).map(\.title)
-				== ["Overview", "Results", "Performance", "Briefings", "Items", "Activity", "Setup"])
+				== ["Briefings", "Results", "Overview", "Items", "Activity", "Setup"])
 	}
 
 	@Test("two views with one name are two tabs")
@@ -34,12 +34,12 @@ struct LoopDetailTabTests {
 		let twin = LoopView(name: "Results", fileID: "f3")
 		let tabs = LoopDetailTab.tabs(views: [results, twin], hasBriefings: false)
 		#expect(Set(tabs.map(\.id)).count == tabs.count)
-		#expect(tabs[1] != tabs[2])
+		#expect(tabs[0] != tabs[1])
 	}
 
 	@Test("the view tab carries the file it opens")
 	func carriesFile() {
-		let tab = LoopDetailTab.tabs(views: [results], hasBriefings: false)[1]
+		let tab = LoopDetailTab.tabs(views: [results], hasBriefings: false)[0]
 		guard case .view(let index, let view) = tab else {
 			Issue.record("expected a view tab")
 			return
@@ -53,7 +53,7 @@ extension LoopDetailTabTests {
 	@Test("the open view stays open when the views list changes, and falls back when it goes")
 	func selectionSurvives() {
 		let before = LoopDetailTab.tabs(views: [results, health], hasBriefings: false)
-		let open = before[2]
+		let open = before[1]
 		// A briefing joining the bar does not move which tab is open.
 		let grown = LoopDetailTab.tabs(views: [results, health], hasBriefings: true)
 		#expect(grown.contains(open))
