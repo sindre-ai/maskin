@@ -31,6 +31,26 @@ describe('ObjectPreviewMeta', () => {
 		expect(screen.getByText('Thursday')).toBeInTheDocument()
 	})
 
+	it('lets a long address break only at its own separators', () => {
+		render(
+			<ObjectPreviewMeta
+				preview={buildPreview({
+					recipients: [
+						{
+							role: 'to',
+							name: 'Jonas Vestergaard',
+							address: 'jonas.vestergaard@hotelsolside-n.example',
+						},
+					],
+				})}
+			/>,
+		)
+		const to = screen.getAllByRole('definition')[0]
+		expect(to).not.toHaveClass('break-words')
+		expect(to?.querySelectorAll('wbr').length).toBeGreaterThanOrEqual(3)
+		expect(to?.textContent).toBe('Jonas Vestergaard <jonas.vestergaard@hotelsolside-n.example>')
+	})
+
 	it('names what is missing and repeats each warning', () => {
 		render(
 			<ObjectPreviewMeta
