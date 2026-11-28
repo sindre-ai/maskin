@@ -35,7 +35,7 @@ describe('Accounting loop definition', () => {
 		expect(ACCOUNTING_LOOP.slug).toBe('accounting-loop')
 		expect(ACCOUNTING_LOOP.name).toBe('Accounting')
 		expect(ACCOUNTING_LOOP.useCase).toBe('Finance')
-		expect(ACCOUNTING_LOOP.version).toBe('1.6.0')
+		expect(ACCOUNTING_LOOP.version).toBe('1.6.1')
 		expect(ACCOUNTING_LOOP.description.length).toBeGreaterThan(0)
 	})
 
@@ -560,7 +560,11 @@ describe('Accounting loop definition', () => {
 			expect(dailies).toEqual([])
 			const prompt = triggerByName('Daily check (06:00 UTC)').actionPrompt ?? ''
 			expect(prompt).toMatch(/skill accounting-daily-receipt-check/)
-			expect(prompt).toMatch(/posts no comment and ends the session/)
+			expect(prompt).toMatch(/posts no comment and the daily check is over/)
+			// The daily check ending must not end the run: on a Monday the weekly checks come after it.
+			expect(prompt).not.toMatch(/ends the session/)
+			expect(prompt).toMatch(/The daily check ending never ends this run/)
+			expect(prompt).toMatch(/only if today is Monday \(UTC\)/)
 		})
 
 		it('drafts new files, skips handled ones and does not draft twice', () => {
@@ -604,7 +608,9 @@ describe('Accounting loop definition', () => {
 			expect(text).toMatch(/Silent when there is nothing to say/)
 			expect(text).toMatch(/If you saved nothing and no reminder is due, post nothing/)
 			expect(text).toMatch(/Draft only\. Nothing is booked, changed, paid, sent or deleted/)
-			expect(text).toMatch(/end the session without a comment/)
+			expect(text).toMatch(/end the daily check without a comment/)
+			expect(text).toMatch(/not the run that called you/)
+			expect(text).not.toMatch(/end the session/)
 		})
 
 		it('names the chat first and email or command only if switched on', () => {
