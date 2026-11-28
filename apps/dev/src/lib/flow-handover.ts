@@ -24,8 +24,6 @@ export const DEVELOPMENT_TEAM_NAMES: readonly string[] = [
 	'CTO',
 	'Infra & DevOps',
 	'Bet Planner',
-	'Development Driver',
-	'Workspace Driver',
 ]
 
 export function isDevelopmentTeamAgent(name: string | null | undefined): boolean {

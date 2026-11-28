@@ -193,7 +193,7 @@ describe('Remote session completion — Claude subscription failover (Integratio
 		// out from under us. Before this change the runtime classifier returned
 		// null on it (auth is not a credit signal), so the pointer never moved
 		// and every following session on the same workspace kept trying the
-		// dead credential until the workspace driver noticed hours later.
+		// dead credential until someone noticed hours later.
 		vi.stubEnv('MASKIN_CLAUDE_FAILOVER_ENABLED', 'true')
 		const REVOKED_TAIL =
 			'{"type":"result","subtype":"success","is_error":true,"api_error_status":401,"result":"Failed to authenticate. API Error: 401 {\\"type\\":\\"error\\",\\"error\\":{\\"type\\":\\"authentication_error\\",\\"message\\":\\"OAuth access token has been revoked.\\"}}"}\n'

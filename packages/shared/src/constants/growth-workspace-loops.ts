@@ -34,7 +34,6 @@ export const GROWTH_ACTOR_GROWTH_MANAGER = '7ae3408e-3155-44d7-afdb-507c84dd54db
 export const GROWTH_ACTOR_GROWTH_IDEATOR = 'b7a775eb-8e30-492d-8b7f-d7bc42265f65'
 export const GROWTH_ACTOR_KNOWLEDGE_AUTHOR = '29379d46-4229-476f-9b9c-1d875e103502'
 export const GROWTH_ACTOR_WORKSPACE_COACH = '0e55257c-3396-4c1c-ae68-ea294512a1b5'
-export const GROWTH_ACTOR_WORKSPACE_DRIVER = '235188fa-4b58-4f71-ab17-2e5b7cb35402'
 export const GROWTH_ACTOR_CHIEF_OF_STAFF = 'a2a57397-8724-4185-a679-ca1acbb9a86c'
 export const GROWTH_ACTOR_MEETING_BRIEFER = 'ec42deeb-8f80-4d46-9893-faed8c4dd5c0'
 export const GROWTH_ACTOR_MEETING_FOLLOWUP = 'ddde4632-264e-4adf-a3a9-238275f8ea5b'
@@ -103,8 +102,8 @@ export const GROWTH_LOOP_GROWTH_BET_DESCRIPTION =
 	'Shapes growth bets from signal to hypothesis, opens and adjudicates their measurement windows, and generates new experiment ideas from what worked.'
 
 // ── Ops & Knowledge Loop ──────────────────────────────────────────────────────
-// Knowledge Author, Workspace Coach, Workspace Driver, Chief of Staff — writes
-// validated knowledge, observes workspace/agent performance, keeps ops moving.
+// Knowledge Author, Workspace Coach, Chief of Staff — writes validated
+// knowledge, observes workspace/agent performance, keeps ops moving.
 
 export const GROWTH_LOOP_OPS_KNOWLEDGE_SLUG = 'ops-knowledge-loop'
 export const GROWTH_LOOP_OPS_KNOWLEDGE_NAME = 'Ops & Knowledge Loop'

@@ -114,7 +114,7 @@ describe('Product Usage flow definition', () => {
 			/\bCTO\b|\bCCO\b|\bCPO\b|chief of staff/i,
 			/assum/i,
 			/—/,
-			/\b(Customer Success|Content Lead|Product Marketing|Head of Growth|Prospector|Events Lead|Fundraiser|Skjald PM|Product Designer|Workspace Coach|Design Studio|Product Validator|Code Reviewer|Developer|Planner|Architect|Product Insights Analyst|Signal Analyst|Bet Revalidator|Product Lead|Bet Shaper|Workspace Driver|Researcher|Product Manager|Linker)\b/,
+			/\b(Customer Success|Content Lead|Product Marketing|Head of Growth|Prospector|Events Lead|Fundraiser|Skjald PM|Product Designer|Workspace Coach|Design Studio|Product Validator|Code Reviewer|Developer|Planner|Architect|Product Insights Analyst|Signal Analyst|Bet Revalidator|Product Lead|Bet Shaper|Researcher|Product Manager|Linker)\b/,
 			/\b20\d\d\b/,
 			/\b\d{1,2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\b/,
 			/\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{1,2}\b/,

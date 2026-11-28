@@ -14,7 +14,6 @@ export const DEV_ACTOR_CODE_REVIEWER = '01936a6b-258e-4daa-8637-a926f16040ce'
 export const DEV_ACTOR_ACCEPTANCE_VALIDATOR = '4c1a09da-dca8-4972-8a6f-68717197ffe3'
 export const DEV_ACTOR_AUTO_MERGE_BOT = '2b4d2261-b361-4f01-a711-c68e62af3217'
 export const DEV_ACTOR_STRATEGIST = 'c524aac2-4373-485b-b709-bbb4eb2d021e'
-export const DEV_ACTOR_WORKSPACE_DRIVER = 'd625cf31-fb6c-45df-a8c2-e2823d6053ae'
 export const DEV_ACTOR_RESEARCH_AGENT = '3b0337d0-7bed-467d-8239-544e7611a587'
 export const DEV_ACTOR_WORKSPACE_COACH = '9b4820ab-3d00-4e15-b737-8adf7f94d15c'
 export const DEV_ACTOR_RETRO_KNOWLEDGE_AUTHOR = '3322def3-7d6b-4615-beaf-b43b291f95a8'
@@ -78,18 +77,6 @@ export const DEV_TRIGGER_STRATEGIST_DESIGN_ARCH_IN_REVIEW = '731af1d4-4eb3-4a74-
 export const DEV_TRIGGER_STRATEGIST_BIWEEKLY_BET_COUNCIL = '2cfdf16d-87ee-4bae-b909-574ddc42add3'
 export const DEV_TRIGGER_STRATEGIST_BIWEEKLY_SCORING_PASS = '0d4fd8a7-9c93-4f3b-981a-dfd285804d6b'
 
-// Workspace Driver
-export const DEV_TRIGGER_WORKSPACE_DRIVER_TASK_DONE = '66fddb79-f49f-4f77-b4f2-28da1e022765'
-export const DEV_TRIGGER_WORKSPACE_DRIVER_BET_ACTIVATED = '243d019f-f012-419e-9128-7fa20406b6e8'
-export const DEV_TRIGGER_WORKSPACE_DRIVER_PR_OPENED = '88b1e6bc-cb4f-4963-896a-4ea1d5fc2f9f'
-export const DEV_TRIGGER_WORKSPACE_DRIVER_PR_MERGED = '530dceac-4e83-4b98-a3da-f0af9138a222'
-export const DEV_TRIGGER_WORKSPACE_DRIVER_TASK_CREATED = '506dc2c1-8567-4d1a-9ebd-992b7e1620a3'
-export const DEV_TRIGGER_WORKSPACE_DRIVER_LIVENESS_WATCHDOG = 'f3442d78-b02b-4f42-b12b-3a8467a71d92'
-export const DEV_TRIGGER_WORKSPACE_DRIVER_PIPELINE_WATCHDOG = '7fc5b39f-d27d-4786-b194-d2105fc32dbf'
-export const DEV_TRIGGER_WORKSPACE_DRIVER_DAILY_BET_SWEEP = 'd8a7671e-c68b-4a8f-b933-6d4a98756b74'
-export const DEV_TRIGGER_WORKSPACE_DRIVER_DAILY_MENTION_AUDIT =
-	'35b21a0e-2b16-4b5d-9e31-74156d13e4f3'
-
 // Research Agent
 export const DEV_TRIGGER_RESEARCH_AGENT_SLACK_DM = '79fecd6f-e8fa-4ac8-b0b0-5e238a534786'
 export const DEV_TRIGGER_RESEARCH_AGENT_INSPIRATION_RESOURCES =
@@ -137,8 +124,8 @@ export const DEV_TRIGGER_PRODUCT_ANALYST_WEEKLY_DISCOVERY = '665c1b46-23bf-4666-
 export const DEV_TRIGGER_SUMMARIZATION_AGENT_MEETING_DONE = '5eefd3e7-396b-4de1-9fdf-a22ccfc0d120'
 
 // ── Build & Ship Loop ─────────────────────────────────────────────────────────
-// Planner, Developer, Architect, Designer, Code Reviewer, Workspace Driver —
-// bet definition through PR merge.
+// Planner, Developer, Architect, Designer, Code Reviewer — bet definition
+// through PR merge.
 
 export const DEV_LOOP_BUILD_SHIP_SLUG = 'build-ship-loop'
 export const DEV_LOOP_BUILD_SHIP_NAME = 'Build & Ship Loop'
