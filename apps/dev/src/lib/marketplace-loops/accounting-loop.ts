@@ -1,7 +1,8 @@
 // Shared constants for the Accounting marketplace bundle (slug accounting-loop).
 //
-// The bundle contains the Bookkeeper, plus every trigger and skill attached to it. Its snapshot
-// data is written to be workspace-neutral and lives in data/accounting-*.json. The Dinero
+// The bundle contains the Bookkeeper, plus every trigger (daily check, receipt event, weekly
+// checks) and skill attached to it. Its snapshot data is written to be workspace-neutral and
+// lives in data/accounting-*.json. The Dinero
 // connection is not shipped: the installer connects Dinero under Settings, Integrations after
 // install, by the steps in the accounting-connection-check skill.
 //

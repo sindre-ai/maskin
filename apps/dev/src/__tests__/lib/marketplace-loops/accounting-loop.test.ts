@@ -35,7 +35,7 @@ describe('Accounting loop definition', () => {
 		expect(ACCOUNTING_LOOP.slug).toBe('accounting-loop')
 		expect(ACCOUNTING_LOOP.name).toBe('Accounting')
 		expect(ACCOUNTING_LOOP.useCase).toBe('Finance')
-		expect(ACCOUNTING_LOOP.version).toBe('1.5.0')
+		expect(ACCOUNTING_LOOP.version).toBe('1.6.0')
 		expect(ACCOUNTING_LOOP.description.length).toBeGreaterThan(0)
 	})
 
@@ -88,13 +88,14 @@ describe('Accounting loop definition', () => {
 		expect(connect?.body).not.toMatch(/custom tool/)
 	})
 
-	it('ships one actor, four triggers and four skills, no duplicates', () => {
+	it('ships one actor, four triggers and five skills, no duplicates', () => {
 		expect(ACCOUNTING_LOOP_ACTOR_IDS).toEqual([ACCOUNTING_LOOP_ACTOR_BOOKKEEPER])
 		expect(ACCOUNTING_LOOP_TRIGGER_IDS.length).toBe(4)
-		expect(ACCOUNTING_LOOP_SKILL_IDS.length).toBe(4)
+		expect(ACCOUNTING_LOOP_SKILL_IDS.length).toBe(5)
 		expect(new Set(ACCOUNTING_LOOP_SKILL_IDS).size).toBe(ACCOUNTING_LOOP_SKILL_IDS.length)
 		expect(ACCOUNTING_LOOP_SKILL_IDS.map((id) => getSkillData(id).name).sort()).toEqual([
 			'accounting-connection-check',
+			'accounting-daily-receipt-check',
 			'accounting-rule-check',
 			'bookkeeping-draft-method',
 			'vat-return-check',
@@ -134,7 +135,7 @@ describe('Accounting loop definition', () => {
 		expect(prompt).toContain('only when every child task is done or discarded')
 		expect(prompt).toContain('report it once')
 		expect(prompt).toContain('only if today is Monday (UTC)')
-		expect(prompt).toContain('On any other day you are done: stay silent.')
+		expect(prompt).toContain('On any other day you are done after the daily receipt check.')
 		expect(prompt.indexOf('Accounting setup checklist')).toBeLessThan(
 			prompt.indexOf('only if today is Monday (UTC)'),
 		)
@@ -541,6 +542,93 @@ describe('Accounting loop definition', () => {
 		it('stops and names the owner when the report tool is not there', () => {
 			expect(skill()).toMatch(/If the tool is not among your tools, say so in the first line/)
 			expect(skill()).toMatch(/Dinero connected by sign-in/)
+		})
+	})
+
+	// The daily receipt check rides the existing 06:00 daily trigger as another branch, so an
+	// install runs one daily session, not two.
+	describe('daily receipt check', () => {
+		const skill = () =>
+			skillTexts().find((t) => t.startsWith('---\nname: accounting-daily-receipt-check')) ?? ''
+
+		it('rides the 06:00 daily trigger and ships no second daily cron', () => {
+			const dailies = ACCOUNTING_LOOP_TRIGGER_IDS.map((id) => getTriggerData(id)).filter(
+				(t) =>
+					t.type === 'cron' &&
+					(t.config as { expression?: string })?.expression?.startsWith('30 6'),
+			)
+			expect(dailies).toEqual([])
+			const prompt = triggerByName('Daily check (06:00 UTC)').actionPrompt ?? ''
+			expect(prompt).toMatch(/skill accounting-daily-receipt-check/)
+			expect(prompt).toMatch(/posts no comment and ends the session/)
+		})
+
+		it('drafts new files, skips handled ones and does not draft twice', () => {
+			const text = skill()
+			expect(text).toMatch(/tag receipt/)
+			expect(text).toMatch(/neither the tag handled nor the tag held/)
+			expect(text).toMatch(/get_purchase_drafts_for_file/)
+			expect(text).toMatch(/Do not save a second draft/)
+			expect(text).toMatch(/update_file with tags set to its current tags plus handled/)
+		})
+
+		it('names payments with no receipt from the bank lines, vouchers and files', () => {
+			const text = skill()
+			expect(text).toMatch(/SearchBankTransactions for the last 30 days/)
+			expect(text).toMatch(/list_vouchers/)
+			expect(text).toMatch(/list_voucher_file_cards/)
+			expect(text).toMatch(/within 7 days/)
+		})
+
+		it('counts a draft saved on an earlier day as covering its payment on day 2', () => {
+			const text = skill()
+			// list_vouchers returns booked entries only, so day 1 drafts are found through the handled files.
+			expect(text).toMatch(/list_vouchers does not return drafts/)
+			expect(text).toMatch(
+				/for every file with the tag receipt and the tag handled[^.]*call get_purchase_drafts_for_file/,
+			)
+			expect(text).toMatch(/A draft saved on an earlier day covers its payment today/)
+			expect(text).toMatch(/a booked voucher, or a draft found in step 3/)
+			expect(text).not.toMatch(/count the drafts you saved in step 3/)
+		})
+
+		it('allows at most three reminders for each payment', () => {
+			const text = skill()
+			expect(text).toMatch(/fewer than 3/)
+			expect(text).toMatch(/A payment that has had 3 is left alone/)
+			expect(text).toMatch(/Reminder N of 3/)
+		})
+
+		it('is silent when nothing is new and nothing is missing, and books nothing', () => {
+			const text = skill()
+			expect(text).toMatch(/Silent when there is nothing to say/)
+			expect(text).toMatch(/If you saved nothing and no reminder is due, post nothing/)
+			expect(text).toMatch(/Draft only\. Nothing is booked, changed, paid, sent or deleted/)
+			expect(text).toMatch(/end the session without a comment/)
+		})
+
+		it('names the chat first and email or command only if switched on', () => {
+			const text = skill()
+			expect(text).toMatch(/send the receipt in the flow's chat/)
+			expect(text).toMatch(
+				/Name email or command only if the owner has told you those routes are switched on/,
+			)
+			expect(text).not.toMatch(/in the chat, by email or by command/)
+			expect(ACCOUNTING_LOOP.description).toMatch(
+				/email or command where those routes are switched on/,
+			)
+		})
+
+		it('is named in the Bookkeeper prompt and in the listing text', () => {
+			expect(actorTexts().join('\n')).toMatch(/skill accounting-daily-receipt-check/)
+			expect(ACCOUNTING_LOOP.description).toMatch(/Every day it also drafts the receipt files/)
+		})
+
+		it('has the draft method mark each handled file', () => {
+			const method =
+				skillTexts().find((t) => t.startsWith('---\nname: bookkeeping-draft-method')) ?? ''
+			expect(method).toMatch(/Mark the receipt file/)
+			expect(method).toMatch(/plus handled/)
 		})
 	})
 
