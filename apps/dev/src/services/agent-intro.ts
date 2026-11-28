@@ -56,6 +56,8 @@ export type IntroduceArgs = {
 	 * steps follows; without it the one-message intro with generic steps is posted.
 	 */
 	scan?: IntroScanRunner
+	/** Where the scan should look first to fit the person. Set for an agent installed from the marketplace. */
+	firstLook?: string
 }
 
 /**
@@ -194,6 +196,7 @@ async function postScannedFollowUp(
 		workspaceId,
 		agent: { id: actor.id, name: actor.name, description: actor.description },
 		recipient: { id: humanId, name: human?.name ?? '' },
+		firstLook: args.firstLook,
 	}).catch((err: unknown) => {
 		logger.warn('Agent intro scan threw', { agentId: actor.id, err })
 		return null

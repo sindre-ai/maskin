@@ -136,13 +136,25 @@ function InstallPage() {
 			return `${n} ${ITEM_TYPE_NOUN[type][n === 1 ? 0 : 1]}`
 		})
 
-	const manage = (objectId: string | null) =>
-		objectId
-			? navigate({
-					to: '/$workspaceId/loops/$loopId',
-					params: { workspaceId, loopId: objectId },
-				})
-			: navigate({ to: '/$workspaceId/loops', params: { workspaceId } })
+	// A flow opens on its page. An agent-only install has no page: the new chat opens when its id is
+	// known, otherwise the chat list (an agent installed earlier, whose chat we do not know here).
+	const manage = (row: { objectId: string | null; chatId?: string | null }) => {
+		if (row.objectId) {
+			return navigate({
+				to: '/$workspaceId/loops/$loopId',
+				params: { workspaceId, loopId: row.objectId },
+			})
+		}
+		if (loop.agent_only) {
+			return row.chatId
+				? navigate({
+						to: '/$workspaceId/chats/$conversationId',
+						params: { workspaceId, conversationId: row.chatId },
+					})
+				: navigate({ to: '/$workspaceId/chats', params: { workspaceId } })
+		}
+		return navigate({ to: '/$workspaceId/loops', params: { workspaceId } })
+	}
 
 	return (
 		<Shell>
@@ -179,8 +191,8 @@ function InstallPage() {
 			{existing ? (
 				<div className="space-y-2 text-center">
 					<p className="text-sm font-semibold text-success">Already installed</p>
-					<Button className="w-full" onClick={() => manage(existing.objectId)}>
-						Manage
+					<Button className="w-full" onClick={() => manage(existing)}>
+						{loop.agent_only ? 'Open chats' : 'Manage'}
 					</Button>
 				</div>
 			) : (
@@ -196,7 +208,7 @@ function InstallPage() {
 						onClick={() =>
 							install.mutate(
 								{ loopId: loop.id, source: 'public_site' },
-								{ onSuccess: (row) => manage(row.objectId) },
+								{ onSuccess: (row) => manage(row) },
 							)
 						}
 					>

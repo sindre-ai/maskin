@@ -157,6 +157,7 @@ describe('Marketplace loop retirement', () => {
 			'knowledge-wiki-loop',
 			'market-competitor-watch-loop',
 			'meeting-loop',
+			'presentation-designer',
 			'product-delivery-loop',
 			'product-discovery-loop',
 			'product-release-loop',
@@ -164,7 +165,7 @@ describe('Marketplace loop retirement', () => {
 			'signal-intake-flow',
 			'workspace-improvements-loop',
 		])
-		expect(body.counts.total).toBe(11)
+		expect(body.counts.total).toBe(12)
 	})
 
 	it('restores a retired slug that is back in the seed list', async () => {

@@ -13,6 +13,14 @@ const LOOP = {
 	slug: 'market-competitor-watch-loop',
 	description: 'Watch what your competitors ship.',
 }
+/** One agent with no flow page: the install reply carries its chat. */
+const AGENT = {
+	id: 'loop-2',
+	name: 'Presentation Designer',
+	slug: 'presentation-designer',
+	description: 'Builds decks from your brand.',
+	agent_only: true,
+}
 let mockLoops = [LOOP]
 let mockWorkspaces = [{ id: 'ws-1', name: 'Nordic Labs' }]
 let mockInstalls: Array<{ sourceLoopId: string; objectId: string | null }> = []
@@ -115,6 +123,35 @@ describe('install page', () => {
 			params: { workspaceId: 'ws-1', loopId: 'obj-3' },
 		})
 		expect(mockMutate).not.toHaveBeenCalled()
+	})
+
+	it('opens the new direct message after an agent-only install, not a flow page', async () => {
+		mockLoops = [AGENT]
+		mockSlug = 'presentation-designer'
+		mockMutate.mockImplementation((_vars, opts) =>
+			opts.onSuccess({ objectId: null, chatId: 'chat-1' }),
+		)
+		render(<route.component />)
+		await userEvent.setup().click(screen.getByRole('button', { name: 'Install' }))
+
+		expect(mockNavigate).toHaveBeenCalledWith({
+			to: '/$workspaceId/chats/$conversationId',
+			params: { workspaceId: 'ws-1', conversationId: 'chat-1' },
+		})
+	})
+
+	it('offers Open chats for an installed agent with no flow page', async () => {
+		mockLoops = [AGENT]
+		mockSlug = 'presentation-designer'
+		mockInstalls = [{ sourceLoopId: 'loop-2', objectId: null }]
+		render(<route.component />)
+
+		expect(screen.getByText('Already installed')).toBeInTheDocument()
+		await userEvent.setup().click(screen.getByRole('button', { name: 'Open chats' }))
+		expect(mockNavigate).toHaveBeenCalledWith({
+			to: '/$workspaceId/chats',
+			params: { workspaceId: 'ws-1' },
+		})
 	})
 
 	it('shows a plain not-found message with a link to the public marketplace for an unknown slug', () => {
