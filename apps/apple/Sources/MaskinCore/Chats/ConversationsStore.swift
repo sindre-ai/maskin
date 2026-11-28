@@ -357,6 +357,13 @@ public final class ConversationsStore {
 		peopleRefetch.cancel()
 	}
 
+	/// `deinit` may run on any thread, so it only touches the (thread-safe) task handle. A screen
+	/// that goes away without calling `stop()` must not leave its event subscription in the hub for
+	/// the life of the process.
+	deinit {
+		listener?.cancel()
+	}
+
 	/// A burst of chat events becomes one reload of the chat list and the threads list, at most
 	/// once per `refetchInterval`.
 	private func scheduleChatRefetch() {

@@ -54,6 +54,14 @@ public final class EventHub {
 
 	@ObservationIgnored private let client: SSEClient?
 	@ObservationIgnored private var subscribers: [UUID: AsyncStream<HubSignal>.Continuation] = [:]
+	/// How many undelivered signals one subscriber may fall behind before the oldest are dropped.
+	/// A signal is a hint to refetch, and `.reconnected` (sent on every reconnect and foreground
+	/// return) refetches everything, so losing the oldest hint costs a moment of staleness, never a
+	/// wrong screen. An unbounded buffer instead grew for the life of the process whenever a consumer
+	/// was slow (see the `subscribe` note on lifetime).
+	static let subscriberBuffer = 128
+	/// Live subscriptions. For tests: a screen's store must not leave one behind when it is released.
+	var subscriberCount: Int { subscribers.count }
 	@ObservationIgnored private var pump: Task<Void, Never>?
 	/// Bumped on every connect/disconnect so a late update from a replaced stream is dropped.
 	@ObservationIgnored private var generation = 0
@@ -162,10 +170,13 @@ public final class EventHub {
 	/// A store skipped the refetch for an event because `isForeground` is `false`.
 	public func noteSkippedInBackground() { skippedInBackground = true }
 
-	/// A new stream of signals. Ends when its consumer stops iterating or is cancelled.
+	/// A new stream of signals. Ends when its consumer stops iterating or is cancelled, or when the
+	/// store that owns the consuming task is released and cancels it (every store does this in
+	/// `deinit`, next to `stop()`). The buffer is bounded: see `subscriberBuffer`.
 	public func subscribe() -> AsyncStream<HubSignal> {
 		let id = UUID()
-		let (stream, continuation) = AsyncStream<HubSignal>.makeStream()
+		let (stream, continuation) = AsyncStream<HubSignal>.makeStream(
+			of: HubSignal.self, bufferingPolicy: .bufferingNewest(Self.subscriberBuffer))
 		subscribers[id] = continuation
 		continuation.onTermination = { [weak self] _ in
 			Task { @MainActor in self?.subscribers[id] = nil }

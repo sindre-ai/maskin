@@ -166,6 +166,12 @@ public final class LinkedItemStore {
 		if let events { listen(to: events) }
 	}
 
+	/// `deinit` may run on any thread, so it only touches the (thread-safe) task handle: the
+	/// subscription ends and the hub drops it instead of keeping it for the life of the process.
+	deinit {
+		listener?.cancel()
+	}
+
 	// MARK: Live updates
 
 	private func listen(to hub: EventHub) {

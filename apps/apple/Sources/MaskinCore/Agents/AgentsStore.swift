@@ -244,6 +244,13 @@ public final class AgentsStore {
 		debouncer.cancel()
 	}
 
+	/// `deinit` may run on any thread, so it only touches the (thread-safe) task handle. A screen
+	/// that goes away without calling `stop()` must not leave its event subscription in the hub for
+	/// the life of the process.
+	deinit {
+		listener?.cancel()
+	}
+
 	/// A burst of events becomes one reload, at most once per `refetchInterval`, and none while the
 	/// app is in the background (the hub asks for one reload when it returns).
 	private func scheduleRefresh() {

@@ -91,6 +91,13 @@ public final class TriggerDetailStore {
 		listener = nil
 	}
 
+	/// `deinit` may run on any thread, so it only touches the (thread-safe) task handle. A screen
+	/// that goes away without calling `stop()` must not leave its event subscription in the hub for
+	/// the life of the process.
+	deinit {
+		listener?.cancel()
+	}
+
 	/// Re-read the trigger. An unsaved edit is kept; a clean one follows the server.
 	public func refresh() async {
 		guard !isSaving, let listing = try? await api.listPage() else { return }

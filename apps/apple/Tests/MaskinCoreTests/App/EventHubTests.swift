@@ -159,6 +159,46 @@ struct EventHubTests {
 		hub.connect(workspaceId: "w1")
 		#expect(hub.connection == .idle)
 	}
+
+	@Test("a subscriber that falls behind keeps the newest signals, not an unbounded backlog")
+	func boundedBuffer() async {
+		let hub = EventHub(client: nil)
+		let stream = hub.subscribe()
+		// Nothing consumes yet, so everything past the bound must be dropped rather than buffered.
+		let sent = EventHub.subscriberBuffer * 4
+		for i in 0..<sent {
+			hub.broadcast(
+				.event(
+					WorkspaceEvent(
+						id: "\(i)", action: "updated", entityType: .object, entityId: "e\(i)")))
+		}
+		let kept = await take(EventHub.subscriberBuffer, from: stream)
+		#expect(kept.count == EventHub.subscriberBuffer)
+		guard case .event(let oldest) = kept.first, case .event(let newest) = kept.last else {
+			Issue.record("expected events, got \(kept)")
+			return
+		}
+		#expect(oldest.id == "\(sent - EventHub.subscriberBuffer)")
+		#expect(newest.id == "\(sent - 1)")
+	}
+
+	@Test("a store that goes away takes its subscription with it")
+	func releasedStoreUnsubscribes() async {
+		let hub = EventHub(client: nil)
+		let before = hub.subscriberCount
+		var store: AgentsStore? = AgentsStore(api: FakeAgentsAPI(), events: hub)
+		weak var weakStore = store
+		await store?.start()
+		#expect(hub.subscriberCount == before + 1)
+
+		store = nil
+		var budget = PollBudget()
+		while weakStore != nil || hub.subscriberCount != before, budget.spend() {
+			try? await Task.sleep(for: .milliseconds(2))
+		}
+		#expect(weakStore == nil)
+		#expect(hub.subscriberCount == before)
+	}
 }
 
 @MainActor
