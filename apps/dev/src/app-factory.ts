@@ -125,6 +125,7 @@ import telemetryRoutes from './routes/telemetry'
 import telemetryClientRoutes from './routes/telemetry-client'
 import testGrantsRoutes, { isTestGrantEnabled } from './routes/test-grants'
 import transcriptionsRoutes from './routes/transcriptions'
+import trashRoutes from './routes/trash'
 import triggersRoutes from './routes/triggers'
 import userDisplaySettingsRoutes from './routes/user-display-settings'
 import voiceSessionsRoutes from './routes/voice-sessions'
@@ -615,6 +616,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/invites', workspaceInvitationsRoutes)
 	app.route('/api/relationships', relationshipsRoutes)
 	app.route('/api/triggers', triggersRoutes)
+	app.route('/api/trash', trashRoutes)
 	app.route('/api/loops', loopsRoutes)
 	app.route('/api/data', dataQueryRoutes)
 	// linkedin-unipile connect + callback use LinkedIn's Hosted Auth Wizard, NOT

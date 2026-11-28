@@ -25,6 +25,7 @@ import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
 import { RotateDeksJob } from './jobs/rotate-deks'
 import { StripePaymentSyncJob } from './jobs/stripe-payment-sync'
 import { TelnyxRecordingSyncJob } from './jobs/telnyx-recording-sync'
+import { TrashPurgeJob } from './jobs/trash-purge'
 import { UpgradeLegacyCredentialsJob } from './jobs/upgrade-legacy-credentials'
 import { ViesSchedulerJob } from './jobs/vies-scheduler'
 import { YoutubeActionsSweepJob } from './jobs/youtube-actions-sweep'
@@ -452,6 +453,12 @@ logger.info('Webhook deliveries reconciler started')
 
 const purgeIdempotencyJob = new PurgeIdempotencyJob(db)
 purgeIdempotencyJob.start()
+
+// Trash: after 30 days, remove a deleted row's stored bytes (files, workspace skills)
+// and then the trash row itself. Restore is only possible inside that window.
+const trashPurgeJob = new TrashPurgeJob(db, storageProvider, agentStorage)
+trashPurgeJob.start()
+logger.info('Trash purge job started')
 const youtubeActionsSweepJob = new YoutubeActionsSweepJob(db, undefined, storageProvider)
 youtubeActionsSweepJob.start()
 logger.info('Purge idempotency job started')

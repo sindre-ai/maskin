@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, agentSkills, workspaceMembers, workspaceSkills } from '@maskin/db/schema'
+import { events, agentSkills, trash, workspaceMembers, workspaceSkills } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import type { StorageProvider } from '@maskin/storage'
 import AdmZip from 'adm-zip'
@@ -772,8 +772,15 @@ describe('Workspace Skills Integration', () => {
 				.where(eq(agentSkills.workspaceSkillId, skill.id))
 			expect(remainingAttachments).toHaveLength(0)
 
-			// S3 object was deleted.
-			expect(storage._store.has(workspaceSkillKey(workspaceId, skill.id))).toBe(false)
+			// The bytes are kept for the 30 day restore window; the trash purge job removes them.
+			expect(storage._store.has(workspaceSkillKey(workspaceId, skill.id))).toBe(true)
+			const trashed = await db
+				.select()
+				.from(trash)
+				.where(and(eq(trash.workspaceId, workspaceId), eq(trash.entityId, skill.id)))
+			expect(trashed).toHaveLength(1)
+			expect(trashed[0]?.kind).toBe('workspace_skill')
+			expect(trashed[0]?.purgeAt.getTime()).toBeGreaterThan(Date.now())
 		})
 	})
 

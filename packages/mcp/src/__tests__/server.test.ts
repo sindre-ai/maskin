@@ -2817,32 +2817,21 @@ describe('tool handlers', () => {
 				await expect(handler({ id: 'obj-7' })).rejects.toThrow(/not 'loop'/)
 			})
 
-			it('deletes every in_loop edge then the loop object, leaving members untouched', async () => {
-				const relationshipDeletes: string[] = []
+			it('deletes the loop object and returns the member ids the API detached', async () => {
 				let objectDeleted = false
-				// Two membership rows exist; each GET at offset=0 returns whatever is
-				// left after the previous page's deletes, mirroring how the real API
-				// behaves once rows are removed.
-				const remaining = [
-					{ id: 'rel-1', targetId: 'obj-a' },
-					{ id: 'rel-2', targetId: 'obj-b' },
-				]
+				const methodCalls: string[] = []
+				// The API delete route now captures the loop's in_loop edges for the trash and
+				// removes them itself, returning the detached member ids. The tool makes one
+				// DELETE and does no per-relationship cleanup.
 				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
 					const u = String(url)
 					const method = (init as RequestInit | undefined)?.method
+					methodCalls.push(`${method ?? 'GET'} ${u}`)
 					if (u.endsWith('/api/objects/loop-1') && method === 'GET')
 						return okJson({ id: 'loop-1', type: 'loop', workspaceId: 'ws-default-123' })
-					if (u.includes('/api/relationships?source_id=loop-1')) return okJson([...remaining])
-					if (u.startsWith('http://localhost:3000/api/relationships/') && method === 'DELETE') {
-						const relId = u.split('/').pop() as string
-						relationshipDeletes.push(relId)
-						const idx = remaining.findIndex((r) => r.id === relId)
-						if (idx >= 0) remaining.splice(idx, 1)
-						return okJson({ deleted: true })
-					}
 					if (u.endsWith('/api/objects/loop-1') && method === 'DELETE') {
 						objectDeleted = true
-						return okJson({ deleted: true })
+						return okJson({ deleted: true, removed_member_object_ids: ['obj-a', 'obj-b'] })
 					}
 					throw new Error(`Unexpected fetch: ${method ?? 'GET'} ${u}`)
 				})
@@ -2850,8 +2839,12 @@ describe('tool handlers', () => {
 				const handler = getHandler('delete_loop')
 				const result = (await handler({ id: 'loop-1' })) as { content: Array<{ text: string }> }
 
-				expect(relationshipDeletes.sort()).toEqual(['rel-1', 'rel-2'])
 				expect(objectDeleted).toBe(true)
+				expect(
+					methodCalls.some(
+						(call) => call.startsWith('DELETE ') && call.includes('/api/relationships/'),
+					),
+				).toBe(false)
 
 				const parsed = JSON.parse(result.content[0].text)
 				expect(parsed.deleted).toBe(true)

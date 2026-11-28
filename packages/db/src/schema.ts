@@ -4015,3 +4015,45 @@ export const youtubeQuotaUsage = pgTable(
 		),
 	],
 )
+
+// ── Trash ──────────────────────────────────────────────────────────────────
+//
+// Reversible deletes. Every agent delete path (object, file, flow/loop, trigger,
+// relationship, workspace skill) copies the deleted row here before deleting it, so
+// a person can restore it from the Trash view. Files and workspace skills keep their
+// stored bytes until purge_at, when the purge job removes the bytes and the row. A
+// loop object also stores its in_loop membership edges in `extra` so a restore can
+// rebuild them; a workspace skill stores its agent_skills attachments there too.
+//
+// The row is a copy, not a soft-delete flag, so no existing read path changes and
+// nothing deleted can leak back into a list. Added in migration 0179.
+export const trash = pgTable(
+	'trash',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		/** Which table the row belongs to: object | file | trigger | relationship | workspace_skill. */
+		kind: text('kind').notNull(),
+		/** The original row's id, kept so the Trash view can link and restore it. */
+		entityId: uuid('entity_id').notNull(),
+		/** The full deleted row, verbatim, so restore can re-insert it. */
+		row: jsonb('row').notNull(),
+		/** Restore aid: a loop's in_loop edges, or a workspace skill's agent attachments. */
+		extra: jsonb('extra'),
+		/** Who deleted it. Null if that actor is later removed. */
+		deletedBy: uuid('deleted_by').references(() => actors.id, { onDelete: 'set null' }),
+		deletedAt: timestamp('deleted_at', { withTimezone: true }).notNull().defaultNow(),
+		/** When the purge job may delete the row (and any stored bytes): deleted_at + 30 days. */
+		purgeAt: timestamp('purge_at', { withTimezone: true }).notNull(),
+	},
+	(t) => [
+		index('trash_ws_deleted_at_idx').on(t.workspaceId, t.deletedAt),
+		index('trash_purge_at_idx').on(t.purgeAt),
+		check(
+			'trash_kind_check',
+			sql`${t.kind} IN ('object','file','trigger','relationship','workspace_skill')`,
+		),
+	],
+)

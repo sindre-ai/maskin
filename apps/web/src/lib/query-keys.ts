@@ -251,4 +251,8 @@ export const queryKeys = {
 		all: (workspaceId: string) => ['installed-loops', workspaceId] as const,
 		list: (workspaceId: string) => ['installed-loops', workspaceId, 'list'] as const,
 	},
+	trash: {
+		all: (workspaceId: string) => ['trash', workspaceId] as const,
+		list: (workspaceId: string) => ['trash', workspaceId, 'list'] as const,
+	},
 } as const

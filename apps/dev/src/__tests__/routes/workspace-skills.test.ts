@@ -201,7 +201,7 @@ describe('Workspace Skills Routes', () => {
 			expect((await res.json()).error.message).toBe(notFoundText(unknownId))
 		})
 
-		it('DELETE by id removes that row and its stored object', async () => {
+		it('DELETE by id removes the row but keeps its stored object for the trash window', async () => {
 			const { app, mockResults, agentStorage } = createSkillsTestApp(
 				workspaceSkillsRoutes,
 				'/api/workspaces',
@@ -214,7 +214,8 @@ describe('Workspace Skills Routes', () => {
 			)
 
 			expect(res.status).toBe(200)
-			expect(agentStorage.deleteWorkspaceSkill).toHaveBeenCalledWith(workspaceId, existing.id)
+			// The bytes stay until the trash purge job removes them after 30 days.
+			expect(agentStorage.deleteWorkspaceSkill).not.toHaveBeenCalled()
 		})
 
 		it('DELETE returns 404 with the id-or-name text for an unknown id', async () => {
@@ -1021,7 +1022,7 @@ describe('Workspace Skills Routes', () => {
 	})
 
 	describe('DELETE /:workspaceId/skills/:name', () => {
-		it('returns 200 and deletes both S3 object and DB row', async () => {
+		it('returns 200 and keeps the stored object for the trash window', async () => {
 			const { app, mockResults, agentStorage } = createSkillsTestApp(
 				workspaceSkillsRoutes,
 				'/api/workspaces',
@@ -1036,7 +1037,8 @@ describe('Workspace Skills Routes', () => {
 			expect(res.status).toBe(200)
 			const json = await res.json()
 			expect(json.deleted).toBe(true)
-			expect(agentStorage.deleteWorkspaceSkill).toHaveBeenCalledWith(workspaceId, existing.id)
+			// The bytes stay until the trash purge job removes them after 30 days.
+			expect(agentStorage.deleteWorkspaceSkill).not.toHaveBeenCalled()
 		})
 
 		it('returns 404 when the skill does not exist', async () => {

@@ -29,6 +29,7 @@ import {
 	type SkillBundleError,
 	extractSkillBundle,
 } from '../lib/skill-bundles'
+import { moveToTrash } from '../lib/trash'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 import { type AgentStorageManager, workspaceSkillKey } from '../services/agent-storage'
 
@@ -1318,7 +1319,6 @@ const deleteWorkspaceSkillRoute = createRoute({
 app.openapi(deleteWorkspaceSkillRoute, (async (c) => {
 	const db = c.get('db')
 	const callerActorId = c.get('actorId')
-	const storage = c.get('agentStorage')
 	const { workspaceId, name: ref } = c.req.valid('param')
 
 	const member = await requireWorkspaceMember(db, workspaceId, callerActorId)
@@ -1336,23 +1336,24 @@ app.openapi(deleteWorkspaceSkillRoute, (async (c) => {
 	}
 	const existing = resolved.row
 
-	// DB first — cascades remove agent_skills attachments. Delete S3 second as
-	// best-effort; an orphan S3 object keyed on the deleted skill's UUID is
-	// inert and cannot be picked up by a future recreate (which will mint a
-	// new UUID = new S3 key).
-	await db.delete(workspaceSkills).where(eq(workspaceSkills.id, existing.id))
-
-	try {
-		await storage.deleteWorkspaceSkill(workspaceId, existing.id)
-	} catch (err) {
-		logger.error('Failed to delete workspace skill from storage (orphan object left)', {
+	// Capture the agent attachments that cascade-delete with the skill, so a restore can
+	// re-attach them, then copy the row to the trash and delete. The stored bytes are kept:
+	// the trash purge job removes them after the 30 day window.
+	const attachments = await db
+		.select()
+		.from(agentSkills)
+		.where(eq(agentSkills.workspaceSkillId, existing.id))
+	await db.transaction(async (tx) => {
+		await moveToTrash(tx, {
 			workspaceId,
-			skillId: existing.id,
-			name: existing.name,
-			storageKey: existing.storageKey,
-			error: String(err),
+			kind: 'workspace_skill',
+			entityId: existing.id,
+			row: existing,
+			extra: attachments.length > 0 ? { agent_skills: attachments } : null,
+			deletedBy: callerActorId,
 		})
-	}
+		await tx.delete(workspaceSkills).where(eq(workspaceSkills.id, existing.id))
+	})
 
 	try {
 		await recordEvent(db, {

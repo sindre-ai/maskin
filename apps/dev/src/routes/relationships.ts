@@ -23,6 +23,7 @@ import {
 	findEndpointIdsInWorkspace,
 } from '../lib/relationships-endpoint-kind'
 import { serialize } from '../lib/serialize'
+import { moveToTrash } from '../lib/trash'
 import {
 	assertWorkspaceWriterRole,
 	isWorkspaceMember,
@@ -427,7 +428,18 @@ app.openapi(deleteRelationshipRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Relationship not found'), 404)
 	}
 
-	await db.delete(relationships).where(eq(relationships.id, id))
+	// A relationship has no workspace column; sourceWorkspaceId is the workspace that owns
+	// its source endpoint, and that is where the trash entry belongs.
+	await db.transaction(async (tx) => {
+		await moveToTrash(tx, {
+			workspaceId: sourceWorkspaceId,
+			kind: 'relationship',
+			entityId: id,
+			row: existing,
+			deletedBy: actorId,
+		})
+		await tx.delete(relationships).where(eq(relationships.id, id))
+	})
 
 	if (workspaceId) {
 		await recordEvent(db, {

@@ -950,39 +950,6 @@ async function assertLoopDriver(
 	}
 }
 
-/**
- * Delete every `in_loop` edge for a loop (source = loop, no target filter) —
- * used by delete_loop. `relationships` rows have no FK/cascade from either
- * side, so these are orphaned unless explicitly cleaned up before the loop
- * object itself is deleted. Returns the member object ids that were detached.
- */
-async function deleteAllLoopMemberships(
-	config: McpConfig,
-	loopId: string,
-	workspaceId?: string,
-): Promise<string[]> {
-	const removedObjectIds: string[] = []
-	// Always re-fetch at offset 0: deleting a page shifts the remaining rows
-	// down, so a fixed offset would skip rows (the same hazard update_loop's
-	// remove_object_ids avoids by collecting before deleting — this avoids it
-	// by never advancing past what's already been deleted).
-	for (;;) {
-		const page = (await apiCall(
-			config,
-			'GET',
-			`/api/relationships?source_id=${loopId}&type=${LOOP_MEMBERSHIP_TYPE}&limit=${RELATIONSHIP_PAGE_LIMIT}&offset=0`,
-			undefined,
-			{ workspaceId },
-		)) as Array<{ id: string; targetId: string }>
-		if (!Array.isArray(page) || page.length === 0) break
-		for (const rel of page) {
-			await apiCall(config, 'DELETE', `/api/relationships/${rel.id}`, undefined, { workspaceId })
-			removedObjectIds.push(rel.targetId)
-		}
-	}
-	return removedObjectIds
-}
-
 /** Inline loop-step input shape — mirrors `loopStepSchema` in tools.ts. */
 interface LoopStepInput {
 	name: string
@@ -8433,10 +8400,12 @@ export function createMcpServer(config: McpConfig) {
 					)
 				}
 
-				const removedObjectIds = await deleteAllLoopMemberships(config, id, workspace_id)
-				await apiCall(config, 'DELETE', `/api/objects/${id}`, undefined, {
+				// The delete route owns the loop's in_loop edges now: it copies them to the
+				// trash so a restore can put them back, then removes them in the same
+				// transaction. It returns the detached member ids.
+				const result = (await apiCall(config, 'DELETE', `/api/objects/${id}`, undefined, {
 					workspaceId: workspace_id,
-				})
+				})) as { deleted?: boolean; removed_member_object_ids?: string[] }
 
 				return {
 					_meta: meta('delete_loop', config, (args as { workspace_id?: string }).workspace_id),
@@ -8444,7 +8413,10 @@ export function createMcpServer(config: McpConfig) {
 						{
 							type: 'text' as const,
 							text: JSON.stringify(
-								{ deleted: true, removed_member_object_ids: removedObjectIds },
+								{
+									deleted: result?.deleted ?? true,
+									removed_member_object_ids: result?.removed_member_object_ids ?? [],
+								},
 								null,
 								2,
 							),
