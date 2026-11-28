@@ -117,10 +117,16 @@ export type LinkedInPhase2Verb = (typeof LINKEDIN_PHASE2_VERBS)[number]
 
 /**
  * Outreach-loop verbs (bet aff468ba), registered on personal identities only: the InMail
- * credit read, the sent invitations read and the withdraw write, the posts and company reads and
- * the like and the InMail send here, with the rest of the suite joining as its tasks land.
- * `withdraw_invitation`, `react_to_post` and `send_inmail` are only registered while
- * the identity allows them (see the LinkedIn MCP server).
+ * credit read, the sent invitations read and the withdraw write, and the posts and company
+ * reads.
+ *
+ * `react_to_post` and `send_inmail` are retired (2026-11-27, task e8c8277a). Both shipped
+ * and neither ever ran: zero likes and zero InMails in five weeks of live outreach. The like
+ * bought nothing, because warm-up reached 55.7% from post reads and profile views alone, and
+ * it carries the platform-terms risk. The InMail could not be proven without a consenting
+ * recipient who is not a first-degree connection, and it spends real credits. Their handlers
+ * and unit tests stay until a follow-up deletes them; putting a verb back in this list
+ * registers it again.
  */
 export const LINKEDIN_OUTREACH_VERBS = [
 	'get_inmail_balance',
@@ -128,8 +134,6 @@ export const LINKEDIN_OUTREACH_VERBS = [
 	'withdraw_invitation',
 	'list_user_posts',
 	'get_company',
-	'react_to_post',
-	'send_inmail',
 ] as const
 
 /**

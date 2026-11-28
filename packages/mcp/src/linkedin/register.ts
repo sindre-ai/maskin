@@ -54,15 +54,16 @@ const CONNECTIONS_SUITE: readonly LinkedInVerb[] = [
 
 const PROFILE_SUITE: readonly LinkedInVerb[] = ['search_people', 'get_profile'] as const
 
-/** Outreach-loop tools: personal identities only, never company pages. */
+/**
+ * Outreach-loop tools: personal identities only, never company pages. `react_to_post` and
+ * `send_inmail` are retired — see the note on `LINKEDIN_OUTREACH_VERBS`.
+ */
 const OUTREACH_SUITE: readonly LinkedInVerb[] = [
 	'get_inmail_balance',
 	'list_sent_invitations',
 	'withdraw_invitation',
 	'list_user_posts',
 	'get_company',
-	'react_to_post',
-	'send_inmail',
 ] as const
 
 /**

@@ -124,6 +124,16 @@ export async function sendApprovedLinkedInObject(
 			'This text has already been sent. Do not send it again.',
 		)
 	}
+	// Files on a LinkedIn message are retired (2026-11-27, task e8c8277a): the path shipped and
+	// never ran, so it is refused rather than left as an unproven surface. Take the file off the
+	// draft to send the text alone.
+	if (optionalString(((object.metadata ?? {}) as Record<string, unknown>).attachment_file_id)) {
+		throw new LinkedInIntegrationError(
+			'INVALID_INPUT',
+			'Files on LinkedIn messages are no longer sent. Remove the attachment from the draft and send the text on its own.',
+		)
+	}
+
 	const approval = await findCurrentApproval(
 		ctx.db,
 		ctx.workspaceId,
