@@ -48,5 +48,17 @@
 		"actionPrompt": "Run the VAT return check for the flow named Accounting (find it with list_loops). If this session starts more than 1 hour after its scheduled time, do nothing, say nothing and stop. Load the skill vat-return-check and follow it. It reads the next VAT due date from Skat, and does nothing at all while that date is more than 28 days away, so on most Mondays stay silent. When the due date is near, it reads the VAT report with get_vat_report, writes the draft check note and posts one short comment on the flow with the link. Never file anything, and never claim that a return went out.",
 		"targetActorId": "2efeee74-29d6-4ef6-854a-e8c05cecfe9b",
 		"enabled": true
+	},
+	"e0493795-33a0-4a8e-ad3e-7668a3b7b24f": {
+		"id": "e0493795-33a0-4a8e-ad3e-7668a3b7b24f",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Year-end pack check (Mon 06:30 UTC)",
+		"type": "cron",
+		"config": {
+			"expression": "30 6 * * 1"
+		},
+		"actionPrompt": "Run the weekly year-end check for the flow named Accounting (find it with list_loops). Load the skill accounting-connection-check and run its check without any receipt. If the connection fails, end the session without a comment: the weekly connection check at 06:00 already tells the owner what to fix, and the owner can ask for the pack in the chat at any time. Otherwise read the open accounting year with list_accounting_years. If its last day is more than 60 days away, or the year is already closed, say nothing and end the session. If the last day is 60 days away or less, use the workspace file tool list_files (never Dinero's list_files, which lists files in the accounting system) to look for a file in this flow named exactly Year-end pack followed by that accounting year's name. If one exists, say nothing and end the session. If none exists, load the skill accounting-year-end-pack and make the pack for that year exactly as it says: draft only, nothing booked, signed or filed. When it is saved, post one short comment on the flow object with the link to the pack and the three open-item counts, and say that it is a draft and the owner signs and files themselves. Never try to fix anything by calling a tool that is not on the allowed list.",
+		"targetActorId": "2efeee74-29d6-4ef6-854a-e8c05cecfe9b",
+		"enabled": true
 	}
 }
