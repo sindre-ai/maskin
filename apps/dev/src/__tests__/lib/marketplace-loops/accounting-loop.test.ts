@@ -35,7 +35,7 @@ describe('Accounting loop definition', () => {
 		expect(ACCOUNTING_LOOP.slug).toBe('accounting-loop')
 		expect(ACCOUNTING_LOOP.name).toBe('Accounting')
 		expect(ACCOUNTING_LOOP.useCase).toBe('Finance')
-		expect(ACCOUNTING_LOOP.version).toBe('1.5.0')
+		expect(ACCOUNTING_LOOP.version).toBe('1.6.0')
 		expect(ACCOUNTING_LOOP.description.length).toBeGreaterThan(0)
 	})
 
@@ -88,13 +88,14 @@ describe('Accounting loop definition', () => {
 		expect(connect?.body).not.toMatch(/custom tool/)
 	})
 
-	it('ships one actor, four triggers and four skills, no duplicates', () => {
+	it('ships one actor, five triggers and five skills, no duplicates', () => {
 		expect(ACCOUNTING_LOOP_ACTOR_IDS).toEqual([ACCOUNTING_LOOP_ACTOR_BOOKKEEPER])
-		expect(ACCOUNTING_LOOP_TRIGGER_IDS.length).toBe(4)
-		expect(ACCOUNTING_LOOP_SKILL_IDS.length).toBe(4)
+		expect(ACCOUNTING_LOOP_TRIGGER_IDS.length).toBe(5)
+		expect(ACCOUNTING_LOOP_SKILL_IDS.length).toBe(5)
 		expect(new Set(ACCOUNTING_LOOP_SKILL_IDS).size).toBe(ACCOUNTING_LOOP_SKILL_IDS.length)
 		expect(ACCOUNTING_LOOP_SKILL_IDS.map((id) => getSkillData(id).name).sort()).toEqual([
 			'accounting-connection-check',
+			'accounting-monthly-close',
 			'accounting-rule-check',
 			'bookkeeping-draft-method',
 			'vat-return-check',
@@ -541,6 +542,129 @@ describe('Accounting loop definition', () => {
 		it('stops and names the owner when the report tool is not there', () => {
 			expect(skill()).toMatch(/If the tool is not among your tools, say so in the first line/)
 			expect(skill()).toMatch(/Dinero connected by sign-in/)
+		})
+	})
+
+	// The monthly close: one cron trigger on the 3rd, on in a fresh install, run by the Bookkeeper.
+	// It checks last month against the bank, drafts accruals, draft-checks the VAT and writes one
+	// close note. It never posts, files or pays.
+	describe('monthly close', () => {
+		const close = () =>
+			skillTexts().find((t) => t.startsWith('---\nname: accounting-monthly-close')) ?? ''
+		const closeTrigger = () =>
+			ACCOUNTING_LOOP_TRIGGER_IDS.map((id) => getTriggerData(id)).find((t) =>
+				t.name.startsWith('Monthly close'),
+			)
+
+		it('runs on the 3rd at 07:00 UTC, on in a fresh install, for the Bookkeeper', () => {
+			const trigger = closeTrigger()
+			expect(trigger?.type).toBe('cron')
+			expect(trigger?.config).toMatchObject({ expression: '0 7 3 * *' })
+			expect(trigger?.name).toMatch(/UTC/)
+			expect(trigger?.enabled).toBe(true)
+			expect(trigger?.targetActorId).toBe(ACCOUNTING_LOOP_ACTOR_BOOKKEEPER)
+			expect(trigger?.actionPrompt).toContain('flow named Accounting')
+			expect(trigger?.actionPrompt).toContain('accounting-monthly-close')
+		})
+
+		it('does nothing when the session starts more than an hour late', () => {
+			expect(closeTrigger()?.actionPrompt).toMatch(
+				/more than 1 hour after 07:00 UTC on the 3rd, do nothing and end with one line/,
+			)
+		})
+
+		it('runs the six steps in order', () => {
+			const text = close()
+			const order = [
+				'## Step 1: bank',
+				'## Step 2: missing documents',
+				'## Step 3: sales',
+				'## Step 4: accruals and prepaid costs',
+				'## Step 5: VAT draft check',
+				'## Step 6: the close note',
+			].map((h) => text.indexOf(h))
+			for (const i of order) expect(i).toBeGreaterThan(-1)
+			expect([...order].sort((a, b) => a - b)).toEqual(order)
+			expect(text).toMatch(/unmatched lines older than 30 days/i)
+		})
+
+		it('writes one close note with open items, each with an owner and a date', () => {
+			const text = close()
+			expect(text).toMatch(/named exactly Monthly close, a space, and the month as YYYY-MM/)
+			expect(text).toMatch(/never make a second one/)
+			expect(text).toContain('| item | what is open | owner | by when |')
+			expect(text).toMatch(/named owner/)
+			expect(text).toMatch(/real date, never soon/)
+		})
+
+		it('never fills a gap with an estimate and shows both amounts', () => {
+			const text = close()
+			expect(text).toMatch(/Never fill a gap with an estimate/)
+			expect(text).toMatch(/rebuild the figure from the vouchers/i)
+			expect(text).toMatch(/show both amounts: with VAT and without/)
+			expect(text).toContain('| amount with VAT | amount without VAT |')
+			expect(text).toMatch(/Never use one from memory/)
+		})
+
+		it('draft-checks the VAT for the six problems and ties each finding to a source', () => {
+			const text = close()
+			for (const re of [
+				/rate or VAT type that does not fit/,
+				/foreign supplier with no reverse charge/,
+				/private cost with VAT claimed/,
+				/same invoice booked twice/,
+				/recurring cost that stopped/,
+				/credit note with no VAT reversal/,
+			])
+				expect(text).toMatch(re)
+			expect(text).toContain('accounting-rule-check')
+			expect(text).toMatch(/Confidence is confirmed or unconfirmed/)
+		})
+
+		it('stays silent when nothing is open and nothing differed', () => {
+			expect(close()).toMatch(/write the note and post no comment/)
+		})
+
+		it('never posts, files or pays, and never says anything was', () => {
+			const all = [close(), closeTrigger()?.actionPrompt ?? ''].join('\n')
+			expect(close()).toMatch(/It never posts, files, pays, signs or sends anything/)
+			expect(closeTrigger()?.actionPrompt).toMatch(/never post, file, pay, sign or send anything/)
+			expect(all).not.toMatch(
+				/\b(has|have|had|was|were|is|are|been|get|gets) (been )?(posted|filed|paid|signed|submitted|booked)\b/i,
+			)
+		})
+
+		it('uses only Dinero tools that are on the allowed list', () => {
+			const allowed = new Set([
+				'CreatePurchaseVoucher',
+				'upload_file',
+				'list_organizations',
+				'list_accounting_years',
+				'get_chart_of_accounts',
+				'list_purchase_accounts',
+				'list_vat_types',
+				'list_contacts',
+				'get_contact',
+				'GetContactByName',
+				'list_vouchers',
+				'get_purchase_voucher',
+				'list_files',
+				'list_voucher_file_cards',
+				'get_purchase_drafts_for_file',
+				'SearchBankTransactions',
+			])
+			const named =
+				close().match(/\b(?:list_[a-z_]+|get_[a-z_]+|SearchBankTransactions|Create[A-Za-z]+)\b/g) ??
+				[]
+			expect(named.length).toBeGreaterThan(0)
+			for (const name of named) expect(allowed.has(name)).toBe(true)
+		})
+
+		it('tells the Bookkeeper about the close', () => {
+			expect(actorTexts().join('\n')).toMatch(
+				/# Monthly close\nOn the 3rd of each month, load the skill accounting-monthly-close/,
+			)
+			expect(ACCOUNTING_LOOP.description).toMatch(/On the 3rd of each month it also closes/)
 		})
 	})
 
