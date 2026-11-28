@@ -1213,7 +1213,7 @@ export const tools = {
 	},
 	update_workspace_skill: {
 		description:
-			'Replace the content of a shared workspace skill, found by id or name. Affects every agent it is attached to. The server re-reads the description from the frontmatter.',
+			'Replace the content of a shared workspace skill, found by id or name. Affects every agent it is attached to. The server re-reads the description from the frontmatter. This changes content only: to attach or detach a skill on an agent, call `update_actor` with `attach_skill_ids` / `detach_skill_ids`.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			name: skillNameSchema.describe('Skill id (from list_workspace_skills) or name.'),
