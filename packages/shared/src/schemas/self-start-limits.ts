@@ -34,7 +34,7 @@ export const SESSION_START_REASONS = [
 export const sessionStartReasonSchema = z.enum(SESSION_START_REASONS)
 export type SessionStartReason = z.infer<typeof sessionStartReasonSchema>
 
-/** Reasons the daily budget and the back-off count: nobody asked for these runs in the moment. */
+/** Reasons the daily budget and the quiet-run notice count: nobody asked for these runs in the moment. */
 export const SELF_STARTED_REASONS: readonly SessionStartReason[] = [
 	'agent_request',
 	'trigger_event',

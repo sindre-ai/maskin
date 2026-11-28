@@ -1,5 +1,6 @@
-// The gate on work agents start for themselves: a cap in a row per reason and object, back-off when
-// nothing changes, a daily token budget per agent, and a cap on triggers made by self-started runs.
+// The gate on work agents start for themselves: a cap in a row per reason and object, a notice when
+// nothing changes (never a refusal), a daily token budget per agent, and a cap on triggers made by
+// self-started runs.
 // A session a person started always goes through.
 
 import { events, notifications, triggers, workspaces } from '@maskin/db/schema'
@@ -8,7 +9,6 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { recordEvent } from '../../lib/events/record-event'
 import {
 	type AdmitInput,
-	BACKOFF_BASE_MS,
 	MAX_PENDING_TRIGGERS_FROM_SELF_STARTED_RUNS,
 	SELF_START_LIMITS_KILLSWITCH_ENV_VAR,
 	SessionNotAdmittedError,
@@ -181,144 +181,18 @@ describe('self-start limits', () => {
 		})
 	})
 
-	describe('back-off when nothing changes', () => {
-		it('holds a wake-up that comes too soon after 2 runs that changed nothing, then lets it through', async () => {
+	describe('notice when nothing changes', () => {
+		it('starts the run after 2 runs that changed nothing, without a wait', async () => {
 			await finishedRun(120, 'trigger_cron')
 			await finishedRun(10, 'trigger_cron')
 
-			const err = await refusalOf(admit({ triggerType: 'cron' }))
-			expect(err.refusal).toBe('no_change_backoff')
-			expect(err.decision).toBe('deferred')
-			expect(err.retryAt?.getTime()).toBe(now.getTime() - 10 * MINUTE + BACKOFF_BASE_MS)
-
-			now = new Date(now.getTime() + BACKOFF_BASE_MS)
 			expect((await admit({ triggerType: 'cron' })).reason).toBe('trigger_cron')
+			expect(await ownerCards()).toHaveLength(0)
 		})
 
-		it('does not count a run that changed something on the object', async () => {
-			await finishedRun(120, 'trigger_cron')
-			await finishedRun(10, 'trigger_cron')
-			await recordEvent(db, {
-				workspaceId,
-				actorId: agentId,
-				action: 'commented',
-				entityType: 'object',
-				entityId: taskId,
-				data: { content: 'Moved it forward.' },
-			})
-			// The comment lands "now", after the last run ended, so it belongs to no run. Put one
-			// inside the newest run instead.
-			await db
-				.update(events)
-				.set({ createdAt: new Date(now.getTime() - 15 * MINUTE) })
-				.where(and(eq(events.entityId, taskId), eq(events.action, 'commented')))
-
-			expect((await admit({ triggerType: 'cron' })).reason).toBe('trigger_cron')
-		})
-
-		it('does not count a check the plan asked for', async () => {
-			await finishedRun(120, 'trigger_cron')
-			await finishedRun(10, 'trigger_cron', {
-				config: { start_reason: 'trigger_cron', planned_check: true },
-			})
-			expect((await admit({ triggerType: 'cron' })).reason).toBe('trigger_cron')
-		})
-
-		it('after 3 quiet runs stops and asks a person once to extend, reassign or close', async () => {
+		it('does not tell anyone when a run changed something on the object', async () => {
 			await finishedRun(300, 'trigger_cron')
 			await finishedRun(200, 'trigger_cron')
-			await finishedRun(100, 'trigger_cron')
-
-			const err = await refusalOf(admit({ triggerType: 'cron' }))
-			expect(err.refusal).toBe('no_change_decision')
-			await refusalOf(admit({ triggerType: 'cron' }))
-
-			const cards = await ownerCards()
-			expect(cards).toHaveLength(1)
-			expect(cards[0]?.title).toContain('Extend, reassign or close?')
-
-			// A person asking for it is never held.
-			const person = await admit({ triggerType: undefined, callerKind: 'rest', createdBy: humanId })
-			expect(person.reason).toBe('person')
-		})
-	})
-
-	describe('back-off after a person extends', () => {
-		const minutesFromNow = (minutes: number) => new Date(now.getTime() + minutes * MINUTE)
-
-		// 3 quiet runs, the ask, then a person's reply that starts a person run. Returns the time the
-		// person run ended.
-		const askThenExtend = async () => {
-			await finishedRun(300, 'trigger_cron')
-			await finishedRun(200, 'trigger_cron')
-			await finishedRun(100, 'trigger_cron')
-			expect((await refusalOf(admit({ triggerType: 'cron' }))).refusal).toBe('no_change_decision')
-
-			const [reply] = await db
-				.insert(events)
-				.values({
-					workspaceId,
-					actorId: humanId,
-					action: 'commented',
-					entityType: 'object',
-					entityId: taskId,
-					data: { content: 'Keep going.' },
-					createdAt: minutesFromNow(1),
-				})
-				.returning({ id: events.id })
-			await insertSession(db, workspaceId, agentId, humanId, {
-				status: 'completed',
-				config: { start_reason: 'person', source_comment_event_id: reply?.id },
-				initiatedFromObjectId: taskId,
-				startedAt: minutesFromNow(1),
-				createdAt: minutesFromNow(1),
-				completedAt: minutesFromNow(4),
-			})
-			// What the agent did while answering the person.
-			await db.insert(events).values({
-				workspaceId,
-				actorId: agentId,
-				action: 'commented',
-				entityType: 'object',
-				entityId: taskId,
-				data: { content: 'Carrying on, slower.' },
-				createdAt: minutesFromNow(2),
-			})
-		}
-
-		it('keeps the count: the next wait is twice the last, and nobody is asked again', async () => {
-			await askThenExtend()
-			// The last quiet run ended 100 minutes before the original "now"; the wait is 2 hours.
-			const lastRunEnded = minutesFromNow(-100)
-			now = minutesFromNow(10)
-
-			const err = await refusalOf(admit({ triggerType: 'cron' }))
-			expect(err.refusal).toBe('no_change_backoff')
-			expect(err.retryAt?.getTime()).toBe(lastRunEnded.getTime() + 2 * BACKOFF_BASE_MS)
-			expect(await ownerCards()).toHaveLength(1)
-
-			now = minutesFromNow(30)
-			expect((await admit({ triggerType: 'cron' })).reason).toBe('trigger_cron')
-		})
-
-		it('resets the count when the status changes after the extend', async () => {
-			await askThenExtend()
-			await db.insert(events).values({
-				workspaceId,
-				actorId: humanId,
-				action: 'status_changed',
-				entityType: 'task',
-				entityId: taskId,
-				data: { changes: [{ field: 'status', old: 'in_progress', new: 'in_review' }] },
-				createdAt: minutesFromNow(6),
-			})
-			now = minutesFromNow(10)
-
-			expect((await admit({ triggerType: 'cron' })).reason).toBe('trigger_cron')
-		})
-
-		it('counts a status change or edit as a change when it happens during a run', async () => {
-			await finishedRun(120, 'trigger_cron')
 			await finishedRun(10, 'trigger_cron')
 			await db.insert(events).values({
 				workspaceId,
@@ -331,6 +205,43 @@ describe('self-start limits', () => {
 			})
 
 			expect((await admit({ triggerType: 'cron' })).reason).toBe('trigger_cron')
+			expect(await ownerCards()).toHaveLength(0)
+		})
+
+		it('does not count a check the plan asked for', async () => {
+			await finishedRun(300, 'trigger_cron')
+			await finishedRun(200, 'trigger_cron')
+			await finishedRun(10, 'trigger_cron', {
+				config: { start_reason: 'trigger_cron', planned_check: true },
+			})
+			expect((await admit({ triggerType: 'cron' })).reason).toBe('trigger_cron')
+			expect(await ownerCards()).toHaveLength(0)
+		})
+
+		it('after 3 quiet runs still starts the run and tells a person once a day', async () => {
+			await finishedRun(300, 'trigger_cron')
+			await finishedRun(200, 'trigger_cron')
+			await finishedRun(100, 'trigger_cron')
+
+			expect((await admit({ triggerType: 'cron' })).reason).toBe('trigger_cron')
+			expect((await admit({ triggerType: 'cron' })).reason).toBe('trigger_cron')
+
+			const cards = await ownerCards()
+			expect(cards).toHaveLength(1)
+			expect(cards[0]?.title).toContain('Close or reassign?')
+			expect(
+				(await admissionEvents()).filter((e) => (e.data as { decision?: string }).decision),
+			).toHaveLength(0)
+		})
+
+		it('keeps starting runs while the count grows, with no wait at any length', async () => {
+			for (const minutesAgo of [600, 500, 400, 300, 200]) {
+				await finishedRun(minutesAgo, 'trigger_cron')
+			}
+			await finishedRun(1, 'trigger_cron')
+
+			expect((await admit({ triggerType: 'cron' })).reason).toBe('trigger_cron')
+			expect(await ownerCards()).toHaveLength(1)
 		})
 	})
 
