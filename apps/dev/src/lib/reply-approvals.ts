@@ -2,6 +2,7 @@ import type { Database } from '@maskin/db'
 import { events, objects } from '@maskin/db/schema'
 import { type ObjectPreview, parseCommentDecision } from '@maskin/shared'
 import { and, eq, inArray } from 'drizzle-orm'
+import { checkApprovalOwner } from './approval-owner'
 import { findCurrentApproval } from './object-delivery'
 import { buildObjectPreview } from './object-preview'
 
@@ -32,6 +33,8 @@ export async function resolveReplyApprovals(
 	db: Database,
 	params: {
 		workspaceId: string
+		/** The person replying: a post for an account only counts when its owner answers. */
+		actorId: string
 		entityId: string
 		parentEventId: number | undefined
 		content: string
@@ -81,6 +84,7 @@ export async function resolveReplyApprovals(
 	for (const row of rows) {
 		const preview = buildObjectPreview(row)
 		if (!preview || preview.missing.length > 0) continue
+		if (!(await checkApprovalOwner(db, { ...params, metadata: row.metadata })).ok) continue
 		// Already approved at exactly this text (the web's Approve call came first): nothing to add.
 		if (await findCurrentApproval(db, params.workspaceId, row.id, preview.content_hash)) continue
 		result.push({ objectId: row.id, objectType: row.type, preview, cardEventId: Number(card.id) })

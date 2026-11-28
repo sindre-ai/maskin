@@ -136,10 +136,15 @@ export function LinkedObjectCard({
 	)
 	const measured = verdict !== null && verdict.hash === draftHash
 	const overflowing = measured && verdict.overflowing
-	// Editing the text needs a chat; a standalone card changes the status and approves only.
+	// A chat card and a standalone card (beside a loop view) both let the person edit the text:
+	// the person types it on this card, outside any view, and it saves as them. Skip needs a chat.
 	const inChat = Boolean(conversationId && agentId)
+	const canEditBody = inChat || standalone
 	const canEditText =
-		inChat && object?.preview?.delivery?.state !== 'sent' && measured && !(clamped && overflowing)
+		canEditBody &&
+		object?.preview?.delivery?.state !== 'sent' &&
+		measured &&
+		!(clamped && overflowing)
 	const editorOpen = Boolean(object?.preview) && canEditText
 	const note = useContext(DraftNotesContext).get(objectId)
 	// Skip is a message to the agent in this chat. Whether it was sent is read back from the chat's
@@ -407,7 +412,7 @@ export function LinkedObjectCard({
 							<MarkdownContent
 								content={shown}
 								size="sm"
-								editable={inChat}
+								editable={canEditBody}
 								editorLabel="Edit the text"
 								onChange={async (value) => {
 									await update.mutateAsync({ id: object.id, data: { content: value } })

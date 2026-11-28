@@ -118,6 +118,29 @@ test.describe('Loop page: item card beside a view', () => {
 		})
 	}
 
+	test('edits the text in the card and saves it as the person', async ({ page, account }) => {
+		await page.setViewportSize({ width: 1280, height: 800 })
+		await flagOn(page)
+		const { loop, post } = await seed(account)
+
+		await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
+		await openTab(page, 'Custom view')
+		await viewFrame(page)
+			.getByRole('button', { name: 'Open Launch post' })
+			.click({ timeout: 15_000 })
+
+		const editor = panel(page).getByRole('textbox', { name: 'Edit the text' })
+		await editor.click()
+		await page.keyboard.press('Control+End')
+		await page.keyboard.type(' Edited in the card.')
+		// Clicking away saves, like the text of any other object.
+		await panel(page).getByText('Launch post').first().click()
+
+		await expect
+			.poll(async () => (await account.api.getObject(post.id, account.workspaceId)).content)
+			.toContain('Edited in the card.')
+	})
+
 	test('an item with no text still shows its title and status', async ({ page, account }) => {
 		await page.setViewportSize({ width: 1280, height: 800 })
 		await flagOn(page)

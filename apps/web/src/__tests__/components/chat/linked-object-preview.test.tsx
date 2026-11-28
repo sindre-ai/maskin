@@ -502,10 +502,15 @@ describe('LinkedObjectCard', () => {
 			expect(screen.getByRole('combobox', { name: 'Status' })).toHaveValue('in_review')
 		})
 
-		it('does not offer to edit the text', () => {
-			useObject.mockReturnValue({ data: objectRow() })
+		it('lets the person change a draft text in a box, held until they approve, with no chat', async () => {
+			useObject.mockReturnValue({ data: objectRow({ preview: previewOf() }) })
 			renderStandalone()
-			expect(screen.queryByRole('button', { name: 'Edit the text' })).not.toBeInTheDocument()
+			const box = await screen.findByRole('textbox', { name: 'Edit the text' })
+			await userEvent.type(box, ' Ses vi?')
+			expect(getDraftEdit(ID)).toContain('Ses vi?')
+			// Nothing is saved while typing: approving saves the text, then approves what was saved.
+			expect(updateMutate).not.toHaveBeenCalled()
+			clearDraftEdit(ID)
 		})
 
 		it('sends no expected status from a chat card, and still draws nothing for an object with no text', async () => {
