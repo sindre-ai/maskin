@@ -580,6 +580,18 @@ describe('Accounting loop definition', () => {
 			expect(text).toMatch(/within 7 days/)
 		})
 
+		it('counts a draft saved on an earlier day as covering its payment on day 2', () => {
+			const text = skill()
+			// list_vouchers returns booked entries only, so day 1 drafts are found through the handled files.
+			expect(text).toMatch(/list_vouchers does not return drafts/)
+			expect(text).toMatch(
+				/for every file with the tag receipt and the tag handled[^.]*call get_purchase_drafts_for_file/,
+			)
+			expect(text).toMatch(/A draft saved on an earlier day covers its payment today/)
+			expect(text).toMatch(/a booked voucher, or a draft found in step 3/)
+			expect(text).not.toMatch(/count the drafts you saved in step 3/)
+		})
+
 		it('allows at most three reminders for each payment', () => {
 			const text = skill()
 			expect(text).toMatch(/fewer than 3/)
