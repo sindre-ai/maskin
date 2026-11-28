@@ -374,12 +374,18 @@ describe('Invites — POST /:token/accept', () => {
 		})
 
 		it('rejects with 403 SEAT_CAP_EXCEEDED and leaves the invite pending', async () => {
-			// Fresh trial-tier workspace: seat cap is 1 (owner alone), so the
-			// invitee overflow trips the cap.
+			// Free (trial) caps at 3 humans. The owner plus two seeded members
+			// fill it, so the fourth invitee trips the cap.
 			const seatCapWs = await insertWorkspace(db, inviterId, {
 				name: 'Seat Cap WS',
 				enterpriseGranted: false,
 			})
+			for (let i = 0; i < 2; i++) {
+				const human = await insertActor(db, { type: 'human' })
+				await db
+					.insert(workspaceMembers)
+					.values({ workspaceId: seatCapWs.id, actorId: human.id, role: 'member' })
+			}
 
 			const invitee = await insertActor(db, {
 				email: 'overflow@example.com',
@@ -402,7 +408,8 @@ describe('Invites — POST /:token/accept', () => {
 			expect(body.error.code).toBe('SEAT_CAP_EXCEEDED')
 			expect(body.error.workspace_id).toBe(seatCapWs.id)
 			expect(body.error.plan).toBe('trial')
-			expect(body.error.cap).toBe(1)
+			expect(body.error.cap).toBe(3)
+			expect(body.error.used).toBe(3)
 
 			// Invite must remain pending so the admin can upgrade + the invitee retries.
 			const [after] = await db
@@ -460,6 +467,13 @@ describe('Invites — POST /:token/accept', () => {
 					name: 'Allowlisted Owner WS',
 					enterpriseGranted: false,
 				})
+				// Free caps at 3 humans; fill it so the invitee is the fourth.
+				for (let i = 0; i < 2; i++) {
+					const human = await insertActor(db, { type: 'human' })
+					await db
+						.insert(workspaceMembers)
+						.values({ workspaceId: ws.id, actorId: human.id, role: 'member' })
+				}
 				const invitee = await insertActor(db, {
 					email: 'allowlisted-invitee@example.com',
 					apiKey: generateApiKey().key,
@@ -489,11 +503,17 @@ describe('Invites — POST /:token/accept', () => {
 		})
 
 		it('seat cap on new-signup rolls back the actor insert (invite pending, no actor)', async () => {
-			// Same fresh trial-tier workspace: 1 seat, filled by the owner.
+			// Free caps at 3 humans; the owner plus two members fill it.
 			const seatCapWs = await insertWorkspace(db, inviterId, {
 				name: 'Seat Cap Signup WS',
 				enterpriseGranted: false,
 			})
+			for (let i = 0; i < 2; i++) {
+				const human = await insertActor(db, { type: 'human' })
+				await db
+					.insert(workspaceMembers)
+					.values({ workspaceId: seatCapWs.id, actorId: human.id, role: 'member' })
+			}
 
 			const { rawToken, invite } = await seedPendingInvite({
 				workspaceId: seatCapWs.id,

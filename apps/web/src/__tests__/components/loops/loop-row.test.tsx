@@ -106,13 +106,13 @@ describe('LoopRow', () => {
 		expect(screen.getByTestId('loop-pill')).toHaveTextContent('Waiting on you')
 	})
 
-	it('renders "X items in progress" as the last-activity line while work is active', () => {
+	it('renders "X items open" as the last-activity line while work is active', () => {
 		render(<LoopRow loop={buildLoop({ inProgressCount: 6, closedCount: 128 })} actors={[]} />)
 
-		expect(screen.getByText('6 items in progress')).toBeInTheDocument()
+		expect(screen.getByText('6 items open')).toBeInTheDocument()
 	})
 
-	it('renders "X items completed" as last activity when nothing is in progress', () => {
+	it('renders "X items completed" as last activity when nothing is open', () => {
 		render(<LoopRow loop={buildLoop({ inProgressCount: 0, closedCount: 5 })} actors={[]} />)
 
 		expect(screen.getByText('5 items completed')).toBeInTheDocument()
@@ -141,7 +141,7 @@ describe('LoopRow', () => {
 			<LoopRow loop={buildLoop({ agentIds: ['a1', 'a2'], inProgressCount: 2 })} actors={actors} />,
 		)
 
-		expect(screen.getByText('2 items in progress')).toBeInTheDocument()
+		expect(screen.getByText('2 items open')).toBeInTheDocument()
 		expect(screen.getAllByTitle('Compass').length).toBeGreaterThan(0)
 	})
 

@@ -12,8 +12,8 @@ import { paceVerdict } from './target-card'
 // state (no fixtures). The read schema carries no per-activity feed, so this
 // surfaces the most useful real signal: whether the operator is needed, and how
 // much of the loop's work is still moving through it. Null for a live loop with
-// nothing in progress or completed. The chat card for a linked loop reads the
-// same line, so the two cannot drift.
+// nothing open or completed. The chat card for a linked loop reads the same
+// line, so the two cannot drift.
 export function loopActivityLine(loop: LoopSummary): string | null {
 	switch (loop.pill) {
 		case 'waiting_on_you':
@@ -24,7 +24,7 @@ export function loopActivityLine(loop: LoopSummary): string | null {
 			return 'Draft — not live yet'
 		default:
 			if (loop.inProgressCount > 0)
-				return `${loop.inProgressCount} item${loop.inProgressCount === 1 ? '' : 's'} in progress`
+				return `${loop.inProgressCount} item${loop.inProgressCount === 1 ? '' : 's'} open`
 			if (loop.closedCount > 0)
 				return `${loop.closedCount} item${loop.closedCount === 1 ? '' : 's'} completed`
 			return null

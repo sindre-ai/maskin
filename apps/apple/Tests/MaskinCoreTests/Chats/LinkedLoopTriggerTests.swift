@@ -97,7 +97,7 @@ struct LinkedLoopTriggerTests {
 		#expect(card.summary == "Review Look at last week and plan the next.")
 		#expect(card.badge == "Supervised")
 		#expect(card.agentsFact == "2 agents")
-		#expect(card.activity == "3 in progress · 12 closed")
+		#expect(card.activity == "3 open · 12 closed")
 		#expect(card.firstAgentID == "a-1")
 		#expect(store.isCard(target))
 		#expect(store.showsCard(target))

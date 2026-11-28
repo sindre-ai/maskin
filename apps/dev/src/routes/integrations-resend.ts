@@ -46,7 +46,7 @@ import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
  * tool, the way `gmail_send_email` is behind Gmail (routes/integrations-gmail.ts), with the
  * same rules:
  *
- *  - Needs "Read & write" on Resend. An agent whose send setting for emails is ask first also
+ *  - Needs "Read & write" on Resend. An agent whose send setting for emails from its own address is ask first also
  *    needs a person's approval of this exact email; one set to always allow sends the draft at
  *    once, and deny refuses. The only input is `object_id`: the email is read from the object
  *    (`metadata.kind = "email"`), so nothing the agent passes can change what goes out.
@@ -272,15 +272,16 @@ app.openapi(sendRoute, async (c) => {
 		return c.json(f.body, f.status)
 	}
 
-	// 3. The agent's send setting for emails, then exactly what is going out.
+	// 3. The agent's send setting for emails from its own address (its own kind, apart from
+	// Gmail's), then exactly what is going out.
 	const decision = await decideSend(db, {
 		workspaceId,
 		agentId: actorId,
-		kind: 'email',
+		kind: 'agent_email',
 		sessionId: callingSessionId(c.get('apiKeySessionId'), c.get('maskinSessionId')),
 	})
 	if (decision === 'denied') {
-		const f = fail(403, 'FORBIDDEN', deniedMessage('emails'))
+		const f = fail(403, 'FORBIDDEN', deniedMessage('emails from your own address'))
 		return c.json(f.body, f.status)
 	}
 	const loaded = await loadObjectEmail(
@@ -295,7 +296,7 @@ app.openapi(sendRoute, async (c) => {
 		const pilot = await pilotIsReason(db, {
 			workspaceId,
 			agentId: actorId,
-			kind: 'email',
+			kind: 'agent_email',
 			sessionId: callingSessionId(c.get('apiKeySessionId'), c.get('maskinSessionId')),
 		})
 		const askFirst = 'This agent is set to ask first, so a person has to approve this email.'
@@ -327,7 +328,7 @@ app.openapi(sendRoute, async (c) => {
 			workspaceId,
 			agentId: actorId,
 			object: { id: objectId, type: loaded.objectType },
-			kind: 'email',
+			kind: 'agent_email',
 			contentHash: loaded.contentHash,
 		})
 	}

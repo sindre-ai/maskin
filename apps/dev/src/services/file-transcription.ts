@@ -21,7 +21,7 @@ import {
 //
 // OpenRouter's upstream speech providers time out after about 60 seconds per
 // request, so the file is never sent whole: ffmpeg decodes it to 16 kHz mono WAV
-// (the one format the Voxtral models document) in fixed-length chunks, each chunk
+// (the one format OpenRouter documents for these models) in fixed-length chunks, each chunk
 // goes through the same `transcribeAudio` call chat dictation uses, and the text
 // is joined in order. The spend OpenRouter reports for each chunk is recorded in
 // `workspace_ai_usage`, which plan usage reads (see `getWorkspacePlanUsdCentsUsage`).

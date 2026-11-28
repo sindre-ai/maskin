@@ -36,6 +36,8 @@ private struct LoopsContainer: View {
 	let workspaceID: String
 	@Binding var requestedLoopId: String?
 	@State private var loops: LoopsStore
+	/// Orders the search results by the server's best match while words are typed.
+	@State private var rank: PageSearchRank
 	@State private var loopSelection: String?
 	@State private var triggersRequest: TriggersRequest?
 	@State private var search = ""
@@ -59,6 +61,12 @@ private struct LoopsContainer: View {
 						client: environment.client, credentials: environment.auth.credentialsProvider)),
 				events: environment.events, cache: environment.snapshotCache,
 				sortStorage: UserDefaultsLoopsSortStorage(), displayStorage: UserDefaultsLoopsDisplayStorage()))
+		_rank = State(
+			initialValue: PageSearchRank(
+				remote: APISearchRemote(
+					client: environment.client, baseURL: environment.baseURL, clientSource: environment.clientSource,
+					credentials: environment.auth.credentialsProvider),
+				type: .loop))
 	}
 
 	var body: some View {
@@ -114,21 +122,23 @@ private struct LoopsContainer: View {
 	private var sidebar: some View {
 		LoopsListView(
 			store: loops, selection: $loopSelection, search: search, isLive: isLive, isGrid: sizeClass == .regular, zoomNamespace: zoom,
-			onNew: { buildLoopInChat() }
+			onNew: { buildLoopInChat() }, rank: rank
 		)
 		// Search is a button in the top bar that opens into a field and looks only through the
 		// flows on this page; it folds back into the button when dismissed.
 		.pageSearch(text: $search, isPresented: $searchPresented, prompt: "Search flows")
 		// Closing the field can't leave a stale query behind.
 		.onChange(of: searchPresented) { if !searchPresented, !search.isEmpty { search = "" } }
+		.onChange(of: search) { _, text in rank.update(text: text) }
 		// Flows carry no tags, so there is no tag filter bar; Display holds the sort, filter and Summary.
 		// iPad with the left bar: it names the screen, so the header row is the actions alone.
 		.shellToolbar(
 			environment: environment, title: ShellIdiom.hasRail ? nil : "Flows",
 			actions: ShellActions(
-				new: { buildLoopInChat() }, newLabel: "New flow",
+				// iPhone: no New and no avatar in the bar (the profile opens from the other screens).
+				new: ShellIdiom.isPhone ? nil : { buildLoopInChat() }, newLabel: "New flow",
 				displaySymbol: ShellActions.slidersSymbol, displayActive: loops.isDisplayCustomised,
-				displayToggle: { showDisplay = true },
+				displayToggle: { showDisplay = true }, hidesAvatar: ShellIdiom.isPhone,
 				search: { searchPresented = true }, marketplace: { showMarketplace = true })
 		)
 		.sheet(isPresented: $showDisplay) { FlowsDisplaySheet(store: loops) }

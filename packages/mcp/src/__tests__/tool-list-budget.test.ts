@@ -23,7 +23,11 @@ const wsId = '00000000-0000-0000-0000-0000000000aa'
 // the execution flag and _meta the wire list adds, which tool-list-wire-budget.test.ts counts.
 // The budget leaves a little room, so a new tool is fine but a doubling is not. Raise it
 // on purpose, with the new size in the PR, never to make a red test green.
-const TOOL_LIST_BUDGET = 200_500
+// Raised 26 Nov 2026 for the three Gmail mail tools (search, read thread, change labels):
+// 203,748 characters with their first wording, about 1,100 fewer after trimming it.
+// Raised 27 Nov 2026 for the two native Google Calendar read tools: 205,326 characters after
+// trimming their wording.
+const TOOL_LIST_BUDGET = 206_000
 const PER_TOOL_BUDGET: Record<string, number> = {
 	create_comment: 12_000,
 	post_conversation_message: 7_000,

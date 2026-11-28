@@ -11,6 +11,8 @@ vi.mock('../../lib/analytics/integration-events', async (importOriginal) => ({
 
 import { encrypt } from '../../lib/crypto'
 import { createApiError } from '../../lib/errors'
+import { clearGoogleTokenCheckThrottle } from '../../lib/integrations/google-token-check'
+import { logger } from '../../lib/logger'
 import integrationsGatewayRoutes, {
 	clearGatewayAnnotationCache,
 } from '../../routes/integrations-gateway'
@@ -93,6 +95,7 @@ let fetchMock: ReturnType<typeof vi.fn>
 beforeEach(() => {
 	toolCalledMock.mockClear()
 	clearGatewayAnnotationCache()
+	clearGoogleTokenCheckThrottle()
 	fetchMock = vi.fn(
 		async (_url: string, _init?: RequestInit) =>
 			new Response(
@@ -296,6 +299,63 @@ describe('POST /api/integrations/:provider/gateway (Integration)', () => {
 		expect(text).toContain('Settings')
 		expect(text).not.toContain('list_issues')
 		expect(text).not.toContain(PROVIDER_TOKEN)
+	})
+
+	it('logs what Google says about the token when Gmail refuses it, never the token, once a minute', async () => {
+		const s = await setup()
+		const gmailToken = 'fake-gmail-token-0123456789'
+		await db.insert(integrations).values({
+			workspaceId: s.ws.id,
+			provider: 'gmail',
+			status: 'active',
+			credentials: encrypt(JSON.stringify({ accessToken: gmailToken })),
+			createdBy: s.human,
+		})
+		const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+		fetchMock.mockImplementation(async (url: string) =>
+			url.includes('tokeninfo')
+				? new Response(
+						JSON.stringify({
+							azp: 'client-123.apps.googleusercontent.com',
+							scope:
+								'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.modify',
+							expires_in: '2400',
+						}),
+						{ status: 200, headers: { 'content-type': 'application/json' } },
+					)
+				: new Response('{}', { status: 401 }),
+		)
+		const body = { jsonrpc: '2.0', id: 1, method: 'tools/list' }
+
+		const res = await post(appFor(s.reader.id), s.ws.id, body, 'gmail')
+		expect(res.status).toBe(502)
+		const refusals = () =>
+			warn.mock.calls.filter(([msg]) => msg.includes('refused the provider token'))
+		expect(refusals()[0][1]).toMatchObject({
+			provider: 'gmail',
+			googleTokenCheck: {
+				checked: true,
+				valid: true,
+				clientId: 'client-123.apps.googleusercontent.com',
+				scopes: [
+					'https://www.googleapis.com/auth/gmail.readonly',
+					'https://www.googleapis.com/auth/gmail.modify',
+				],
+				secondsLeft: 2400,
+			},
+		})
+		const checkCalls = () =>
+			fetchMock.mock.calls.filter(([url]) => String(url).includes('tokeninfo'))
+		expect(checkCalls()).toHaveLength(1)
+		// The token goes in the POST body, never the URL.
+		expect(String(checkCalls()[0][0])).not.toContain(gmailToken)
+
+		// A retry inside the minute is refused again but does not call Google a second time.
+		await post(appFor(s.reader.id), s.ws.id, body, 'gmail')
+		expect(checkCalls()).toHaveLength(1)
+		expect(refusals()[1][1]).toMatchObject({ googleTokenCheck: { reason: 'rate_limited' } })
+		expect(JSON.stringify(warn.mock.calls)).not.toContain(gmailToken)
+		warn.mockRestore()
 	})
 
 	it('answers 502 with a plain message when the provider cannot be reached', async () => {

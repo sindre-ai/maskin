@@ -33,6 +33,10 @@ const UNAVAILABLE_UNDER_OAUTH = [
 	'GET /api/data/query', // newer MCP tool, route not yet checked for the token's workspace pin
 	'GET /api/for-you', // newer MCP tool, route not yet checked for the token's workspace pin
 	'GET /api/installed-loops', // list_marketplace: newer MCP tool, route not yet checked for the token's workspace pin
+	'GET /api/integrations/gmail/search', // gmail_search_mail: newer MCP tool, route not yet checked for the token's workspace pin
+	'GET /api/integrations/gmail/thread', // gmail_read_thread: newer MCP tool, route not yet checked for the token's workspace pin
+	'GET /api/integrations/google-calendar/calendars', // google_calendar_list_calendars: newer MCP tool, route not yet checked for the token's workspace pin
+	'GET /api/integrations/google-calendar/events', // google_calendar_list_events: newer MCP tool, route not yet checked for the token's workspace pin
 	'GET /api/sessions/x/activity', // newer MCP tool, route not yet checked for the token's workspace pin
 	'GET /api/sessions/x/keychain-credentials', // newer MCP tool, route not yet checked for the token's workspace pin
 	'PATCH /api/objects/x/next-step', // update_next_step: newer MCP tool, route not yet checked for the token's workspace pin
@@ -47,6 +51,7 @@ const UNAVAILABLE_UNDER_OAUTH = [
 	'POST /api/installed-loops/x/fork', // fork_loop: newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/integrations/gmail/save-attachment', // newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/integrations/gmail/send', // newer MCP tool, route not yet checked for the token's workspace pin
+	'POST /api/integrations/gmail/thread-labels', // gmail_change_labels: newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/integrations/resend/send', // newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/integrations/x/connect', // connect_integration: third-party credentials
 	'POST /api/invites', // newer MCP tool, route not yet checked for the token's workspace pin

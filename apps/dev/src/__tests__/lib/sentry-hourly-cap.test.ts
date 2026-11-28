@@ -25,7 +25,7 @@ const event = (level?: ErrorEvent['level']): ErrorEvent =>
 	({ type: undefined, level }) as ErrorEvent
 
 describe('createSentryHourlyCap', () => {
-	it('lets 8 errors through in an hour and drops the rest', () => {
+	it('lets the hourly cap of errors through and drops the rest', () => {
 		const { limit } = setup()
 		for (let i = 0; i < HOURLY_EVENT_CAP; i++) expect(limit(event('error'))).not.toBeNull()
 		expect(limit(event('error'))).toBeNull()
@@ -38,7 +38,7 @@ describe('createSentryHourlyCap', () => {
 		expect(limit(event())).toBeNull()
 	})
 
-	it('stops warnings at 4 so errors always have room', () => {
+	it('stops warnings at the low-severity cap so errors always have room', () => {
 		const { limit } = setup()
 		for (let i = 0; i < LOW_SEVERITY_CAP; i++) expect(limit(event('warning'))).not.toBeNull()
 		expect(limit(event('warning'))).toBeNull()

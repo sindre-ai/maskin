@@ -7,6 +7,9 @@
  *     (child_tasks_closed);
  *   - the last open object that blocks it has closed (blocker_cleared);
  *   - its own object was moved to a new status by someone else (status_changed);
+ *   - a task it owns was moved to todo, or created at todo, by someone else (task_ready). The
+ *     sweep adds the third way in, a task still in backlog that is due within 24 hours, because an
+ *     agent's own change wakes nobody;
  *   - a decision card it posted expired with no answer (decision_expired).
  * An answered card already wakes the driver through the comment dispatcher.
  *
@@ -74,6 +77,9 @@ const DECISION_SCAN_FIRST_LOOKBACK_MS = 60 * 60_000
 const DECISION_CARD_MAX_AGE_MS = 14 * 24 * 60 * 60_000
 const MAX_CHANGED_OBJECTS_IN_PROMPT = 5
 
+/** A task in this status is ready for its owner to start. */
+export const TASK_READY_STATUS = 'todo'
+
 export const DRIVER_WOKEN_ACTION = 'driver_woken'
 /** What a heartbeat run writes when it moves something: a comment, a new or changed object, a next step. */
 const HEARTBEAT_WORK_ACTIONS = [
@@ -107,6 +113,11 @@ export function isClosedStatus(type: string, status: string): boolean {
 /** A child that ended badly or was dropped. The parent's driver hears about it at once. */
 export function isFailedOrDiscarded(status: string): boolean {
 	return status === 'failed' || status === 'discarded'
+}
+
+/** A task moved to todo, or created at todo, is ready for its owner to start. */
+export function isTaskReady(type: string, status: string): boolean {
+	return type === 'task' && status === TASK_READY_STATUS
 }
 
 /**
@@ -144,6 +155,8 @@ const REASON_TEXT: Record<DriverWakeReason, string> = {
 	decision_answered: 'A decision card you posted was answered.',
 	decision_expired: 'A decision card you posted expired with no answer.',
 	status_changed: 'Someone else moved this object to a new status.',
+	task_ready:
+		'This task is ready for you: it was moved to todo, or created as todo, by someone else, or it is due within 24 hours. It is yours to start.',
 	step_overdue: 'The next step on this object is overdue.',
 	no_next_step: 'This object has no next step.',
 	behind_pace: 'This object is behind the pace its target needs.',
@@ -183,6 +196,43 @@ export function buildWakePrompt(input: WakePromptInput): string {
 	lines.push(
 		'',
 		'Read the object and what changed, then do the next safe step for this outcome and keep its next step current. If the change needs nothing from you, change nothing and end the run.',
+	)
+	return lines.join('\n')
+}
+
+export interface QueueWakePromptInput {
+	items: {
+		object: { id: string; type: string; title: string | null; status: string }
+		nextStep: { action: string; status: string; dueAt: Date } | null
+	}[]
+	/** How many are due in all. More than `items.length` when the run was capped. */
+	total: number
+}
+
+/**
+ * One run for everything an agent has due: a line per object with its stored next step, oldest due
+ * first. Nothing is invented for the agent to do. The ones left out of a capped list come with the
+ * next sweep, an hour on.
+ */
+export function buildQueueWakePrompt(input: QueueWakePromptInput): string {
+	const lines = [
+		'You are being woken because the next step on these objects you drive is overdue. No person asked for this run.',
+		'',
+		`Due now (${input.items.length}${input.total > input.items.length ? ` of ${input.total}, the rest come with the next sweep` : ''}):`,
+	]
+	for (const { object, nextStep } of input.items) {
+		lines.push(
+			`- ${object.title ?? '(untitled)'} (${object.type}, ${object.status}), ID: ${object.id}`,
+		)
+		if (nextStep) {
+			lines.push(
+				`  Stored next step (${nextStep.status}, due ${nextStep.dueAt.toISOString()}): ${nextStep.action}`,
+			)
+		}
+	}
+	lines.push(
+		'',
+		'Work through them one by one. For each, read the object, do the next safe step, and set its next step again (the date of the next touch). If one needs nothing from you, say why in its next step and move on.',
 	)
 	return lines.join('\n')
 }
@@ -253,9 +303,11 @@ export class DriverWaker {
 			const run =
 				event.action === 'status_changed'
 					? this.onStatusChanged(event)
-					: event.entity_type === 'session' && SESSION_END_ACTIONS.has(event.action)
-						? this.onSessionEnded(event)
-						: null
+					: event.action === 'created' && event.entity_type === 'task'
+						? this.onTaskCreated(event)
+						: event.entity_type === 'session' && SESSION_END_ACTIONS.has(event.action)
+							? this.onSessionEnded(event)
+							: null
 			run?.catch((err) =>
 				logger.error('Driver wake handling failed', {
 					eventId: event.event_id,
@@ -336,7 +388,9 @@ export class DriverWaker {
 			})
 		}
 
-		if (!isClosedStatus(obj.type, newStatus)) add(obj, 'status_changed')
+		// A task moved to todo is ready for its owner: that is its own reason, not a plain status change.
+		if (isTaskReady(obj.type, newStatus)) add(obj, 'task_ready')
+		else if (!isClosedStatus(obj.type, newStatus)) add(obj, 'status_changed')
 
 		if (isClosedStatus(obj.type, newStatus) || isFailedOrDiscarded(newStatus)) {
 			for (const parent of await this.related(obj.id, 'parents', 'breaks_into')) {
@@ -355,6 +409,44 @@ export class DriverWaker {
 
 		const agents = await this.agentIds(requests.map((r) => r.driverId))
 		for (const r of requests) if (agents.has(r.driverId)) this.hold(r)
+	}
+
+	/**
+	 * A task created at todo by someone other than its owner. A created event is not a status
+	 * change, so the status handler never sees it.
+	 */
+	async onTaskCreated(event: PgEvent): Promise<void> {
+		if (!this.enabled(event.workspace_id)) return
+		const [row] = await this.db
+			.select({ data: events.data, createdAt: events.createdAt })
+			.from(events)
+			.where(eq(events.id, Number(event.event_id)))
+			.limit(1)
+		const created = row?.data as { status?: unknown; driver?: unknown } | null | undefined
+		if (!created || !isTaskReady('task', String(created.status))) return
+
+		// The row, not the event, says who owns it now: the event carries the row as it was created.
+		const [task] = await this.db
+			.select({
+				id: objects.id,
+				workspaceId: objects.workspaceId,
+				type: objects.type,
+				driver: objects.driver,
+			})
+			.from(objects)
+			.where(eq(objects.id, event.entity_id))
+			.limit(1)
+		if (!task || task.workspaceId !== event.workspace_id || !task.driver) return
+		if (task.driver === event.actor_id) return
+		if (!(await this.agentIds([task.driver])).has(task.driver)) return
+		this.hold({
+			workspaceId: task.workspaceId,
+			driverId: task.driver,
+			objectId: task.id,
+			reason: 'task_ready',
+			changedObjectId: task.id,
+			changedAt: row?.createdAt ?? this.now(),
+		})
 	}
 
 	/**
@@ -580,6 +672,8 @@ export class DriverWaker {
 			.where(eq(objects.id, held.objectId))
 			.limit(1)
 		if (!object || isClosedStatus(object.type, object.status)) return
+		// The owner (or a trigger) already started the task while the wake settled.
+		if (reasons.every((r) => r === 'task_ready') && object.status !== TASK_READY_STATUS) return
 
 		const changedIds = [...new Set([...held.reasons.values()].flatMap((s) => [...s]))]
 		const changedRows = await this.db

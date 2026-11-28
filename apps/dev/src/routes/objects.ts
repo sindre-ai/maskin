@@ -5,6 +5,7 @@ import {
 	actors,
 	conversations,
 	files,
+	installedLoops,
 	objects,
 	readState,
 	relationships,
@@ -2638,6 +2639,10 @@ const deleteObjectRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Object not found',
 		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'The object is the flow of an installed marketplace flow; uninstall it instead',
+		},
 	},
 })
 
@@ -3020,6 +3025,24 @@ app.openapi(deleteObjectRoute, async (c) => {
 
 	if (!existing || !(await isWorkspaceWriter(db, actorId, existing.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
+	}
+
+	// The flow object of an installed marketplace flow is referenced by its install row
+	// (installed_loops.object_id, no cascade). Refuse plainly instead of letting the delete
+	// fail on the foreign key with a server error. Uninstalling removes the row and the object.
+	const [install] = await db
+		.select({ id: installedLoops.id })
+		.from(installedLoops)
+		.where(eq(installedLoops.objectId, id))
+		.limit(1)
+	if (install) {
+		return c.json(
+			createApiError(
+				'CONFLICT',
+				'This is the flow object of an installed marketplace flow, so it cannot be deleted directly. Uninstall the flow from the Marketplace instead.',
+			),
+			409,
+		)
 	}
 
 	await db.transaction(async (tx) => {

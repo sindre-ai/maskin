@@ -183,8 +183,13 @@ final class MustKeepTests: XCTestCase {
 		if !item.waitForExistence(timeout: 5) { dumpScreen("mk03-menu") }
 		XCTAssertTrue(item.exists, "a message's menu offers 'Reply in thread'")
 		item.tap()
-		let field = app.textFields.matching(NSPredicate(format: "label == 'Reply' OR placeholderValue == 'Reply'")).firstMatch
-		XCTAssertTrue(field.waitForExistence(timeout: 10), "the thread screen opens with a Reply field")
+		// The thread's composer reads "Reply in thread" (its placeholder is its label), and is a text view or a text field.
+		let kinds = [XCUIElement.ElementType.textField.rawValue, XCUIElement.ElementType.textView.rawValue]
+		let field = app.descendants(matching: .any).matching(
+			NSPredicate(format: "(elementType == %d OR elementType == %d) AND label BEGINSWITH 'Reply in thread'", kinds[0], kinds[1])
+		).firstMatch
+		if !field.waitForExistence(timeout: 10) { dumpScreen("mk03-thread") }
+		XCTAssertTrue(field.exists, "the thread screen opens with a Reply field")
 	}
 
 	// MARK: MK-03b Select text from the message menu
@@ -281,6 +286,15 @@ final class MustKeepTests: XCTestCase {
 			UIColor.systemOrange.setFill()
 			context.fill(CGRect(origin: .zero, size: size))
 		}
+	}
+
+	/// A one-page PDF on the system clipboard, as a file item with no text beside it.
+	private func putPDFOnClipboard() {
+		let data = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 200, height: 200)).pdfData { context in
+			context.beginPage()
+			"Statement".draw(at: CGPoint(x: 20, y: 20), withAttributes: nil)
+		}
+		UIPasteboard.general.setData(data, forPasteboardType: "com.adobe.pdf")
 	}
 
 	/// Long-presses the message field until its edit menu shows Paste (the first press can only focus the
@@ -389,6 +403,21 @@ final class MustKeepTests: XCTestCase {
 		let chip = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Remove '")).firstMatch
 		if !chip.waitForExistence(timeout: 15) { dumpScreen("mk07c-chip") }
 		XCTAssertTrue(chip.exists, "the pasted picture shows as a chip in the composer")
+	}
+
+	/// MK-07e: Paste in the field's menu with a PDF on the clipboard adds the file as a chip (its Remove button shows).
+	/// The keyboard's "Paste from <app>" suggestion uses the same paste handling, so that is checked by hand.
+	func testMK07e_FieldPasteAddsFileChip() throws {
+		putPDFOnClipboard()
+		openChat("Priya Rao")
+		dismissNotNow()
+		let field = composerField()
+		XCTAssertTrue(field.waitForExistence(timeout: 15), "the chat shows its message field")
+		field.tap()
+		pasteIntoField(field)
+		let chip = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Remove '")).firstMatch
+		if !chip.waitForExistence(timeout: 15) { dumpScreen("mk07e-chip") }
+		XCTAssertTrue(chip.exists, "the pasted PDF shows as a chip in the composer")
 	}
 
 	/// MK-07d: Paste in the field's menu with text on the clipboard puts the words in the field and adds no chip.

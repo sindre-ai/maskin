@@ -58,6 +58,7 @@ const READ_TOOLS: Record<string, ReadonlySet<string>> = {
 		'youtube__get_public_videos',
 		'youtube__get_upload_status',
 		'youtube__list_comments',
+		'youtube__list_held_comments',
 		'youtube__get_own_captions',
 	]),
 	// Self-hosted WordPress, served by Maskin. Curated, so a tool added later is a write until it is

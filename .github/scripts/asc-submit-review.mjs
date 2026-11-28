@@ -14,6 +14,13 @@
 //   RELEASE_NOTES_PATH  defaults to apps/apple/release-notes.md. First line "# <version>", the
 //                   what's-new text below it. A file for another version fails the step.
 //
+// Apple holds a rejected version (say 1.3.1) open, and then refuses to create a new one (409 "You
+// cannot create a new version of the App in the current state"). On a manual run, when SUBMIT_VERSION
+// does not exist and the app has an iPhone version in REJECTED, METADATA_REJECTED or
+// DEVELOPER_REJECTED, the script renames that version to SUBMIT_VERSION instead of creating one,
+// attaches the build, sets the what's-new text, resolves the open items of its review submission
+// and submits. If Apple refuses the rename, it cancels the old submission and creates the version.
+//
 // Safe to run twice: it reuses the App Store version and an unsent review submission, and stops
 // when the version is already waiting for, in or past review. Any error fails the run with
 // Apple's message. The build stays in TestFlight either way. Nothing secret is printed.
@@ -66,6 +73,8 @@ const HELD_FOR_PERSON = new Set([
 	'INVALID_BINARY',
 	'DEVELOPER_REJECTED',
 ])
+// The rejected states whose version the script may rename to the one being sent.
+const REJECTED_STATES = new Set(['REJECTED', 'METADATA_REJECTED', 'DEVELOPER_REJECTED'])
 const ALREADY_SENT = new Set([
 	'WAITING_FOR_REVIEW',
 	'IN_REVIEW',
@@ -94,8 +103,8 @@ const plan = []
 const problems = []
 
 // retryable false: running it again cannot help, so the workflow stops at once (exit code 2).
-function fail(message, { retryable = true } = {}) {
-	throw Object.assign(new Error(message), { retryable })
+function fail(message, { retryable = true, status } = {}) {
+	throw Object.assign(new Error(message), { retryable, status })
 }
 
 const b64url = (v) => Buffer.from(v).toString('base64url')
@@ -143,6 +152,7 @@ async function asc(method, path, body) {
 		}
 		fail(`${method} ${path} -> ${res.status}: ${text}`, {
 			retryable: retryableStatus(res.status, text),
+			status: res.status,
 		})
 	}
 }
@@ -285,6 +295,56 @@ async function createVersion(appId) {
 	return res.data
 }
 
+// The iPhone version Apple holds in a rejected state under another number, or null. Apple lets
+// only one version be open for edits, so this is the one that blocks creating SUBMIT_VERSION.
+async function findRejectedVersion(appId) {
+	const res = await asc(
+		'GET',
+		`/v1/apps/${appId}/appStoreVersions?${query({ 'filter[platform]': PLATFORM, limit: '50' })}`,
+	)
+	const held = res.data.filter(
+		(v) => REJECTED_STATES.has(stateOf(v)) && v.attributes.versionString !== SUBMIT_VERSION,
+	)
+	if (held.length > 1) {
+		fail(
+			`${held.length} rejected versions (${held.map((v) => `${v.attributes.versionString} ${stateOf(v)}`).join(', ')}), so the one to reuse for ${SUBMIT_VERSION} cannot be told apart.`,
+			{ retryable: false },
+		)
+	}
+	return held[0] ?? null
+}
+
+// Turns the rejected version into SUBMIT_VERSION. When Apple refuses the rename (any 4xx), the old
+// review submission is cancelled and the version is created as before. A 5xx or network error is
+// thrown as it is, so the retry runs the same step again.
+async function reuseRejectedVersion(appId, old, open) {
+	try {
+		await asc('PATCH', `/v1/appStoreVersions/${old.id}`, {
+			data: {
+				type: 'appStoreVersions',
+				id: old.id,
+				attributes: { versionString: SUBMIT_VERSION, releaseType: RELEASE_TYPE },
+			},
+		})
+		console.log(
+			`Renamed App Store version ${old.attributes.versionString} to ${SUBMIT_VERSION} (${old.id}).`,
+		)
+		return { ...old, attributes: { ...old.attributes, versionString: SUBMIT_VERSION } }
+	} catch (error) {
+		if (!(error.status >= 400 && error.status < 500)) throw error
+		console.log(
+			`Apple did not allow the rename (${error.message}). Cancelling the old review submission, then creating ${SUBMIT_VERSION}.`,
+		)
+		for (const s of open.filter((sub) => sub.versionIds.includes(old.id))) {
+			await asc('PATCH', `/v1/reviewSubmissions/${s.id}`, {
+				data: { type: 'reviewSubmissions', id: s.id, attributes: { canceled: true } },
+			})
+			console.log(`Cancelled review submission ${s.id}.`)
+		}
+		return createVersion(appId)
+	}
+}
+
 async function attachBuild(versionId, buildId) {
 	await asc('PATCH', `/v1/appStoreVersions/${versionId}`, {
 		data: {
@@ -393,8 +453,21 @@ async function submitForReview(appId, versionId, open) {
 		(s) =>
 			s.state === 'READY_FOR_REVIEW' && (s.versionIds.includes(versionId) || s.items.length === 0),
 	)
-	let submissionId = draft?.id
-	if (submissionId) {
+	// A rejected submission that carries this version (the renamed one): resolve its open items,
+	// then send the same submission again.
+	const unresolved = open.find(
+		(s) => s.state === 'UNRESOLVED_ISSUES' && s.versionIds.includes(versionId),
+	)
+	let submissionId = draft?.id ?? unresolved?.id
+	if (unresolved && !draft) {
+		for (const item of unresolved.items.filter((i) => i.attributes?.resolved !== true)) {
+			await asc('PATCH', `/v1/reviewSubmissionItems/${item.id}`, {
+				data: { type: 'reviewSubmissionItems', id: item.id, attributes: { resolved: true } },
+			})
+			console.log(`Resolved item ${item.id} of review submission ${unresolved.id}.`)
+		}
+		console.log(`Reusing the review submission ${submissionId} after Apple's rejection.`)
+	} else if (submissionId) {
 		console.log(`Reusing the unsent review submission ${submissionId}.`)
 	} else {
 		const created = await asc('POST', '/v1/reviewSubmissions', {
@@ -407,7 +480,7 @@ async function submitForReview(appId, versionId, open) {
 		submissionId = created.data.id
 		console.log(`Created review submission ${submissionId}.`)
 	}
-	if (!draft?.versionIds.includes(versionId)) {
+	if (!(draft ?? unresolved)?.versionIds.includes(versionId)) {
 		await asc('POST', '/v1/reviewSubmissionItems', {
 			data: {
 				type: 'reviewSubmissionItems',
@@ -464,6 +537,7 @@ async function main() {
 	}
 
 	let version = await findVersion(app.id)
+	let rejected = null // a rejected version of another number, renamed to SUBMIT_VERSION below
 	if (version) {
 		const state = stateOf(version)
 		console.log(`App Store version ${SUBMIT_VERSION} exists (${version.id}), state ${state}.`)
@@ -485,15 +559,39 @@ async function main() {
 		}
 	} else {
 		console.log(`App Store version ${SUBMIT_VERSION} does not exist yet.`)
-		plan.push(`create App Store version ${SUBMIT_VERSION} (release type ${RELEASE_TYPE})`)
+		rejected = await findRejectedVersion(app.id)
+		if (rejected) {
+			const state = stateOf(rejected)
+			console.log(
+				`Apple still holds version ${rejected.attributes.versionString} (${rejected.id}) in state ${state}, so a new version cannot be created.`,
+			)
+			if (SCHEDULED) {
+				console.log(
+					`Nothing to do: the daily run leaves ${rejected.attributes.versionString} (${state}) alone. To send ${SUBMIT_VERSION}, run the workflow by hand with submit_version ${SUBMIT_VERSION}.`,
+				)
+				return
+			}
+			plan.push(
+				`rename App Store version ${rejected.attributes.versionString} (${state}) to ${SUBMIT_VERSION}; if Apple refuses, cancel its review submission and create ${SUBMIT_VERSION}`,
+			)
+		} else {
+			plan.push(`create App Store version ${SUBMIT_VERSION} (release type ${RELEASE_TYPE})`)
+		}
 	}
 
 	const open = await listOpenSubmissions(app.id)
 	for (const s of open) {
 		console.log(`Review submission ${s.id}: ${s.state}, ${s.versionIds.length} version(s).`)
 	}
+	// UNRESOLVED_ISSUES is a rejected submission: the version needs sending again, so it is not "sent".
 	const sent =
-		version && open.find((s) => s.state !== 'READY_FOR_REVIEW' && s.versionIds.includes(version.id))
+		version &&
+		open.find(
+			(s) =>
+				s.state !== 'READY_FOR_REVIEW' &&
+				s.state !== 'UNRESOLVED_ISSUES' &&
+				s.versionIds.includes(version.id),
+		)
 	if (sent) {
 		console.log(
 			`Nothing to do: review submission ${sent.id} already carries ${SUBMIT_VERSION} (${sent.state}).`,
@@ -502,7 +600,7 @@ async function main() {
 	}
 
 	// Before the build wait, so a bad listing fails in a minute and not after 45.
-	const empty = await emptyListingFields(app.id, version)
+	const empty = await emptyListingFields(app.id, version ?? rejected)
 	if (empty.length) {
 		const message = `The store listing has empty required fields: ${empty.join(', ')}. Fill them in App Store Connect, then run the workflow again with submit_version ${SUBMIT_VERSION}.`
 		if (!DRY_RUN) fail(message, { retryable: false })
@@ -528,6 +626,12 @@ async function main() {
 		console.log(`Build to attach: ${build.attributes.version} (${build.id}).`)
 		plan.push(`attach build ${build.attributes.version} and set the what's-new text`)
 	}
+	const stale = open.filter(
+		(s) => s.state === 'UNRESOLVED_ISSUES' && s.versionIds.includes((version ?? rejected)?.id),
+	)
+	if (stale.length) {
+		plan.push(`resolve the open items of review submission ${stale.map((s) => s.id).join(', ')}`)
+	}
 	plan.push('create (or reuse) the review submission and submit it')
 
 	if (DRY_RUN) {
@@ -540,7 +644,11 @@ async function main() {
 		return
 	}
 
-	version ??= await createVersion(app.id)
+	if (!version) {
+		version = rejected
+			? await reuseRejectedVersion(app.id, rejected, open)
+			: await createVersion(app.id)
+	}
 	await attachBuild(version.id, build.id)
 	console.log(`Attached build ${build.attributes.version}.`)
 	await setWhatsNew(version.id, app, notes)

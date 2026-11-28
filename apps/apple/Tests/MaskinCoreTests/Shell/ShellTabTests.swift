@@ -11,23 +11,27 @@ struct ShellTabTests {
 	}
 
 	@Test func titlesUseTeamAndFlows() {
-		#expect(ShellTab.allCases.map(\.title) == ["For you", "Chats", "Flows", "Items", "Search", "New chat with Chief of Staff"])
+		#expect(ShellTab.allCases.map(\.title) == ["For you", "Chats", "Flows", "Items", "Search", "New"])
+	}
+
+	@Test func theNewTabKeepsTheLongAccessibilityLabel() {
+		#expect(ShellTab.newChatAccessibilityLabel == "New chat with Chief of Staff")
 	}
 
 	@Test func barItemsPerTab() {
 		#expect(ShellTab.forYou.barItems == [.live, .avatar])
-		#expect(ShellTab.chats.barItems == [.search, .display, .new, .avatar])
-		#expect(ShellTab.loops.barItems == [.marketplace, .display, .avatar])
+		#expect(ShellTab.chats.barItems == [.search, .display, .avatar])
+		#expect(ShellTab.loops.barItems == [.marketplace, .display])
 		#expect(ShellTab.objects.barItems == [.search, .display, .avatar])
 	}
 
-	@Test func everyTabHasTheAvatar() {
-		for tab in ShellTab.allCases { #expect(tab.barItems.last == .avatar) }
+	@Test func everyTabButFlowsHasTheAvatar() {
+		for tab in ShellTab.allCases { #expect((tab.barItems.last == .avatar) == (tab != .loops)) }
 	}
 
-	@Test func onlyTeamHasNewAndOnlyForYouHasLive() {
+	@Test func noBarHasNewAndOnlyForYouHasLive() {
 		for tab in ShellTab.allCases {
-			#expect(tab.barItems.contains(.new) == (tab == .chats))
+			#expect(!tab.barItems.contains(.new))
 			#expect(tab.barItems.contains(.live) == (tab == .forYou))
 		}
 	}

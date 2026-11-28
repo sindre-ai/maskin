@@ -113,6 +113,7 @@ import {
 	recordToolCallResponseSize,
 } from './telemetry.js'
 import { TOOL_ALIAS_ARG_RENAMES, TOOL_NAME_ALIASES, type ToolNameAlias } from './tool-aliases.js'
+import { isToolHidden } from './tool-groups.js'
 import { legacyListTools, parseListActorsInclude, tools } from './tools.js'
 import { compactTrigger, triggerSchedule } from './trigger-rows.js'
 import { type OtherTrigger, type WarningChecks, detectTriggerWarnings } from './trigger-warnings.js'
@@ -201,6 +202,12 @@ export interface McpConfig {
 	 * Only a claim: the API checks it before acting on it.
 	 */
 	maskinSessionId?: string
+	/**
+	 * The tool groups the caller holds (see tool-groups.ts). When set, tools/list leaves out the
+	 * tools of every other group; the tools still run when called. Unset lists every tool, as
+	 * before. Set by `routes/mcp.ts` for a tools/list request when MASKIN_TOOL_GROUPS is on.
+	 */
+	toolGroups?: readonly string[]
 }
 
 /**
@@ -723,6 +730,32 @@ function countNonMaskinMcpServers(tools: unknown): number {
 		?.mcpServers
 	if (!mcpServers || typeof mcpServers !== 'object') return 0
 	return Object.keys(mcpServers).filter((name) => name !== 'maskin').length
+}
+
+/**
+ * Whether `actorId` is already a member of `workspaceId`, and with what role.
+ * Returns null when the lookup itself fails, so callers can fall back to the
+ * add-member call and report its error honestly rather than guess.
+ */
+async function lookupWorkspaceMembership(
+	config: McpConfig,
+	workspaceId: string,
+	actorId: string,
+): Promise<{ isMember: boolean; role?: string } | null> {
+	try {
+		const members = (await apiCall(
+			config,
+			'GET',
+			`/api/workspaces/${workspaceId}/members`,
+			undefined,
+			{ workspaceId },
+		)) as Array<{ actorId?: string; role?: string }>
+		if (!Array.isArray(members)) return null
+		const match = members.find((member) => member.actorId === actorId)
+		return match ? { isMember: true, role: match.role } : { isMember: false }
+	} catch {
+		return null
+	}
 }
 
 /**
@@ -3937,7 +3970,9 @@ export function createMcpServer(config: McpConfig) {
 			: definition
 
 		// biome-ignore lint/suspicious/noExplicitAny: handler signature varies by inputSchema presence; the wrapper is a pure pass-through so we forward as-is.
-		return _registerAppTool(s, name, annotatedDefinition, wrappedHandler as any)
+		const registered = _registerAppTool(s, name, annotatedDefinition, wrappedHandler as any)
+		if (config.toolGroups && isToolHidden(name, config.toolGroups)) registered?.disable?.()
+		return registered
 		// biome-ignore lint/suspicious/noExplicitAny: see comment above.
 	}) as any as typeof _registerAppTool
 
@@ -5701,21 +5736,46 @@ export function createMcpServer(config: McpConfig) {
 			// Optionally add the actor to a workspace, mirroring create_actor's
 			// pattern — a membership failure is reported inline rather than thrown,
 			// so a bad workspace_id doesn't discard an otherwise-successful update.
+			//
+			// Adding an existing member is a no-op that only a human admin or owner
+			// may call, so asking for it made every agent caller see a false
+			// partial failure (attach worked, the add-member call came back 403).
+			// Check membership first and only call add-member when the actor is
+			// actually missing, or a different role was requested.
 			let membershipError: string | undefined
 			if (workspace_id) {
-				try {
-					await apiCall(
-						config,
-						'POST',
-						`/api/workspaces/${workspace_id}/members`,
-						{ actor_id: id, role },
-						{ skipWorkspace: true },
-					)
+				const membership = await lookupWorkspaceMembership(config, workspace_id, id)
+				const currentRole = membership?.role
+				const alreadyMember = membership?.isMember === true
+				const roleChangeRequested = alreadyMember && role !== undefined && role !== currentRole
+
+				if (alreadyMember && !roleChangeRequested) {
 					;(actor as Record<string, unknown>).workspace_id = workspace_id
-					;(actor as Record<string, unknown>).role = role
-				} catch (error) {
-					membershipError = String(error)
-					;(actor as Record<string, unknown>).workspace_membership_error = membershipError
+					;(actor as Record<string, unknown>).role = currentRole ?? role
+				} else {
+					try {
+						await apiCall(
+							config,
+							'POST',
+							`/api/workspaces/${workspace_id}/members`,
+							{ actor_id: id, role },
+							{ skipWorkspace: true },
+						)
+						;(actor as Record<string, unknown>).workspace_id = workspace_id
+						;(actor as Record<string, unknown>).role = role
+					} catch (error) {
+						// A refusal is only a failure when the actor is not a member.
+						// If membership exists anyway (already a member, or the insert
+						// lost a race), the outcome the caller asked for is true.
+						const after = await lookupWorkspaceMembership(config, workspace_id, id)
+						if (after?.isMember) {
+							;(actor as Record<string, unknown>).workspace_id = workspace_id
+							;(actor as Record<string, unknown>).role = after.role ?? role
+						} else {
+							membershipError = String(error)
+							;(actor as Record<string, unknown>).workspace_membership_error = membershipError
+						}
+					}
 				}
 			}
 
@@ -6406,7 +6466,9 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const result = await apiCall(config, 'DELETE', `/api/actors/${args.id}`, undefined, {
+			const query =
+				args.chat_message_id === undefined ? '' : `?chat_message_id=${args.chat_message_id}`
+			const result = await apiCall(config, 'DELETE', `/api/actors/${args.id}${query}`, undefined, {
 				workspaceId: args.workspace_id,
 			})
 			return {
@@ -9073,6 +9135,205 @@ export function createMcpServer(config: McpConfig) {
 					'',
 				)
 				return reply(`Not saved. ${detail}`, true)
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'gmail_search_mail',
+		{
+			description: tools.gmail_search_mail.description,
+			inputSchema: tools.gmail_search_mail.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const reply = (text: string, isError = false) => ({
+				_meta: meta('gmail_search_mail', config, args.workspace_id),
+				content: [{ type: 'text' as const, text }],
+				...(isError ? { isError: true } : {}),
+			})
+			try {
+				const params = new URLSearchParams()
+				if (args.account) params.set('account', args.account)
+				if (args.q) params.set('q', args.q)
+				if (args.max_results !== undefined) params.set('max_results', String(args.max_results))
+				if (args.page_token) params.set('page_token', args.page_token)
+				const found = await apiCall(
+					config,
+					'GET',
+					`/api/integrations/gmail/search?${params}`,
+					undefined,
+					{ workspaceId: args.workspace_id },
+				)
+				return reply(JSON.stringify(found))
+			} catch (err) {
+				// The server words every refusal for the agent, so pass it on as a result.
+				if (parseApiErrorStatus(err) === null) throw err
+				const detail = (err instanceof Error ? err.message : String(err)).replace(
+					/^API error \d{3}:\s*/,
+					'',
+				)
+				return reply(`Not searched. ${detail}`, true)
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'gmail_read_thread',
+		{
+			description: tools.gmail_read_thread.description,
+			inputSchema: tools.gmail_read_thread.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const reply = (text: string, isError = false) => ({
+				_meta: meta('gmail_read_thread', config, args.workspace_id),
+				content: [{ type: 'text' as const, text }],
+				...(isError ? { isError: true } : {}),
+			})
+			try {
+				const params = new URLSearchParams({ thread_id: args.thread_id })
+				if (args.account) params.set('account', args.account)
+				const thread = await apiCall(
+					config,
+					'GET',
+					`/api/integrations/gmail/thread?${params}`,
+					undefined,
+					{ workspaceId: args.workspace_id },
+				)
+				return reply(JSON.stringify(thread))
+			} catch (err) {
+				// The server words every refusal for the agent, so pass it on as a result.
+				if (parseApiErrorStatus(err) === null) throw err
+				const detail = (err instanceof Error ? err.message : String(err)).replace(
+					/^API error \d{3}:\s*/,
+					'',
+				)
+				return reply(`Not read. ${detail}`, true)
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'gmail_change_labels',
+		{
+			description: tools.gmail_change_labels.description,
+			inputSchema: tools.gmail_change_labels.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const reply = (text: string, isError = false) => ({
+				_meta: meta('gmail_change_labels', config, args.workspace_id),
+				content: [{ type: 'text' as const, text }],
+				...(isError ? { isError: true } : {}),
+			})
+			try {
+				const changed = await apiCall(
+					config,
+					'POST',
+					'/api/integrations/gmail/thread-labels',
+					{
+						account: args.account,
+						thread_id: args.thread_id,
+						archive: args.archive,
+						add_labels: args.add_labels,
+						remove_labels: args.remove_labels,
+					},
+					{ workspaceId: args.workspace_id },
+				)
+				return reply(JSON.stringify(changed))
+			} catch (err) {
+				// The server words every refusal for the agent, so pass it on as a result.
+				if (parseApiErrorStatus(err) === null) throw err
+				const detail = (err instanceof Error ? err.message : String(err)).replace(
+					/^API error \d{3}:\s*/,
+					'',
+				)
+				return reply(`Not changed. ${detail}`, true)
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'google_calendar_list_calendars',
+		{
+			description: tools.google_calendar_list_calendars.description,
+			inputSchema: tools.google_calendar_list_calendars.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const reply = (text: string, isError = false) => ({
+				_meta: meta('google_calendar_list_calendars', config, args.workspace_id),
+				content: [{ type: 'text' as const, text }],
+				...(isError ? { isError: true } : {}),
+			})
+			try {
+				const params = new URLSearchParams()
+				if (args.account) params.set('account', args.account)
+				if (args.page_token) params.set('page_token', args.page_token)
+				const found = await apiCall(
+					config,
+					'GET',
+					`/api/integrations/google-calendar/calendars?${params}`,
+					undefined,
+					{ workspaceId: args.workspace_id },
+				)
+				return reply(JSON.stringify(found))
+			} catch (err) {
+				// The server words every refusal for the agent, so pass it on as a result.
+				if (parseApiErrorStatus(err) === null) throw err
+				const detail = (err instanceof Error ? err.message : String(err)).replace(
+					/^API error \d{3}:\s*/,
+					'',
+				)
+				return reply(`Not listed. ${detail}`, true)
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'google_calendar_list_events',
+		{
+			description: tools.google_calendar_list_events.description,
+			inputSchema: tools.google_calendar_list_events.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const reply = (text: string, isError = false) => ({
+				_meta: meta('google_calendar_list_events', config, args.workspace_id),
+				content: [{ type: 'text' as const, text }],
+				...(isError ? { isError: true } : {}),
+			})
+			try {
+				const params = new URLSearchParams()
+				if (args.account) params.set('account', args.account)
+				if (args.calendar_id) params.set('calendar_id', args.calendar_id)
+				if (args.time_min) params.set('time_min', args.time_min)
+				if (args.time_max) params.set('time_max', args.time_max)
+				if (args.max_results !== undefined) params.set('max_results', String(args.max_results))
+				if (args.q) params.set('q', args.q)
+				if (args.page_token) params.set('page_token', args.page_token)
+				const found = await apiCall(
+					config,
+					'GET',
+					`/api/integrations/google-calendar/events?${params}`,
+					undefined,
+					{ workspaceId: args.workspace_id },
+				)
+				return reply(JSON.stringify(found))
+			} catch (err) {
+				// The server words every refusal for the agent, so pass it on as a result.
+				if (parseApiErrorStatus(err) === null) throw err
+				const detail = (err instanceof Error ? err.message : String(err)).replace(
+					/^API error \d{3}:\s*/,
+					'',
+				)
+				return reply(`Not listed. ${detail}`, true)
 			}
 		},
 	)

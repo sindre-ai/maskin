@@ -16,7 +16,9 @@ vi.mock('@/lib/command-palette-context', () => ({
 vi.mock('@/lib/theme', () => ({
 	useTheme: () => ({ theme: 'light', resolvedTheme: 'light', setTheme: vi.fn() }),
 }))
-vi.mock('@/lib/api', () => ({ api: { search: { query: vi.fn() } } }))
+vi.mock('@/lib/api', () => ({
+	api: { search: { query: vi.fn(), recordOpen: vi.fn().mockResolvedValue(undefined) } },
+}))
 vi.mock('@/hooks/use-objects', () => ({ useObjects: () => ({ data: [] }) }))
 vi.mock('@/hooks/use-actors', () => ({ useActors: () => ({ data: [] }) }))
 vi.mock('@/hooks/use-conversations', () => ({

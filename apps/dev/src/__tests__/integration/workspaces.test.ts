@@ -14,7 +14,13 @@ import {
 	workspaces as workspacesTable,
 } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
-import { KNOWLEDGE_WIKI_LOOP_NAME, KNOWLEDGE_WIKI_LOOP_SLUG, readLoopViews } from '@maskin/shared'
+import {
+	KNOWLEDGE_WIKI_LOOP_NAME,
+	KNOWLEDGE_WIKI_LOOP_SLUG,
+	WORKSPACE_IMPROVEMENTS_LOOP_NAME,
+	WORKSPACE_IMPROVEMENTS_LOOP_SLUG,
+	readLoopViews,
+} from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
 import { onTestFinished } from 'vitest'
@@ -91,13 +97,7 @@ function createMemoryStorage(): StorageProvider {
 	}
 }
 
-const DEFAULT_AGENT_NAMES = [
-	'Workspace Coach',
-	'Chief of Staff',
-	'Driver',
-	'Signal Analyst',
-	'Researcher',
-]
+const DEFAULT_AGENT_NAMES = ['Workspace Coach', 'Chief of Staff', 'Signal Analyst', 'Researcher']
 
 function createApp(
 	agentStorage = new AgentStorageManager(createMemoryStorage(), db),
@@ -284,7 +284,7 @@ describe('Workspaces Integration', () => {
 		it('reports a human member count per workspace, excluding seeded agents', async () => {
 			const app = createApp()
 
-			// Creating a workspace also seeds five default agent actors as members.
+			// Creating a workspace also seeds four default agent actors as members.
 			// The count is about people, so a solo workspace must still read 1.
 			const created = await app.request(
 				jsonRequest('POST', '/api/workspaces', { name: 'Counted WS' }),
@@ -298,10 +298,9 @@ describe('Workspaces Integration', () => {
 			expect(soloRow.memberCount).toBe(1)
 
 			// Add a second human — the count moves; adding an agent would not.
-			// A trial workspace seats exactly one human (SEAT_CAPS.trial), so the
-			// add would be rejected on the seat cap and the count would never
-			// move. Raise the plan first, and assert the add actually landed —
-			// otherwise a rejected member reads here as a wrong count.
+			// Raise the plan first so the add is on a paid seat, then assert the
+			// add actually landed — otherwise a rejected member reads here as a
+			// wrong count.
 			await setWorkspacePlan(db, workspace.id, 'pro')
 			const teammate = await insertActor(db)
 			// People can't be added by id any more; seed the membership directly.
@@ -1064,11 +1063,11 @@ describe('Workspaces Integration', () => {
 			const listRes = await app.request(jsonGet(`/api/workspaces/${ws.id}/members`))
 			expect(listRes.status).toBe(200)
 			const members = await listRes.json()
-			// Creator (owner) + all 5 default agents (seeded atomically inside the
-			// create transaction) + the newly-added member = 7.
-			expect(members).toHaveLength(7)
+			// Creator (owner) + all 4 default agents (seeded atomically inside the
+			// create transaction) + the newly-added member = 6.
+			expect(members).toHaveLength(6)
 			const roles = members.map((m: { role: string }) => m.role).sort()
-			expect(roles).toEqual(['member', 'member', 'member', 'member', 'member', 'member', 'owner'])
+			expect(roles).toEqual(['member', 'member', 'member', 'member', 'member', 'owner'])
 		})
 	})
 
@@ -1418,7 +1417,7 @@ describe('Workspaces Integration', () => {
 
 			// The shared "Maskin way of working" skill is attached to every default
 			// agent (mirrored from the Template workspace) — Coach, Chief of Staff,
-			// Driver, Signal Analyst, Researcher.
+			// Signal Analyst, Researcher.
 			const [wayOfWorkingSkill] = await db
 				.select({ id: workspaceSkills.id })
 				.from(workspaceSkills)
@@ -1435,7 +1434,7 @@ describe('Workspaces Integration', () => {
 				.select({ actorId: agentSkills.actorId })
 				.from(agentSkills)
 				.where(eq(agentSkills.workspaceSkillId, wayOfWorkingSkillId))
-			expect(wayOfWorkingAttachRows).toHaveLength(5)
+			expect(wayOfWorkingAttachRows).toHaveLength(4)
 
 			const triggerRows = await db
 				.select({ name: triggers.name })
@@ -1447,8 +1446,10 @@ describe('Workspaces Integration', () => {
 			// "Daily briefing" cron, and to 16 with its hourly "For You — curate
 			// the list" cron, then down to 12 when the Bet discovery loop's four
 			// triggers were dropped from the seed, then to 10 when the Knowledge Wiki's two
-			// moved out of the seed into the marketplace install.
-			expect(triggerRows).toHaveLength(10)
+			// moved out of the seed into the marketplace install, to 9 when the
+			// Driver's daily sweep left with the Driver agent, then to 5 when the four
+			// Workspace improvements triggers moved into its marketplace install.
+			expect(triggerRows).toHaveLength(5)
 		})
 
 		it('gives the Researcher the cited deep research mode and the deep-research-subagents skill', async () => {
@@ -1486,7 +1487,7 @@ describe('Workspaces Integration', () => {
 			expect(attachRows.map((r) => r.actorId)).toEqual([researcher?.id])
 		})
 
-		it('seeds the Workspace improvements loop wired to its triggers, and no Bet discovery loop or Knowledge Wiki copy', async () => {
+		it('seeds no hand-made loops: Workspace improvements and Knowledge Wiki come from the marketplace', async () => {
 			const app = createApp()
 
 			const createRes = await app.request(
@@ -1494,32 +1495,12 @@ describe('Workspaces Integration', () => {
 			)
 			const ws = await createRes.json()
 
-			// Seeded by provisionWorkspace during the request — see above.
+			// No marketplace seeded in this test, so nothing is installed and nothing is seeded by hand.
 			const loopRows = await db
-				.select({ id: objects.id, title: objects.title, metadata: objects.metadata })
+				.select({ id: objects.id, title: objects.title })
 				.from(objects)
 				.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'loop')))
-
-			expect(loopRows.map((r) => r.title).sort()).toEqual(['Workspace improvements'])
-
-			const triggerRows = await db
-				.select({ id: triggers.id, name: triggers.name })
-				.from(triggers)
-				.where(eq(triggers.workspaceId, ws.id))
-			const triggerIdByName = new Map(triggerRows.map((t) => [t.name, t.id]))
-
-			const workspaceImprovementsLoop = loopRows.find((r) => r.title === 'Workspace improvements')
-			const workspaceImprovementsTriggerIds =
-				(workspaceImprovementsLoop?.metadata as { trigger_ids?: string[] } | null)?.trigger_ids ??
-				[]
-			expect(new Set(workspaceImprovementsTriggerIds)).toEqual(
-				new Set([
-					triggerIdByName.get('Workspace Coach — daily sweep'),
-					triggerIdByName.get('Workspace Coach — session completed (onboarding)'),
-					triggerIdByName.get('Cluster & recommend'),
-					triggerIdByName.get('Capture outcome'),
-				]),
-			)
+			expect(loopRows).toEqual([])
 		})
 
 		describe('Knowledge Wiki marketplace install', () => {
@@ -1619,6 +1600,91 @@ describe('Workspaces Integration', () => {
 			})
 		})
 
+		describe('Workspace improvements marketplace install', () => {
+			it("installs it into a new workspace on the workspace's own Coach and Chief of Staff, with no second agent", async () => {
+				onTestFinished(async () => {
+					await sql`TRUNCATE marketplace_loops, marketplace_loop_items CASCADE`
+				})
+				await sql`TRUNCATE marketplace_loops, marketplace_loop_items CASCADE`
+				await seedMarketplaceLoops(db)
+
+				const storage = createMemoryStorage()
+				const agentStorage = new AgentStorageManager(storage, db)
+				const app = createApp(agentStorage, storage)
+
+				const createRes = await app.request(
+					jsonRequest('POST', '/api/workspaces', { name: 'Improvements Install' }),
+				)
+				expect(createRes.status).toBe(201)
+				const ws = await createRes.json()
+
+				const installs = await db
+					.select({ id: installedLoops.id, objectId: installedLoops.objectId })
+					.from(installedLoops)
+					.innerJoin(marketplaceLoops, eq(installedLoops.sourceLoopId, marketplaceLoops.id))
+					.where(
+						and(
+							eq(installedLoops.workspaceId, ws.id),
+							eq(marketplaceLoops.slug, WORKSPACE_IMPROVEMENTS_LOOP_SLUG),
+						),
+					)
+				expect(installs).toHaveLength(1)
+
+				// One flow with that name, linked to the marketplace, with its Results tab.
+				const flows = await db
+					.select({ id: objects.id, metadata: objects.metadata })
+					.from(objects)
+					.where(
+						and(
+							eq(objects.workspaceId, ws.id),
+							eq(objects.type, 'loop'),
+							eq(objects.title, WORKSPACE_IMPROVEMENTS_LOOP_NAME),
+						),
+					)
+				expect(flows).toHaveLength(1)
+				expect(flows[0]?.id).toBe(installs[0]?.objectId)
+				expect(readLoopViews(flows[0]?.metadata ?? {}).map((v) => v.name)).toEqual(['Results'])
+
+				// Its two triggers run on the workspace's own agents, and no agent was cloned.
+				const members = await db
+					.select({ id: actors.id, name: actors.name })
+					.from(workspaceMembers)
+					.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+					.where(eq(workspaceMembers.workspaceId, ws.id))
+				const idOf = (name: string) => {
+					const rows = members.filter((m) => m.name === name)
+					expect(rows).toHaveLength(1)
+					return rows[0]?.id
+				}
+				const flowTriggers = (
+					await db
+						.select({
+							name: triggers.name,
+							targetActorId: triggers.targetActorId,
+							metadata: triggers.metadata,
+						})
+						.from(triggers)
+						.where(eq(triggers.workspaceId, ws.id))
+				).filter(
+					(t) =>
+						(t.metadata as { installed_loop_id?: string } | null)?.installed_loop_id ===
+						installs[0]?.id,
+				)
+				expect(Object.fromEntries(flowTriggers.map((t) => [t.name, t.targetActorId]))).toEqual({
+					'Coach sweep (Mon, Wed, Fri 23:15 UTC)': idOf('Workspace Coach'),
+					'Owner heartbeat (daily 08:10 UTC)': idOf('Chief of Staff'),
+				})
+
+				// Running the bootstrap again installs nothing new.
+				await installDefaultMarketplaceLoops(db, agentStorage, storage, ws.id, getTestActorId())
+				const again = await db
+					.select({ id: installedLoops.id })
+					.from(installedLoops)
+					.where(eq(installedLoops.workspaceId, ws.id))
+				expect(again.filter((r) => r.id === installs[0]?.id)).toHaveLength(1)
+			})
+		})
+
 		it('re-invoking bootstrapDefaultAgents inserts zero new loop objects', async () => {
 			const app = createApp()
 
@@ -1636,7 +1702,8 @@ describe('Workspaces Integration', () => {
 				.from(objects)
 				.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'loop')))
 
-			expect(loopRows).toHaveLength(1)
+			// No flow is seeded by the bootstrap any more: Workspace improvements arrives as a marketplace install.
+			expect(loopRows).toHaveLength(0)
 		})
 
 		it('leaves three pre-existing workspaces byte-identical when a new workspace is seeded', async () => {

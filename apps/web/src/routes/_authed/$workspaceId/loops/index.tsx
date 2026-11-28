@@ -27,6 +27,7 @@ import { useCanWrite } from '@/hooks/use-can-write'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useLoops } from '@/hooks/use-loops'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { sortByRank, usePageSearchRank } from '@/hooks/use-page-search-rank'
 import { usePlanUsage } from '@/hooks/use-plan-usage'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import { useTriggers } from '@/hooks/use-triggers'
@@ -51,7 +52,7 @@ const DEFAULT_ORDER: 'asc' | 'desc' = 'desc'
 const LOOP_ORDER_COLUMNS = [
 	{ id: 'updatedAt', label: 'Last activity', canHide: false },
 	{ id: 'name', label: 'Name', canHide: false },
-	{ id: 'inProgressCount', label: 'In progress', canHide: false },
+	{ id: 'inProgressCount', label: 'Open', canHide: false },
 ]
 
 type FlowsView = 'cards' | 'list'
@@ -214,15 +215,21 @@ function LoopsRoute() {
 
 	const hasLoops = sortedLoops.length > 0
 	const words = useMemo(() => query.trim().toLowerCase().split(/\s+/).filter(Boolean), [query])
+	// While words are typed the server's order wins over the Display sort, across sections too.
+	const rank = usePageSearchRank(workspaceId, query, 'loop')
 	const visibleLoops = useMemo(
 		() =>
-			sortedLoops.filter(
-				(loop) =>
-					matchesTab(loop, tab) &&
-					(areaFilter === undefined || (loop.tags[0] ?? NO_AREA) === areaFilter) &&
-					matchesQuery(loop, words),
+			sortByRank(
+				sortedLoops.filter(
+					(loop) =>
+						matchesTab(loop, tab) &&
+						(areaFilter === undefined || (loop.tags[0] ?? NO_AREA) === areaFilter) &&
+						matchesQuery(loop, words),
+				),
+				rank,
+				(loop) => loop.id,
 			),
-		[sortedLoops, tab, areaFilter, words],
+		[sortedLoops, tab, areaFilter, words, rank],
 	)
 
 	// Per-tag flow counts and the tag order (A to Z, untagged last), shared by the
@@ -293,6 +300,7 @@ function LoopsRoute() {
 	// business unit, ...), A to Z, untagged last. With no tags anywhere the list
 	// stays one flat run with no headers.
 	const loopGroups = useMemo(() => {
+		if (rank) return [{ label: '', items: visibleLoops }]
 		const byTag = new Map<string, LoopSummary[]>()
 		for (const loop of visibleLoops) {
 			const key = loop.tags[0] ?? ''
@@ -304,7 +312,7 @@ function LoopsRoute() {
 				return a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true })
 			})
 			.map(([label, items]) => ({ label, items }))
-	}, [visibleLoops])
+	}, [visibleLoops, rank])
 	const hasTaggedLoops = loopGroups.some((g) => g.label)
 
 	return (

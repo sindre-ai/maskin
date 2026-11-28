@@ -76,6 +76,7 @@ import {
 	priceIdsFromSubscription,
 	readStripeEnv,
 	resolveWorkspaceIdFromEvent,
+	seatsForSubscription,
 	verifyStripeWebhook,
 } from '../lib/stripe'
 import type { StripeEnv } from '../lib/stripe'
@@ -583,6 +584,11 @@ async function applyEvent(
 					isAddonPrice,
 				})
 				planMutated = true
+				// Per-seat plans: the subscription's line items are the truth for
+				// how many seats are paid for, and the seat cap reads this number.
+				// Null on a legacy USD or old DKK price, which keeps its old cap
+				// and must not have a seats value written for it.
+				const seats = seatsForSubscription(sub, stripeEnv)
 				next = {
 					...next,
 					plan: matched?.plan ?? next.plan,
@@ -598,6 +604,7 @@ async function applyEvent(
 						: next.hard_cap_usd_cents,
 					period_start: sub.current_period_start ?? next.period_start,
 					period_end: sub.current_period_end ?? next.period_end,
+					...(seats !== null ? { seats } : {}),
 				}
 				break
 			}
@@ -647,6 +654,9 @@ async function applyEvent(
 					...(canceled ?? next),
 					hard_cap_usd_cents: null,
 					period_start: sub.canceled_at ?? next.period_start,
+					// No subscription, no paid seats. The workspace drops to Free
+					// (cap 3) or, if entitled, Enterprise (unlimited).
+					seats: undefined,
 				}
 				break
 			}

@@ -50,6 +50,10 @@ const VALID_ENV = {
 	STRIPE_PRICE_PRO_DKK: 'price_pro_dkk',
 	STRIPE_PRICE_TEAM_DKK: 'price_team_dkk',
 	STRIPE_PRICE_ULTRA_DKK: 'price_ultra_dkk',
+	STRIPE_PRICE_STARTER_SEAT_DKK: 'price_starter_seat',
+	STRIPE_PRICE_PRO_SEAT_DKK: 'price_pro_seat',
+	STRIPE_PRICE_ULTRA_BASE_DKK: 'price_ultra_base',
+	STRIPE_PRICE_ULTRA_SEAT_DKK: 'price_ultra_seat',
 	STRIPE_PRICE_CREDITS_CUSTOM: 'price_credits_custom_test',
 	MASKIN_PRO_HARD_CAP_USD_CENTS: PRO_ENV_SENTINEL,
 	MASKIN_TEAM_HARD_CAP_USD_CENTS: TEAM_ENV_SENTINEL,
@@ -166,7 +170,7 @@ describe('POST /api/billing/checkout', () => {
 				'POST',
 				'/api/billing/checkout',
 				{
-					plan: 'team',
+					plan: 'ultra',
 					success_url: 'https://app.test/success',
 					cancel_url: 'https://app.test/cancel',
 				},
@@ -176,17 +180,16 @@ describe('POST /api/billing/checkout', () => {
 
 		expect(createCheckoutSession).toHaveBeenCalledWith(
 			expect.anything(),
-			expect.objectContaining({ plan: 'team', existingCustomerId: 'cus_99' }),
+			expect.objectContaining({ plan: 'ultra', existingCustomerId: 'cus_99' }),
 			expect.anything(),
 		)
 	})
 
 	it.each([
-		['starter', 'price_starter_dkk'],
-		['pro', 'price_pro_dkk'],
-		['team', 'price_team_dkk'],
-		['ultra', 'price_ultra_dkk'],
-	])('starts checkout for %s with the kroner price ids from env', async (plan, priceId) => {
+		['starter', 'price_starter_seat'],
+		['pro', 'price_pro_seat'],
+		['ultra', 'price_ultra_base'],
+	])('starts checkout for %s with the per-seat price ids from env', async (plan, priceId) => {
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
 		mockResults.select = [{ id: workspaceId, ...OWNER_CALLER, settings: {} }]
@@ -214,15 +217,127 @@ describe('POST /api/billing/checkout', () => {
 			session_id: `cs_test_${plan}`,
 		})
 		// The route hands the env it read to createCheckoutSession, which picks the
-		// kroner price for the plan: the id for this plan must be the one from env.
-		const stripeEnv = vi.mocked(createCheckoutSession).mock.calls[0]?.[2]
-		expect(stripeEnv?.priceDkk[plan as 'starter' | 'pro' | 'team' | 'ultra']).toBe(priceId)
+		// per-seat price for the plan: the id for this plan must be the one from env.
+		const seatEnv = vi.mocked(createCheckoutSession).mock.calls[0]?.[2]?.priceSeat
+		const got = plan === 'ultra' ? seatEnv?.ultraBase : seatEnv?.[plan as 'starter' | 'pro']
+		expect(got).toBe(priceId)
 		expect(createCheckoutSession).toHaveBeenCalledWith(
 			expect.anything(),
 			expect.objectContaining({ workspaceId, plan }),
 			expect.anything(),
 		)
 	})
+
+	it('rejects Team, which is no longer sold', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.select = [{ id: workspaceId, ...OWNER_CALLER, settings: {} }]
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/checkout',
+				{
+					plan: 'team',
+					success_url: 'https://app.test/success',
+					cancel_url: 'https://app.test/cancel',
+				},
+				{ 'X-Workspace-Id': workspaceId },
+			),
+		)
+
+		expect(res.status).toBe(400)
+		expect(createCheckoutSession).not.toHaveBeenCalled()
+	})
+
+	it('defaults seat_count to the current human member count, floored at 1', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [
+			[{ id: workspaceId, settings: {} }], // workspace
+			[OWNER_CALLER], // admin check
+			[{ n: 4 }], // human member count
+		]
+		vi.mocked(createCheckoutSession).mockResolvedValue({
+			id: 'cs_default',
+			url: 'https://checkout.stripe.com/c/cs_default',
+		} as Awaited<ReturnType<typeof createCheckoutSession>>)
+
+		await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/checkout',
+				{
+					plan: 'pro',
+					success_url: 'https://app.test/success',
+					cancel_url: 'https://app.test/cancel',
+				},
+				{ 'X-Workspace-Id': workspaceId },
+			),
+		)
+
+		expect(createCheckoutSession).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({ plan: 'pro', seatCount: 4 }),
+			expect.anything(),
+		)
+	})
+
+	it('uses an explicit seat_count when supplied', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.select = [{ id: workspaceId, ...OWNER_CALLER, settings: {} }]
+		vi.mocked(createCheckoutSession).mockResolvedValue({
+			id: 'cs_explicit',
+			url: 'https://checkout.stripe.com/c/cs_explicit',
+		} as Awaited<ReturnType<typeof createCheckoutSession>>)
+
+		await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/checkout',
+				{
+					plan: 'ultra',
+					seat_count: 3,
+					success_url: 'https://app.test/success',
+					cancel_url: 'https://app.test/cancel',
+				},
+				{ 'X-Workspace-Id': workspaceId },
+			),
+		)
+
+		expect(createCheckoutSession).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({ plan: 'ultra', seatCount: 3 }),
+			expect.anything(),
+		)
+	})
+
+	it.each([[0], [101], [1.5], ['3']])(
+		'rejects seat_count %s with 400 and never calls Stripe',
+		async (seat_count) => {
+			const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+			const workspaceId = randomUUID()
+			mockResults.select = [{ id: workspaceId, ...OWNER_CALLER, settings: {} }]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/billing/checkout',
+					{
+						plan: 'pro',
+						seat_count,
+						success_url: 'https://app.test/success',
+						cancel_url: 'https://app.test/cancel',
+					},
+					{ 'X-Workspace-Id': workspaceId },
+				),
+			)
+
+			expect(res.status).toBe(400)
+			expect(createCheckoutSession).not.toHaveBeenCalled()
+		},
+	)
 
 	it('returns 404 when workspace is missing', async () => {
 		const { app } = createTestApp(billingRoutes, '/api/billing')

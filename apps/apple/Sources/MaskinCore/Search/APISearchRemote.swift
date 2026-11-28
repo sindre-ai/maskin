@@ -2,31 +2,86 @@ import Foundation
 import MaskinAPI
 import OpenAPIRuntime
 
-/// Production `SearchRemote`: the generated client behind a private adapter. Responses are
+/// Production `SearchRemote`. The server search (`GET /api/search`) goes through a plain
+/// `URLSession`, not the generated client: the checked-in client is older than that route (same
+/// reason as `APIChatSearch`). Files and the @ menu's people use the generated client. Responses are
 /// re-decoded into the small DTOs below so generated payload types never leak.
-public struct APISearchRemote: SearchRemote {
+public struct APISearchRemote: SearchRemote, PageSearchRanking {
 	private let client: Client
+	private let baseURL: URL
+	private let clientSource: String
 	private let credentials: MaskinCredentialsProvider
+	private let session: URLSession
+	/// The most rows the server search returns (`limit` in its query).
+	private static let maxLimit = 150
+	/// A search hides archived rows unless Archived is asked for. The list pages show every row, so
+	/// all five status groups go along (the web's STATUS_GROUP_KEYS).
+	private static let everyStatus = ["needs_you", "in_progress", "new", "done", "archived"]
 
-	public init(client: Client, credentials: @escaping MaskinCredentialsProvider) {
+	public init(
+		client: Client, baseURL: URL, clientSource: String, credentials: @escaping MaskinCredentialsProvider,
+		session: URLSession = .shared
+	) {
 		self.client = client
+		self.baseURL = baseURL
+		self.clientSource = clientSource
 		self.credentials = credentials
+		self.session = session
 	}
 
 	private func workspaceHeader() async -> String { await credentials()?.workspaceId ?? "" }
 
-	public func searchObjects(query: String, limit: Int) async throws -> [SearchResult] {
-		let workspace = await workspaceHeader()
+	public func search(query: String, participants: [String], limit: Int) async throws -> SearchAnswer {
+		let request = await makeRequest(query: query, participants: participants, limit: limit)
+		return try await answer(for: request)
+	}
+
+	/// The Agents and Flows pages' order: the same server search for one type, with every status
+	/// asked for (the pages list archived rows too), best match first. Only the ids are kept.
+	public func rankedIDs(query: String, type: PageSearchType) async throws -> [String] {
+		let request = await makeRequest(
+			query: query, participants: [], limit: Self.maxLimit, types: [type.rawValue], statuses: Self.everyStatus)
+		return try await answer(for: request).results.map(\.entityId)
+	}
+
+	private func answer(for request: URLRequest) async throws -> SearchAnswer {
+		let data: Data
+		let status: Int
 		do {
-			let output = try await client.get_sol_api_sol_objects_sol_search(
-				.init(
-					query: .init(q: query, limit: min(limit, ServerLimits.maxPageSize)),
-					headers: .init(x_hyphen_workspace_hyphen_id: workspace)))
-			guard case .ok(let ok) = output else { throw SearchError("Search failed.") }
-			return try Self.convert(ok.body.json, as: [ObjectHit].self).map(\.result)
+			let (body, response) = try await session.data(for: request)
+			data = body
+			status = (response as? HTTPURLResponse)?.statusCode ?? 0
 		} catch {
+			if RemoteFailure.isCancellation(error) { throw error }
 			throw RemoteFailure.searchError(error)
 		}
+		guard status == 200 else { throw SearchError("Search failed.") }
+		return try Self.decode(data)
+	}
+
+	/// Built apart from sending so tests can read the URL and headers. Unless asked for, no types or
+	/// statuses are sent, so the server applies its defaults, the same as the web Search page
+	/// (every group, archived chats stay out).
+	func makeRequest(
+		query: String, participants: [String], limit: Int, types: [String] = [], statuses: [String] = []
+	) async -> URLRequest {
+		let url = baseURL.appendingPathComponent("api/search")
+		var parts = URLComponents(url: url, resolvingAgainstBaseURL: false)
+		var items = [URLQueryItem(name: "limit", value: String(min(limit, Self.maxLimit)))]
+		if !query.isEmpty { items.append(URLQueryItem(name: "q", value: query)) }
+		if !types.isEmpty { items.append(URLQueryItem(name: "types", value: types.joined(separator: ","))) }
+		if !statuses.isEmpty { items.append(URLQueryItem(name: "statuses", value: statuses.joined(separator: ","))) }
+		if !participants.isEmpty { items.append(URLQueryItem(name: "participants", value: participants.joined(separator: ","))) }
+		parts?.queryItems = items
+		var request = URLRequest(url: parts?.url ?? url)
+		request.httpMethod = "GET"
+		request.setValue("application/json", forHTTPHeaderField: "Accept")
+		request.setValue(clientSource, forHTTPHeaderField: "X-Client-Source")
+		if let creds = await credentials() {
+			request.setValue("Bearer \(creds.apiKey)", forHTTPHeaderField: "Authorization")
+			if let workspaceId = creds.workspaceId { request.setValue(workspaceId, forHTTPHeaderField: "X-Workspace-Id") }
+		}
+		return request
 	}
 
 	public func searchFiles(query: String, limit: Int) async throws -> [SearchResult] {
@@ -38,38 +93,6 @@ public struct APISearchRemote: SearchRemote {
 					headers: .init(x_hyphen_workspace_hyphen_id: workspace)))
 			guard case .ok(let ok) = output else { throw SearchError("Search failed.") }
 			return try Self.convert(ok.body.json, as: [FileHit].self).map(\.result)
-		} catch {
-			throw RemoteFailure.searchError(error)
-		}
-	}
-
-	public func conversations() async throws -> [SearchResult] {
-		let workspace = await workspaceHeader()
-		do {
-			return try await ServerLimits.fetchAll(maxPages: 3) { limit, offset in
-				let output = try await client.get_sol_api_sol_conversations(
-					.init(
-						query: .init(limit: limit, offset: offset),
-						headers: .init(x_hyphen_workspace_hyphen_id: workspace)))
-				guard case .ok(let ok) = output else { throw SearchError("Search failed.") }
-				return try Self.convert(ok.body.json, as: ConversationPageDTO.self).conversations.map(\.result)
-			}
-		} catch {
-			throw RemoteFailure.searchError(error)
-		}
-	}
-
-	public func agents() async throws -> [SearchResult] {
-		let workspace = await workspaceHeader()
-		do {
-			return try await ServerLimits.fetchAll(maxPages: 5) { limit, offset in
-				let output = try await client.get_sol_api_sol_actors(
-					.init(
-						query: .init(limit: limit, offset: offset),
-						headers: .init(x_hyphen_workspace_hyphen_id: workspace)))
-				guard case .ok(let ok) = output else { throw SearchError("Search failed.") }
-				return try Self.convert(ok.body.json, as: [ActorHit].self).filter { $0.type == "agent" }.map(\.result)
-			}
 		} catch {
 			throw RemoteFailure.searchError(error)
 		}
@@ -93,17 +116,14 @@ public struct APISearchRemote: SearchRemote {
 		}
 	}
 
-	public func flows() async throws -> [SearchResult] {
-		let workspace = await workspaceHeader()
-		do {
-			return try await APILoopsSource(client: client, workspaceID: workspace).loops().map { loop in
-				SearchResult(
-					kind: .object, entityId: loop.id, title: loop.displayName, subtitle: loop.pill.label,
-					snippet: loop.content ?? "", detail: "loop", updatedAt: loop.updatedAt)
-			}
-		} catch {
-			throw RemoteFailure.searchError(error)
+	/// Maps the server's rows onto results, keeping the server's order. People and automations have no
+	/// screen on the phone, so they are left out.
+	static func decode(_ data: Data) throws -> SearchAnswer {
+		let response: ServerSearchDTO
+		do { response = try JSONDecoder().decode(ServerSearchDTO.self, from: data) } catch {
+			throw SearchError("Maskin sent a reply this version can't read. Update the app and try again.")
 		}
+		return SearchAnswer(results: response.results.compactMap(\.result), isPartial: !(response.partial ?? []).isEmpty)
 	}
 
 	static func convert<T: Decodable>(_ value: some Encodable, as: T.Type) throws -> T {
@@ -113,21 +133,39 @@ public struct APISearchRemote: SearchRemote {
 
 // MARK: - DTOs
 
-private struct ObjectHit: Decodable {
-	var id: String
-	var type: String
-	var title: String?
-	var content: String?
-	var status: String
-	var updatedAt: String?
+private struct ServerSearchDTO: Decodable {
+	struct Row: Decodable {
+		var id: String
+		var group: String
+		var type: String
+		var title: String
+		var sub: String?
+		var snippet: String?
+		var status: String
+		var updatedAt: String?
 
-	var result: SearchResult {
-		let trimmed = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-		return SearchResult(
-			kind: .object, entityId: id, title: trimmed.isEmpty ? "Untitled" : trimmed,
-			subtitle: status.replacingOccurrences(of: "_", with: " "), snippet: content ?? "",
-			detail: type, updatedAt: updatedAt.flatMap(ISODate.parse))
+		var result: SearchResult? {
+			let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+			let date = updatedAt.flatMap(ISODate.parse)
+			let humanStatus = status.replacingOccurrences(of: "_", with: " ")
+			switch group {
+			case "chats":
+				return SearchResult(
+					kind: .chat, entityId: id, title: trimmed.isEmpty ? "Untitled chat" : trimmed, subtitle: sub ?? "",
+					snippet: snippet ?? "", updatedAt: date)
+			case "agents":
+				return SearchResult(kind: .agent, entityId: id, title: trimmed, snippet: snippet ?? "", updatedAt: date)
+			case "loops", "objects":
+				return SearchResult(
+					kind: .object, entityId: id, title: trimmed.isEmpty ? "Untitled" : trimmed, subtitle: humanStatus,
+					snippet: snippet ?? "", detail: group == "loops" ? "loop" : type, updatedAt: date)
+			default:
+				return nil
+			}
+		}
 	}
+	var results: [Row]
+	var partial: [String]?
 }
 
 private struct FileHit: Decodable {
@@ -144,41 +182,10 @@ private struct FileHit: Decodable {
 	}
 }
 
-private struct ConversationPageDTO: Decodable {
-	struct Participant: Decodable {
-		var actorId: String
-		var actorName: String
-	}
-	struct Row: Decodable {
-		var id: String
-		var title: String
-		var snippet: String?
-		var lastMessageAt: String?
-		/// The server's own key.
-		var unread_count: Int?
-		var participants: [Participant]
-
-		var result: SearchResult {
-			let people = participants.map(\.actorName).joined(separator: ", ")
-			return SearchResult(
-				kind: .chat, entityId: id, title: title.isEmpty ? "Untitled chat" : title,
-				subtitle: people, snippet: snippet ?? "", updatedAt: lastMessageAt.flatMap(ISODate.parse),
-				participantIds: participants.map(\.actorId), isUnread: (unread_count ?? 0) > 0,
-				hasPlaceholderTitle: ConversationSummary.isPlaceholder(title))
-		}
-	}
-	var conversations: [Row]
-}
-
 private struct ActorHit: Decodable {
 	var id: String
 	var type: String
 	var name: String
-	var description: String?
-
-	var result: SearchResult {
-		SearchResult(kind: .agent, entityId: id, title: name, snippet: description ?? "")
-	}
 
 	/// Nil for anything that is neither a person nor an agent.
 	var person: SearchPerson? {

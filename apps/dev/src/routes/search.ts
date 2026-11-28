@@ -3,6 +3,7 @@ import type { Database } from '@maskin/db'
 import {
 	STATUS_GROUP_KEYS,
 	parseChatSearch,
+	searchOpenBodySchema,
 	searchQuerySchema,
 	searchResponseSchema,
 } from '@maskin/shared'
@@ -10,6 +11,7 @@ import { validationFailureHook } from '../lib/errors'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { loadAttentionChatIds } from '../services/chat-attention'
 import { SEARCH_SOURCES, runSearch } from '../services/search'
+import { recordSearchOpen } from '../services/search-opens'
 
 type Env = {
 	Variables: {
@@ -89,5 +91,37 @@ app.openapi(searchRoute, (async (c) => {
 	const response = await runSearch(db, { workspaceId, callerId }, query)
 	return c.json(response, 200)
 }) as RouteHandler<typeof searchRoute, Env>)
+
+const openRoute = createRoute({
+	method: 'post',
+	path: '/opens',
+	tags: ['Search'],
+	summary: 'Record that the caller opened a search result',
+	description:
+		'Call it when a person opens a result from a search (the launcher, the search page or the ' +
+		"phone search tab), never for a page view outside search. Opens count towards the caller's " +
+		'own ranking only: a result they opened often and lately ranks higher for a typed query, ' +
+		'after the match tier. The count halves every 14 days.',
+	request: {
+		headers: workspaceIdHeader,
+		body: { content: { 'application/json': { schema: searchOpenBodySchema } } },
+	},
+	responses: {
+		204: { description: 'Recorded' },
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid body',
+		},
+	},
+})
+
+app.openapi(openRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { entity_id: entityId } = c.req.valid('json')
+	await recordSearchOpen(db, { workspaceId, actorId, entityId })
+	return c.body(null, 204)
+}) as RouteHandler<typeof openRoute, Env>)
 
 export default app

@@ -28,6 +28,12 @@ import {
 	storeAttachmentFile,
 } from '../lib/integrations/providers/gmail/attachment'
 import {
+	GmailMailError,
+	changeThreadLabels,
+	readThread,
+	searchThreads,
+} from '../lib/integrations/providers/gmail/mail'
+import {
 	GmailSendError,
 	type OutgoingEmail,
 	type Recipient,
@@ -186,7 +192,11 @@ async function readGmailCredential(
 	db: Database,
 	workspaceId: string,
 	actorId: string,
-	target: 'gmail:send' | 'gmail:read-attachment' = 'gmail:send',
+	target:
+		| 'gmail:send'
+		| 'gmail:read-attachment'
+		| 'gmail:read-mail'
+		| 'gmail:modify-labels' = 'gmail:send',
 	account?: string,
 ) {
 	const ctx = readContextFor(actorId, target)
@@ -205,7 +215,10 @@ async function readGmailCredential(
 	let usable = false
 	for (const row of rows) {
 		const access = (await resolveAgentAccess(db, workspaceId, row.id, actorId)) ?? 'none'
-		const ok = target === 'gmail:send' ? canWrite(access) : canRead(access)
+		const ok =
+			target === 'gmail:send' || target === 'gmail:modify-labels'
+				? canWrite(access)
+				: canRead(access)
 		if (!ok || !row.externalId) continue
 		allowed.push(row.externalId)
 		if (row.id === chosen?.id) usable = true
@@ -1126,6 +1139,330 @@ app.openapi(saveAttachmentRoute, async (c) => {
 		if (!(err instanceof GmailAttachmentError)) throw err
 		logger.warn('Gmail attachment save failed', { workspaceId, code: err.code })
 		const f = attachmentFailureFor(err)
+		return c.json(f.body, f.status)
+	}
+})
+
+// ---- read, search and tidy mail through the normal Gmail API ------------------------------
+//
+// Google's hosted Gmail tool server can refuse our sign-in (401) while the normal API accepts
+// the same token. These three tools do search, read one thread and archive or label it there.
+// Reading needs "Read"; archiving or labelling needs "Read & write". Nothing here sends.
+
+const SEARCH_TOOL_NAME = 'gmail_search_mail'
+const READ_THREAD_TOOL_NAME = 'gmail_read_thread'
+const LABEL_TOOL_NAME = 'gmail_change_labels'
+
+const errorResponses = {
+	400: { description: 'Invalid', content: { 'application/json': { schema: errorSchema } } },
+	403: { description: 'Not allowed', content: { 'application/json': { schema: errorSchema } } },
+	404: { description: 'Not found', content: { 'application/json': { schema: errorSchema } } },
+	409: { description: 'Conflict', content: { 'application/json': { schema: errorSchema } } },
+	422: { description: 'Refused', content: { 'application/json': { schema: errorSchema } } },
+	502: { description: 'Gmail error', content: { 'application/json': { schema: errorSchema } } },
+}
+
+function mailFailureFor(err: GmailMailError): Fail {
+	switch (err.code) {
+		case 'INVALID_INPUT':
+			return fail(400, 'BAD_REQUEST', err.message)
+		case 'NOT_FOUND':
+			return fail(404, 'NOT_FOUND', err.message)
+		case 'RECONSENT_REQUIRED':
+		case 'INSUFFICIENT_SCOPE':
+			return fail(409, 'CONFLICT', err.message)
+		case 'REJECTED':
+			return fail(422, 'BAD_REQUEST', err.message)
+		default:
+			return fail(502, 'INTERNAL_ERROR', err.message)
+	}
+}
+
+/**
+ * A Gmail access token for the caller, or the failure to answer with. `need` is the access the
+ * tool asks for: reading is a read of the mailbox, archiving or labelling is a write.
+ */
+async function gmailTokenFor(
+	db: Database,
+	input: {
+		workspaceId: string
+		actorId: string
+		account?: string
+		toolName: string
+		need: 'read' | 'write'
+	},
+): Promise<{ accessToken: string } | { failure: Fail }> {
+	const { workspaceId, actorId, account, toolName, need } = input
+	let credential: Awaited<ReturnType<typeof readGmailCredential>>
+	try {
+		credential = await readGmailCredential(
+			db,
+			workspaceId,
+			actorId,
+			need === 'read' ? 'gmail:read-mail' : 'gmail:modify-labels',
+			account,
+		)
+	} catch (err) {
+		const f = credentialFailureFor(err)
+		if (f) return { failure: f }
+		throw err
+	}
+	if (!credential) {
+		return {
+			failure: fail(
+				404,
+				'NOT_FOUND',
+				'Gmail is not connected in this workspace.',
+				'Ask a person to connect Gmail in Settings → Integrations.',
+			),
+		}
+	}
+	const access = (await resolveAgentAccess(db, workspaceId, credential.id, actorId)) ?? 'none'
+	if (need === 'read' ? !canRead(access) : !canWrite(access)) {
+		return {
+			failure: fail(
+				403,
+				'FORBIDDEN',
+				accessDeniedMessage({ providerLabel: 'Gmail', toolName, kind: need, access }),
+			),
+		}
+	}
+	try {
+		const accessToken = await new TokenManager().getValidToken(
+			db,
+			credential.id,
+			getProvider('gmail'),
+		)
+		return { accessToken }
+	} catch (err) {
+		if (err instanceof IntegrationAuthRevokedError) {
+			return {
+				failure: fail(
+					409,
+					'CONFLICT',
+					'Gmail cannot be used right now. A person needs to reconnect Gmail in Settings → Integrations.',
+				),
+			}
+		}
+		throw err
+	}
+}
+
+const searchQuerySchema = z.object({
+	account: accountSchema,
+	q: z.string().max(500).optional(),
+	max_results: z.coerce.number().int().min(1).max(20).optional(),
+	page_token: z.string().min(1).max(512).optional(),
+})
+
+const searchRoute = createRoute({
+	method: 'get',
+	path: '/search',
+	tags: ['integrations'],
+	summary: 'Search Gmail threads through the normal Gmail API',
+	description:
+		'Threads of the connected Gmail account that match a Gmail search, newest first, with subject, first sender, last date, snippet and labels. Needs "Read" or "Read & write" access to Gmail.',
+	request: { headers: workspaceIdHeader, query: searchQuerySchema },
+	responses: {
+		200: {
+			description: 'Matching threads',
+			content: {
+				'application/json': {
+					schema: z.object({
+						threads: z.array(
+							z.object({
+								thread_id: z.string(),
+								subject: z.string(),
+								from: z.string(),
+								date: z.string().nullable(),
+								snippet: z.string(),
+								message_count: z.number().int(),
+								labels: z.array(z.string()),
+								unread: z.boolean(),
+							}),
+						),
+						next_page_token: z.string().nullable(),
+					}),
+				},
+			},
+		},
+		...errorResponses,
+	},
+})
+
+app.openapi(searchRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const query = c.req.valid('query')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+
+	const auth = await gmailTokenFor(db, {
+		workspaceId,
+		actorId,
+		account: query.account,
+		toolName: SEARCH_TOOL_NAME,
+		need: 'read',
+	})
+	if ('failure' in auth) return c.json(auth.failure.body, auth.failure.status)
+
+	try {
+		const result = await searchThreads(auth.accessToken, {
+			query: query.q,
+			maxResults: query.max_results,
+			pageToken: query.page_token,
+		})
+		return c.json(result, 200)
+	} catch (err) {
+		if (!(err instanceof GmailMailError)) throw err
+		logger.warn('Gmail search failed', { workspaceId, code: err.code })
+		const f = mailFailureFor(err)
+		return c.json(f.body, f.status)
+	}
+})
+
+const threadAttachmentSchema = z.object({
+	name: z.string(),
+	mime_type: z.string(),
+	size_bytes: z.number().int(),
+	part_id: z.string().nullable(),
+	attachment_id: z.string(),
+})
+
+const readThreadRoute = createRoute({
+	method: 'get',
+	path: '/thread',
+	tags: ['integrations'],
+	summary: 'Read one Gmail thread through the normal Gmail API',
+	description:
+		'Every message of one thread of the connected Gmail account: sender, recipients, subject, date, labels, the text of the body (cut at 20,000 characters) and the attachments it lists. Needs "Read" or "Read & write" access to Gmail.',
+	request: {
+		headers: workspaceIdHeader,
+		query: z.object({ account: accountSchema, thread_id: z.string().min(1).max(64) }),
+	},
+	responses: {
+		200: {
+			description: 'The thread',
+			content: {
+				'application/json': {
+					schema: z.object({
+						thread_id: z.string(),
+						subject: z.string(),
+						labels: z.array(z.string()),
+						messages: z.array(
+							z.object({
+								message_id: z.string(),
+								from: z.string(),
+								to: z.string(),
+								cc: z.string(),
+								subject: z.string(),
+								date: z.string().nullable(),
+								labels: z.array(z.string()),
+								body: z.string(),
+								body_truncated: z.boolean(),
+								attachments: z.array(threadAttachmentSchema),
+							}),
+						),
+					}),
+				},
+			},
+		},
+		...errorResponses,
+	},
+})
+
+app.openapi(readThreadRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const query = c.req.valid('query')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+
+	const auth = await gmailTokenFor(db, {
+		workspaceId,
+		actorId,
+		account: query.account,
+		toolName: READ_THREAD_TOOL_NAME,
+		need: 'read',
+	})
+	if ('failure' in auth) return c.json(auth.failure.body, auth.failure.status)
+
+	try {
+		return c.json(await readThread(auth.accessToken, query.thread_id), 200)
+	} catch (err) {
+		if (!(err instanceof GmailMailError)) throw err
+		logger.warn('Gmail thread read failed', { workspaceId, code: err.code })
+		const f = mailFailureFor(err)
+		return c.json(f.body, f.status)
+	}
+})
+
+const changeLabelsBodySchema = z.object({
+	account: accountSchema,
+	thread_id: z.string().min(1).max(64),
+	archive: z.boolean().optional(),
+	add_labels: z.array(z.string().min(1).max(225)).max(20).optional(),
+	remove_labels: z.array(z.string().min(1).max(225)).max(20).optional(),
+})
+
+const changeLabelsRoute = createRoute({
+	method: 'post',
+	path: '/thread-labels',
+	'x-viewer-policy': 'writer',
+	tags: ['integrations'],
+	summary: 'Archive or label one Gmail thread through the normal Gmail API',
+	description:
+		'Archives one thread of the connected Gmail account (takes it out of the inbox) and/or adds or removes labels, by Gmail label name or id. A label that does not exist is refused, not created. Trash, spam, sent and draft cannot be changed here. Needs "Read & write" access to Gmail.',
+	request: {
+		headers: workspaceIdHeader,
+		body: { content: { 'application/json': { schema: changeLabelsBodySchema } }, required: true },
+	},
+	responses: {
+		200: {
+			description: 'Changed',
+			content: {
+				'application/json': {
+					schema: z.object({
+						thread_id: z.string(),
+						archived: z.boolean(),
+						added: z.array(z.string()),
+						removed: z.array(z.string()),
+						labels: z.array(z.string()),
+					}),
+				},
+			},
+		},
+		...errorResponses,
+	},
+})
+
+app.openapi(changeLabelsRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const input = c.req.valid('json')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+
+	const auth = await gmailTokenFor(db, {
+		workspaceId,
+		actorId,
+		account: input.account,
+		toolName: LABEL_TOOL_NAME,
+		need: 'write',
+	})
+	if ('failure' in auth) return c.json(auth.failure.body, auth.failure.status)
+
+	try {
+		const result = await changeThreadLabels(auth.accessToken, input.thread_id, {
+			archive: input.archive,
+			addLabels: input.add_labels,
+			removeLabels: input.remove_labels,
+		})
+		return c.json(result, 200)
+	} catch (err) {
+		if (!(err instanceof GmailMailError)) throw err
+		logger.warn('Gmail label change failed', { workspaceId, code: err.code })
+		const f = mailFailureFor(err)
 		return c.json(f.body, f.status)
 	}
 })

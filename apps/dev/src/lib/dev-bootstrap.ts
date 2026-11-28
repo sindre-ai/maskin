@@ -62,6 +62,18 @@ import {
 	MEETING_LOOP_TRIGGER_IDS,
 } from './marketplace-loops/meeting-loop'
 import {
+	PRESENTATION_DESIGNER_ACTOR_IDS,
+	PRESENTATION_DESIGNER_LOOP,
+	PRESENTATION_DESIGNER_SKILL_IDS,
+	PRESENTATION_DESIGNER_TRIGGER_IDS,
+} from './marketplace-loops/presentation-designer-loop'
+import {
+	PRODUCT_DELIVERY_ACTOR_IDS,
+	PRODUCT_DELIVERY_LOOP,
+	PRODUCT_DELIVERY_SKILL_IDS,
+	PRODUCT_DELIVERY_TRIGGER_IDS,
+} from './marketplace-loops/product-delivery-loop'
+import {
 	PRODUCT_RELEASE_ACTOR_IDS,
 	PRODUCT_RELEASE_LOOP,
 	PRODUCT_RELEASE_SKILL_IDS,
@@ -81,6 +93,13 @@ import {
 	SIGNAL_INTAKE_TRIGGER_IDS,
 } from './marketplace-loops/signal-intake-loop'
 import { viewSnapshot } from './marketplace-loops/view-snapshot'
+import {
+	WORKSPACE_IMPROVEMENTS_LOOP,
+	WORKSPACE_IMPROVEMENTS_ROLE_IDS,
+	WORKSPACE_IMPROVEMENTS_SKILL_IDS,
+	WORKSPACE_IMPROVEMENTS_TRIGGER_IDS,
+	WORKSPACE_IMPROVEMENTS_VIEW_IDS,
+} from './marketplace-loops/workspace-improvements-loop'
 
 const MARKETPLACE_SEED_CONFIGS: readonly MarketplaceLoopSeedConfig[] = [
 	{
@@ -109,10 +128,22 @@ const MARKETPLACE_SEED_CONFIGS: readonly MarketplaceLoopSeedConfig[] = [
 		skillIds: MEETING_LOOP_SKILL_IDS,
 	},
 	{
+		loop: PRESENTATION_DESIGNER_LOOP,
+		actorIds: PRESENTATION_DESIGNER_ACTOR_IDS,
+		triggerIds: PRESENTATION_DESIGNER_TRIGGER_IDS,
+		skillIds: PRESENTATION_DESIGNER_SKILL_IDS,
+	},
+	{
 		loop: PRODUCT_RELEASE_LOOP,
 		actorIds: PRODUCT_RELEASE_ACTOR_IDS,
 		triggerIds: PRODUCT_RELEASE_TRIGGER_IDS,
 		skillIds: PRODUCT_RELEASE_SKILL_IDS,
+	},
+	{
+		loop: PRODUCT_DELIVERY_LOOP,
+		actorIds: PRODUCT_DELIVERY_ACTOR_IDS,
+		triggerIds: PRODUCT_DELIVERY_TRIGGER_IDS,
+		skillIds: PRODUCT_DELIVERY_SKILL_IDS,
 	},
 	{
 		loop: CUSTOMER_VOICE_LOOP,
@@ -141,6 +172,14 @@ const MARKETPLACE_SEED_CONFIGS: readonly MarketplaceLoopSeedConfig[] = [
 		triggerIds: SIGNAL_INTAKE_TRIGGER_IDS,
 		skillIds: SIGNAL_INTAKE_SKILL_IDS,
 	},
+	{
+		loop: WORKSPACE_IMPROVEMENTS_LOOP,
+		actorIds: [],
+		roleActorIds: WORKSPACE_IMPROVEMENTS_ROLE_IDS,
+		triggerIds: WORKSPACE_IMPROVEMENTS_TRIGGER_IDS,
+		skillIds: WORKSPACE_IMPROVEMENTS_SKILL_IDS,
+		viewIds: WORKSPACE_IMPROVEMENTS_VIEW_IDS,
+	},
 ]
 
 export interface MarketplaceSyncResult {
@@ -153,7 +192,9 @@ export interface MarketplaceSyncResult {
 
 /**
  * Syncs the global marketplace with the installable Loop bundles (Product
- * Discovery, Competitor watch, Meeting Loop, Product release, Customer voice, Knowledge Wiki, Product Usage, Signal Intake), upserting by slug. A loop missing from marketplace_loops is inserted; a loop whose
+ * Discovery, Competitor watch, Meeting Loop, Presentation Designer, Product
+ * release, Product Delivery, Customer voice, Knowledge Wiki, Product Usage,
+ * Signal Intake), upserting by slug. A loop missing from marketplace_loops is inserted; a loop whose
  * code-defined version differs from the stored row is updated in place (its
  * marketplace_loop_items are replaced wholesale); a loop whose version
  * matches is left untouched. Safe to call on every startup/deploy.
@@ -206,7 +247,10 @@ export async function seedMarketplaceLoops(db: Database): Promise<MarketplaceSyn
 			const skillRows = config.skillIds.map(getSkillData)
 			const viewRows = (config.viewIds ?? []).map(getViewData)
 
-			const publishedActorIds = new Set<string>(config.actorIds)
+			const publishedActorIds = new Set<string>([
+				...config.actorIds,
+				...(config.roleActorIds ?? []),
+			])
 			for (const t of triggerRows) {
 				if (!publishedActorIds.has(t.targetActorId)) {
 					throw new Error(

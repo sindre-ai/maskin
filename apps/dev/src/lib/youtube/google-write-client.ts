@@ -12,6 +12,7 @@ const API = 'https://www.googleapis.com/youtube/v3'
 const UPLOAD_API = 'https://www.googleapis.com/upload/youtube/v3'
 const REQUEST_TIMEOUT_MS = 30_000
 const VIDEO_PARTS = ['snippet', 'status', 'localizations']
+const MODERATION_STATUSES = ['published', 'heldForReview', 'rejected']
 
 export interface YoutubeWriteRequest {
 	kind: YoutubeActionKind
@@ -20,6 +21,8 @@ export interface YoutubeWriteRequest {
 	accessToken: string
 	/** The image for set_thumbnail, read and checked by the executor. */
 	image?: { bytes: Uint8Array; mimeType: string }
+	/** The SRT or VTT bytes for upload_caption and replace_caption, read and checked by the executor. */
+	caption?: { bytes: Uint8Array }
 }
 
 export interface YoutubeWriteResult {
@@ -29,7 +32,7 @@ export interface YoutubeWriteResult {
 }
 
 interface PlannedRequest {
-	method: 'POST' | 'PUT'
+	method: 'POST' | 'PUT' | 'DELETE'
 	path: string
 	query: Record<string, string>
 	body?: Record<string, unknown>
@@ -55,10 +58,46 @@ function plan(kind: YoutubeActionKind, payload: Record<string, unknown>): Planne
 			return { method: 'POST', path: '/commentThreads', query: { part: 'snippet' }, body: payload }
 		case 'reply_to_comment':
 			return { method: 'POST', path: '/comments', query: { part: 'snippet' }, body: payload }
+		case 'moderate_comment': {
+			const status = payload.moderationStatus
+			if (typeof payload.id !== 'string' || !MODERATION_STATUSES.includes(status as string)) {
+				return null
+			}
+			// banAuthor only works with rejected, so it is dropped for any other status.
+			const ban = payload.banAuthor === true && status === 'rejected'
+			return {
+				method: 'POST',
+				path: '/comments/setModerationStatus',
+				query: {
+					id: payload.id,
+					moderationStatus: status as string,
+					...(ban ? { banAuthor: 'true' } : {}),
+				},
+			}
+		}
 		case 'like': {
 			if (typeof payload.id !== 'string') return null
 			const rating = payload.rating === 'none' ? 'none' : 'like'
 			return { method: 'POST', path: '/videos/rate', query: { id: payload.id, rating } }
+		}
+		case 'delete_caption': {
+			if (typeof payload.captionId !== 'string') return null
+			return { method: 'DELETE', path: '/captions', query: { id: payload.captionId } }
+		}
+		case 'delete_video':
+		case 'delete_comment':
+		case 'delete_playlist':
+		case 'remove_from_playlist': {
+			// The id is the only thing Google takes: the other keys in the stored request (a title, a
+			// name) are what the card showed, and they are not sent.
+			if (typeof payload.id !== 'string' || payload.id === '') return null
+			const path = {
+				delete_video: '/videos',
+				delete_comment: '/comments',
+				delete_playlist: '/playlists',
+				remove_from_playlist: '/playlistItems',
+			}[kind]
+			return { method: 'DELETE', path, query: { id: payload.id } }
 		}
 		default:
 			// set_thumbnail uploads an image, which needs its own request shape (see execute).
@@ -82,9 +121,53 @@ async function setThumbnail(request: YoutubeWriteRequest): Promise<YoutubeWriteR
 	return response.ok ? { ok: true, code: 'ok' } : { ok: false, code: `http_${response.status}` }
 }
 
+/**
+ * captions.insert and captions.update take the caption file in a multipart/related body: the
+ * metadata as JSON, then the file. The boundary is random, so it cannot occur in the file.
+ */
+async function sendCaption(request: YoutubeWriteRequest): Promise<YoutubeWriteResult> {
+	const { payload, caption } = request
+	if (!caption || typeof payload.videoId !== 'string' || typeof payload.language !== 'string') {
+		return { ok: false, code: 'bad_payload' }
+	}
+	const replacing = request.kind === 'replace_caption'
+	if (replacing && typeof payload.captionId !== 'string') return { ok: false, code: 'bad_payload' }
+	const snippet = {
+		// A replace keeps the track as it is: Google takes the snippet again, and only isDraft is editable.
+		...(replacing ? {} : { videoId: payload.videoId, language: payload.language }),
+		...(!replacing && typeof payload.name === 'string' && payload.name
+			? { name: payload.name }
+			: {}),
+		isDraft: payload.isDraft === true,
+	}
+	const metadata = replacing ? { id: payload.captionId, snippet } : { snippet }
+	const boundary = `maskin-${crypto.randomUUID()}`
+	const body = Buffer.concat([
+		Buffer.from(
+			`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
+				`--${boundary}\r\nContent-Type: application/octet-stream\r\n\r\n`,
+		),
+		Buffer.from(caption.bytes),
+		Buffer.from(`\r\n--${boundary}--`),
+	])
+	const response = await fetch(`${UPLOAD_API}/captions?part=snippet&uploadType=multipart`, {
+		method: replacing ? 'PUT' : 'POST',
+		headers: {
+			Authorization: `Bearer ${request.accessToken}`,
+			'Content-Type': `multipart/related; boundary=${boundary}`,
+		},
+		body,
+		signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+	})
+	return response.ok ? { ok: true, code: 'ok' } : { ok: false, code: `http_${response.status}` }
+}
+
 export const googleWriteClient = {
 	async execute(request: YoutubeWriteRequest): Promise<YoutubeWriteResult> {
 		if (request.kind === 'set_thumbnail') return setThumbnail(request)
+		if (request.kind === 'upload_caption' || request.kind === 'replace_caption') {
+			return sendCaption(request)
+		}
 		const planned = plan(request.kind, request.payload)
 		if (!planned) return { ok: false, code: 'bad_payload' }
 		const url = `${API}${planned.path}?${new URLSearchParams(planned.query).toString()}`

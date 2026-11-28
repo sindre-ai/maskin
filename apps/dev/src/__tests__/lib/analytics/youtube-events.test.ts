@@ -48,6 +48,8 @@ describe('trackYoutubeToolCalled', () => {
 		['search', 2],
 		['get_analytics', 3],
 		['post_comment', 4],
+		['delete_video', 4],
+		['remove_from_playlist', 4],
 		['upload_video', 5],
 		['publish_video', 5],
 		['get_upload_status', 5],

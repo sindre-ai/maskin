@@ -83,7 +83,10 @@ const SKILL_SORT_IDS = new Set<SkillSort>(['name', 'createdAt', 'updatedAt'])
 export const Route = createFileRoute('/_authed/$workspaceId/settings/skills')({
 	component: SkillsPage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
+	// `skill` is the link an agent writes to send someone to one skill (?skill=release-gate):
+	// it opens that skill's dialog. A name that matches no skill leaves the page as it is.
 	validateSearch: (search: Record<string, unknown>) => ({
+		skill: typeof search.skill === 'string' ? search.skill : undefined,
 		sort:
 			typeof search.sort === 'string' && SKILL_SORT_IDS.has(search.sort as SkillSort)
 				? (search.sort as SkillSort)
@@ -132,7 +135,11 @@ function SkillsPage() {
 	const { workspaceId } = useWorkspace()
 	const canWrite = useCanWrite()
 	const navigate = useNavigate()
-	const { sort, order } = useSearch({ from: '/_authed/$workspaceId/settings/skills' })
+	const {
+		sort,
+		order,
+		skill: linkedSkill,
+	} = useSearch({ from: '/_authed/$workspaceId/settings/skills' })
 	const { data: skills, isLoading } = useWorkspaceSkills(workspaceId)
 	const [dialog, setDialog] = useState<DialogState>({ kind: 'closed' })
 	const createMutation = useCreateWorkspaceSkill(workspaceId)
@@ -142,6 +149,17 @@ function SkillsPage() {
 	const [summary, setSummary] = useState<UploadSummary | null>(null)
 	const inputRef = useRef<HTMLInputElement>(null)
 	const folderInputRef = useRef<HTMLInputElement>(null)
+
+	// A link naming a skill opens it once the list has loaded. Once only, so closing the
+	// dialog does not bring it back.
+	const linkOpened = useRef(false)
+	useEffect(() => {
+		if (linkOpened.current || !linkedSkill || !skills) return
+		linkOpened.current = true
+		const wanted = linkedSkill.trim().toLowerCase()
+		const match = skills.find((s) => s.name.toLowerCase() === wanted)
+		if (match) setDialog({ kind: 'edit', name: match.name })
+	}, [linkedSkill, skills])
 
 	const rawList = skills ?? []
 	const existingNames = rawList.map((s) => s.name)
@@ -153,7 +171,7 @@ function SkillsPage() {
 			navigate({
 				to: '/$workspaceId/settings/skills',
 				params: { workspaceId },
-				search: { sort, order, ...updates },
+				search: { sort, order, skill: undefined, ...updates },
 				replace: true,
 			})
 		},

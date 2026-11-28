@@ -577,6 +577,14 @@ export const api = {
 			const qs = Object.keys(params).length > 0 ? `?${new URLSearchParams(params)}` : ''
 			return request<SearchResponse>(`/search${qs}`, { workspaceId, signal: opts?.signal })
 		},
+		/** Records that the caller opened a result from a search; it feeds their own ranking. */
+		recordOpen: (workspaceId: string, entityId: string) =>
+			request<void>('/search/opens', {
+				method: 'POST',
+				body: { entity_id: entityId },
+				workspaceId,
+				keepalive: true,
+			}),
 	},
 	objects: {
 		list: (workspaceId: string, params?: Record<string, string>) => {
@@ -2205,7 +2213,9 @@ export type BillingPlan = 'trial' | 'starter' | 'pro' | 'team' | 'ultra' | 'ente
 export type BillingStatus = 'active' | 'past_due' | 'canceled' | 'incomplete'
 
 export interface BillingCheckoutInput {
-	plan: 'starter' | 'pro' | 'team' | 'ultra'
+	plan: 'starter' | 'pro' | 'ultra'
+	/** Total user seats to bill. Omitted means the server uses the current human member count. */
+	seat_count?: number
 	success_url: string
 	cancel_url: string
 }
@@ -3939,6 +3949,8 @@ export interface MarketplaceLoopSummary {
 	version: string
 	use_case: string | null
 	item_types: MarketplaceItemType[]
+	/** A listing that is one agent with no flow page: shown with an Agent label, opens a chat on install. */
+	agent_only?: boolean
 	created_at: string | null
 	updated_at: string | null
 }
@@ -4003,7 +4015,7 @@ export interface InstalledLoopsListResponse {
 	installs: InstalledLoopRow[]
 }
 
-interface InstalledLoopInstallResponse {
+export interface InstalledLoopInstallResponse {
 	id: string
 	workspaceId: string
 	sourceLoopId: string
@@ -4014,6 +4026,8 @@ interface InstalledLoopInstallResponse {
 	installedAt: string | null
 	updatedAt: string | null
 	provisioned: { actors: number; triggers: number; skills: number; integrations: number }
+	/** Agent-only installs: the direct message where the agent says hello (null when it could not be opened). */
+	chatId?: string | null
 }
 
 interface InstalledLoopForkResponse {

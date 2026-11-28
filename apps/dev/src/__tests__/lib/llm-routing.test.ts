@@ -55,6 +55,7 @@ const FALLBACK_ENV_KEYS = [
 	'MASKIN_FALLBACK_PROVIDER_IGNORE',
 	'MASKIN_FALLBACK_PROVIDER_ONLY',
 	'MASKIN_FALLBACK_TTFT_TIMEOUT_MS',
+	'MASKIN_FALLBACK_TOOL_LOADER',
 	'MASKIN_TEXT_ONLY_MODELS',
 ] as const
 
@@ -480,6 +481,35 @@ describe('resolveLlmRoute priority order', () => {
 				expect((await resolveEnv('acme/BAR-1'))?.MASKIN_STRIP_IMAGES).toBe('1')
 				const deepseek = await resolveEnv('deepseek/deepseek-v4-flash')
 				expect(deepseek?.MASKIN_STRIP_IMAGES).toBeUndefined()
+			})
+		})
+
+		describe('on-demand tool loading', () => {
+			async function resolveEnv() {
+				const settings = emptySettings()
+				settings.billing = { plan: 'pro' }
+				const result = await resolveLlmRoute({
+					...baseParams,
+					enterprise: false,
+					db: dbWithSessionUsage([]),
+					wsSettings: settings,
+					agent: {},
+				})
+				return result?.envVars
+			}
+
+			it('leaves MCP tool loading off by default', async () => {
+				expect(await resolveEnv()).not.toHaveProperty('MASKIN_TOOL_LOADER')
+			})
+
+			it('MASKIN_FALLBACK_TOOL_LOADER=true asks the container to load MCP tools on demand', async () => {
+				process.env.MASKIN_FALLBACK_TOOL_LOADER = 'true'
+				expect((await resolveEnv())?.MASKIN_TOOL_LOADER).toBe('1')
+			})
+
+			it('any other value leaves it off', async () => {
+				process.env.MASKIN_FALLBACK_TOOL_LOADER = 'off'
+				expect(await resolveEnv()).not.toHaveProperty('MASKIN_TOOL_LOADER')
 			})
 		})
 

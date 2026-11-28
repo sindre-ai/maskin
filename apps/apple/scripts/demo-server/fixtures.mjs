@@ -780,6 +780,51 @@ export function overrides({ method, path, params, query, body, base, item }) {
 		}
 		return null
 	}
+	// The one search the web and the phone share: every typed word must match (AND), and the rows come
+	// back best match first, so a name hit sits above a hit only in a message. Chats only here.
+	if (method === 'get' && path === '/api/search') {
+		const words = (query.get('q') ?? '').toLowerCase().split(/\s+/).filter(Boolean)
+		// Chats only: a page asking for one other type (the Agents and Flows pages do) gets no rows,
+		// so those pages keep their own order on the demo data.
+		const types = (query.get('types') ?? '').split(',').filter(Boolean)
+		const rows = types.length > 0 && !types.includes('chat') ? [] : rooms
+		const results = rows
+			.map((r) => {
+				const names = r.with
+					.map((id) => actors.find((a) => a.id === id)?.name ?? '')
+					.concat(ME.name)
+				const nameText = [r.title, ...names].join(' ').toLowerCase()
+				const hitsName = words.every((w) => nameText.includes(w))
+				const hitsMessage = words.every((w) => `${nameText} ${r.snippet}`.toLowerCase().includes(w))
+				return { r, names, hitsName, hitsMessage }
+			})
+			.filter((m) => m.hitsMessage)
+			.sort((a, b) => Number(b.hitsName) - Number(a.hitsName) || a.r.at - b.r.at)
+			.map(({ r, names }) => ({
+				id: uuid(r.n),
+				group: 'chats',
+				type: 'chat',
+				title: r.title,
+				sub: names.join(', '),
+				snippet: r.snippet,
+				status: r.unread > 0 ? 'unread' : 'read',
+				statusGroup: r.unread > 0 ? 'needs_you' : 'done',
+				updatedAt: ago(r.at),
+			}))
+		return {
+			body: {
+				results,
+				total: results.length,
+				capped: false,
+				facets: {
+					types: { chat: results.length },
+					statuses: { needs_you: 0, in_progress: 0, new: 0, done: results.length, archived: 0 },
+				},
+				relaxed: { withoutFilters: 0, withoutStatuses: 0 },
+				partial: [],
+			},
+		}
+	}
 	if (method === 'get' && path === '/api/conversations') {
 		return {
 			body: {

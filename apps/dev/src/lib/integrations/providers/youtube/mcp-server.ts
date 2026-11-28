@@ -25,7 +25,12 @@ import {
 import { getOwnCaptions } from './captions'
 import { parseChannelRef } from './channel-ref'
 import { type YoutubeClientContext, youtubeRead } from './client'
-import { COMMENTS_MAX_PAGES, COMMENTS_MAX_PER_PAGE, listComments } from './comments'
+import {
+	COMMENTS_MAX_PAGES,
+	COMMENTS_MAX_PER_PAGE,
+	listComments,
+	listHeldComments,
+} from './comments'
 import { YoutubeError, type YoutubeErrorCode, isYoutubeError } from './errors'
 import {
 	prepareUpload,
@@ -358,8 +363,30 @@ function registerTools(server: McpServer, ctx: YoutubeMcpContext): void {
 	registerTool(
 		server,
 		ctx,
+		'list_held_comments',
+		`List the comments on the connected channel that wait for a decision, as the YouTube Data API returns the threads: status held_for_review (held by the channel's settings) or likely_spam (flagged by YouTube). Each thread's top-level comment id is what youtube__moderate_comment takes. Costs 1 quota unit a call, up to ${COMMENTS_MAX_PER_PAGE} threads. If next_page_token is not null, pass it as page_token to read on. Never cached and never stored by Maskin.`,
+		{
+			status: z
+				.enum(['held_for_review', 'likely_spam'])
+				.default('held_for_review')
+				.describe('Which waiting comments to list.'),
+			max_results: z
+				.number()
+				.int()
+				.min(1)
+				.max(COMMENTS_MAX_PER_PAGE)
+				.default(50)
+				.describe('Threads on this page.'),
+			page_token: z.string().optional().describe('The next_page_token of an earlier call.'),
+		},
+		(args, client) => listHeldComments(client, args),
+	)
+
+	registerTool(
+		server,
+		ctx,
 		'get_own_captions',
-		'Get the caption text of a video on the connected channel, as SRT or VTT. Only videos owned by the connected channel: any other video is refused with PERMISSION_DENIED before any caption call. Costs about 252 quota units (2 ownership reads, the caption list at 50, the download at 200), so use it sparingly: a workspace has 1,000 units a day. The result is never cached and is returned to you only. Needs the youtube.force-ssl permission, which a connection only has when the workspace asked for write scopes: without it the call fails with RECONSENT_REQUIRED until the channel is reconnected.',
+		'Get the caption text of a video on the connected channel, as SRT or VTT. Only videos owned by the connected channel: any other video is refused with PERMISSION_DENIED before any caption call. Costs about 252 quota units (2 ownership reads, the caption list at 50, the download at 200), so use it sparingly: a workspace has 2,000 units a day. The result is never cached and is returned to you only. Needs the youtube.force-ssl permission, which a connection only has when the workspace asked for write scopes: without it the call fails with RECONSENT_REQUIRED until the channel is reconnected.',
 		{
 			video_id: z.string().min(1).max(32).describe('The video id of one of your own videos.'),
 			language: z
@@ -449,6 +476,7 @@ function registerTools(server: McpServer, ctx: YoutubeMcpContext): void {
 	)
 
 	registerWriteTools(server, ctx)
+	registerCaptionTools(server, ctx)
 	registerUploadTools(server, ctx)
 }
 
@@ -604,15 +632,181 @@ function registerWriteTools(server: McpServer, ctx: YoutubeMcpContext): void {
 			propose(client, { object_id, note }, { tool: 'like', args }),
 		write,
 	)
+
+	const deleted =
+		'Deleting cannot be undone. The server reads the real title from YouTube for the card, so what a person approves is what gets deleted.'
+
+	registerTool(
+		server,
+		ctx,
+		'delete_video',
+		`Ask to PERMANENTLY delete one of your own videos. It cannot be undone, and its comments and statistics go with it. The card says so in capitals and shows the video's real title and id. At most 3 a day for the workspace. ${deleted} ${held}`,
+		{
+			object_id: objectIdField,
+			video_id: videoIdField,
+			note: noteField,
+		},
+		({ object_id, note, ...args }, client) =>
+			propose(client, { object_id, note }, { tool: 'delete_video', args }),
+		write,
+	)
+
+	registerTool(
+		server,
+		ctx,
+		'delete_comment',
+		`Ask to delete a comment: one on your own videos, or one you wrote. The card shows the comment's author and text as YouTube holds them. At most 20 a day for the workspace. ${deleted} ${held}`,
+		{
+			object_id: objectIdField,
+			comment_id: z.string().min(1).max(128).describe('The id of the comment to delete.'),
+			note: noteField,
+		},
+		({ object_id, note, ...args }, client) =>
+			propose(client, { object_id, note }, { tool: 'delete_comment', args }),
+		write,
+	)
+
+	registerTool(
+		server,
+		ctx,
+		'delete_playlist',
+		`Ask to delete one of your own playlists. The videos in it stay on the channel. The card shows the playlist's real title and id. At most 3 a day for the workspace. ${deleted} ${held}`,
+		{
+			object_id: objectIdField,
+			playlist_id: z.string().min(1).max(64).describe('The id of one of your playlists.'),
+			note: noteField,
+		},
+		({ object_id, note, ...args }, client) =>
+			propose(client, { object_id, note }, { tool: 'delete_playlist', args }),
+		write,
+	)
+
+	registerTool(
+		server,
+		ctx,
+		'remove_from_playlist',
+		`Ask to remove a video from one of your own playlists. Only the playlist entry goes: the video stays on the channel. The server finds the entry, and the call is refused if the video is not in the playlist. At most 20 a day for the workspace. ${held}`,
+		{
+			object_id: objectIdField,
+			playlist_id: z.string().min(1).max(64).describe('The id of one of your playlists.'),
+			video_id: videoIdField,
+			note: noteField,
+		},
+		({ object_id, note, ...args }, client) =>
+			propose(client, { object_id, note }, { tool: 'remove_from_playlist', args }),
+		write,
+	)
 }
 
-/** Part 5. An upload is always private; making it public is a second request with its own approval. */
+/** Caption writes. Each only asks: the change goes out after a person approves the card. */
+function registerCaptionTools(server: McpServer, ctx: YoutubeMcpContext): void {
+	const propose = (client: ProposeContext, common: ProposeCommon, request: ProposeInput) =>
+		proposeYoutubeWrite(client, common, request)
+	const write = { write: true }
+	// Quota in the words: asking reads the channel and the video (about 2 units, plus the caption
+	// list at 50 for a replace or delete). Running it is charged when a person approves.
+	const held = (asking: string, running: number) =>
+		`Holds the change for a person to approve and returns the id of the held request. It never changes anything on YouTube itself: the change goes out only after a person approves the card, and the request lapses after 7 days. Only videos on the connected channel. Asking costs ${asking} of quota; running it costs ${running} units when a person approves, out of the workspace's daily YouTube quota. Needs the youtube.force-ssl permission, like youtube__get_own_captions.`
+	const captionFile = z
+		.string()
+		.uuid()
+		.describe('The id of an SRT or VTT file in this workspace, 1 MB at most.')
+
+	registerTool(
+		server,
+		ctx,
+		'upload_caption',
+		`Ask to add a caption track to one of your own videos from an SRT or VTT file. The file is fixed when you ask: if it changes before a person approves, nothing is sent. ${held('about 2 units', 400)}`,
+		{
+			object_id: objectIdField,
+			video_id: videoIdField,
+			file_id: captionFile,
+			language: z.string().min(2).max(16).describe('Language of the track, for example en or nb.'),
+			name: z
+				.string()
+				.max(150)
+				.optional()
+				.describe('Track name shown to viewers. Leave out for none.'),
+			is_draft: z
+				.boolean()
+				.optional()
+				.describe('True to save the track as a draft that viewers cannot see. Default false.'),
+			note: noteField,
+		},
+		({ object_id, note, ...args }, client) =>
+			propose(client, { object_id, note }, { tool: 'upload_caption', args }),
+		write,
+	)
+
+	registerTool(
+		server,
+		ctx,
+		'replace_caption',
+		`Ask to replace the text of an existing caption track with an SRT or VTT file. The track keeps its language and name. caption_id is the track id youtube__get_own_captions returns. The file is fixed when you ask: if it changes before a person approves, nothing is sent. ${held('about 52 units', 450)}`,
+		{
+			object_id: objectIdField,
+			video_id: videoIdField,
+			caption_id: z.string().min(1).max(128).describe('The id of the caption track to replace.'),
+			file_id: captionFile,
+			is_draft: z
+				.boolean()
+				.optional()
+				.describe('Set to change whether the track is a draft. Default: as it is now.'),
+			note: noteField,
+		},
+		({ object_id, note, ...args }, client) =>
+			propose(client, { object_id, note }, { tool: 'replace_caption', args }),
+		write,
+	)
+
+	registerTool(
+		server,
+		ctx,
+		'delete_caption',
+		`Ask to delete a caption track from one of your own videos. caption_id is the track id youtube__get_own_captions returns. The card shows the track's language, read from YouTube. ${held('about 52 units', 50)}`,
+		{
+			object_id: objectIdField,
+			video_id: videoIdField,
+			caption_id: z.string().min(1).max(128).describe('The id of the caption track to delete.'),
+			note: noteField,
+		},
+		({ object_id, note, ...args }, client) =>
+			propose(client, { object_id, note }, { tool: 'delete_caption', args }),
+		write,
+	)
+
+	registerTool(
+		server,
+		ctx,
+		'moderate_comment',
+		`Ask to set the moderation status of one comment on your own channel: published (approve it), held_for_review (hide it until someone decides) or rejected (hide it for good). There is no separate spam call in YouTube: to treat a comment as spam, reject it, and set ban_author to also bar its author from commenting on the channel (only with rejected). The card shows the comment's author and text as YouTube has them now. ${held}`,
+		{
+			object_id: objectIdField,
+			comment_id: z
+				.string()
+				.min(1)
+				.max(128)
+				.describe('The id of the comment, for example from youtube__list_held_comments.'),
+			status: z.enum(['published', 'held_for_review', 'rejected']),
+			ban_author: z
+				.boolean()
+				.optional()
+				.describe('Also ban the comment author from the channel. Only with status rejected.'),
+			note: noteField,
+		},
+		({ object_id, note, ...args }, client) =>
+			propose(client, { object_id, note }, { tool: 'moderate_comment', args }),
+		write,
+	)
+}
+
+/** Part 5. An upload is private unless it asks for more, in one approval. Changing a private video later is a second request. */
 function registerUploadTools(server: McpServer, ctx: YoutubeMcpContext): void {
 	registerTool(
 		server,
 		ctx,
 		'upload_video',
-		'Prepare the upload of a Maskin video file to the connected YouTube channel. Nothing is sent yet: this holds the request and puts an approval card in front of the workspace owners. When a person approves, the server uploads the video as PRIVATE, always, whatever you ask for. To make it unlisted, public or scheduled you need a second approval with youtube__publish_video. Set ai_generated when the video is AI generated or altered. Returns an action id; read the result with youtube__get_upload_status.',
+		'Prepare the upload of a Maskin video file to the connected YouTube channel. Nothing is sent yet: this holds the request and puts an approval card in front of the workspace owners. Set visibility to private (the default), unlisted or public, or set visibility public with publish_at to keep it private until a set time. One card, one approval: when a person approves, the server uploads the video with exactly that visibility and nothing else. The card shows it in capitals. To change a video that is already uploaded, use youtube__publish_video. Set ai_generated when the video is AI generated or altered. Returns an action id; read the result with youtube__get_upload_status.',
 		uploadVideoInput,
 		(args, client) => prepareUpload(client, args),
 		{ write: true },

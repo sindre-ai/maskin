@@ -110,8 +110,9 @@ export type SessionFlow = { id: string; status: string }
 
 /**
  * The flows one running session belongs to, read now. The same rules as `loadFlowLookup`
- * (the flow that lists the session's trigger, else the flow its source item sits in), with two
- * differences on purpose: a helper session inherits the flows of the session that started it
+ * (the flow that lists the session's trigger, else the flow its source item sits in), with
+ * three differences on purpose: a session with no trigger is not placed by its source item (a
+ * chat or a mention is not covered), a helper session inherits the flows of the session that started it
  * (up to 5 hops), and when several flows qualify all of them are returned, so a caller can hold
  * on the strictest.
  *
@@ -154,8 +155,11 @@ export async function flowsOfSession(
 						),
 					)
 			: []
+		// The source item only places a session that a trigger started. A session with no trigger (a
+		// person's chat, a comment mention) is not covered, even when the item it was started
+		// from sits in a flow in pilot (spec: Pilot flows hold outbound steps, 4a).
 		const flows =
-			byTrigger.length > 0 || !session.initiatedFromObjectId
+			byTrigger.length > 0 || !session.triggerId || !session.initiatedFromObjectId
 				? byTrigger
 				: await db
 						.select({ id: objects.id, status: objects.status })

@@ -130,7 +130,9 @@ describe('Marketplace install — seeded bundle end-to-end', () => {
 		'market-competitor-watch-loop',
 		'product-discovery-loop',
 		'meeting-loop',
+		'presentation-designer',
 		'product-release-loop',
+		'product-delivery-loop',
 		'customer-voice-loop',
 		'knowledge-wiki-loop',
 		'product-usage-loop',
@@ -172,10 +174,24 @@ describe('Marketplace install — seeded bundle end-to-end', () => {
 				provisioned: { actors: number; triggers: number; skills: number; integrations: number }
 			}
 			expect(body.id).toBeTruthy()
-			expect(body.objectId).toBeTruthy()
 			expect(
 				body.provisioned.actors + body.provisioned.triggers + body.provisioned.skills,
 			).toBeGreaterThan(0)
+
+			if (slug === 'presentation-designer') {
+				// An agent-only listing installs the agent and its skills, with no flow page and no triggers.
+				expect(body.objectId).toBeNull()
+				expect(body.provisioned.actors).toBe(1)
+				expect(body.provisioned.triggers).toBe(0)
+				const [agent] = await db
+					.select({ id: actors.id })
+					.from(actors)
+					.where(eq(actors.name, 'Presentation Designer'))
+				expect(agent).toBeTruthy()
+				return
+			}
+
+			expect(body.objectId).toBeTruthy()
 
 			// A bundle that ships custom views leaves their tabs on the loop page.
 			const [loopObject] = await db
@@ -192,7 +208,9 @@ describe('Marketplace install — seeded bundle end-to-end', () => {
 							? ['Results', 'Lifecycle']
 							: slug === 'knowledge-wiki-loop'
 								? ['Results', 'Strategic context']
-								: [],
+								: slug === 'workspace-improvements-loop'
+									? ['Results']
+									: [],
 			)
 		})
 	}

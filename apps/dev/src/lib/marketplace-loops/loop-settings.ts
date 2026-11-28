@@ -12,12 +12,12 @@ const shippedTargetSchema = loopTargetSchema.omit({ ownerActorId: true })
 
 // An onboarding checklist a flow ships: one parent task and one child task per prerequisite. Install
 // creates them once in the installer's workspace (see services/loop-checklist-provisioning.ts).
-// driverSourceItemId is the template id of the bundled agent that drives them, resolved to the
-// installed agent at install. It is not copied onto the loop object.
+// driverSourceItemId is the template id of the bundled agent (or the role id of a workspace agent)
+// that drives them, resolved to the installed agent at install. It is not copied onto the loop object.
 export const loopChecklistSchema = z.object({
 	title: z.string().min(1),
 	body: z.string().min(1),
-	driverSourceItemId: z.string().uuid().optional(),
+	driverSourceItemId: z.string().min(1).optional(),
 	items: z.array(z.object({ title: z.string().min(1), body: z.string().min(1) })).min(1),
 })
 export type LoopChecklist = z.infer<typeof loopChecklistSchema>
@@ -28,6 +28,20 @@ export const loopSettingsSchema = z.object({
 	tags: z.array(z.string().min(1)).optional(),
 	targets: z.array(shippedTargetSchema).optional(),
 	checklist: loopChecklistSchema.optional(),
+	// A workspace that already has a hand-made flow with this name keeps it: install links that flow
+	// to the marketplace instead of creating a second one (see services/loop-install.ts).
+	adoptExisting: z.boolean().optional(),
+	// With adoptExisting: names of the adopted flow's old triggers this bundle replaces. Only a trigger
+	// with one of these names, running on an agent the install bound, is switched off.
+	replacesTriggerNames: z.array(z.string().min(1)).optional(),
+	// A listing that is one agent, not a flow: install creates the agent, its skills and the install
+	// record, but no flow page, no flow setup chat and no checklist. The agent says hello in a direct
+	// message instead (see routes/installed-loops.ts). Without this field here the zod parse would
+	// drop it and the listing would install as an empty flow.
+	agentOnly: z.boolean().optional(),
+	// With agentOnly: where the new agent should look first to fit the person, in plain words (for
+	// example knowledge pages and files for a design style). Passed to the hello scan.
+	firstLook: z.string().min(1).optional(),
 })
 export type LoopSettings = z.infer<typeof loopSettingsSchema>
 

@@ -41,7 +41,7 @@ vi.mock('@/lib/theme', () => ({
 vi.mock('sonner', () => ({ toast: Object.assign(toastMock, { error: toastErrorMock }) }))
 
 vi.mock('@/lib/api', () => ({
-	api: { search: { query: vi.fn() } },
+	api: { search: { query: vi.fn(), recordOpen: vi.fn().mockResolvedValue(undefined) } },
 }))
 
 vi.mock('@/hooks/use-objects', () => ({ useObjects: () => ({ data: objectsRef.current }) }))
@@ -169,6 +169,7 @@ beforeEach(() => {
 	vi.mocked(trackSearchPerformed).mockClear()
 	vi.mocked(trackSearchResultOpened).mockClear()
 	vi.mocked(api.search.query).mockReset()
+	vi.mocked(api.search.recordOpen).mockClear()
 	vi.mocked(api.search.query).mockImplementation(async (_ws, params) =>
 		params?.statuses === 'needs_you'
 			? response([needsYouRow])
@@ -501,6 +502,7 @@ describe('launcher with words and pills', () => {
 			to: '/$workspaceId/chats/$conversationId',
 			params: { workspaceId: 'ws-1', conversationId: IDS.chat },
 		})
+		expect(api.search.recordOpen).toHaveBeenCalledWith('ws-1', IDS.chat)
 		expect(setOpenMock).toHaveBeenCalledWith(false)
 	})
 
@@ -744,6 +746,7 @@ describe('launcher: a teammate first', () => {
 			to: '/$workspaceId/chats/$conversationId',
 			params: { workspaceId: 'ws-1', conversationId: DM },
 		})
+		expect(api.search.recordOpen).toHaveBeenCalledWith('ws-1', DM)
 		expect(setOpenMock).toHaveBeenCalledWith(false)
 	})
 
@@ -779,6 +782,7 @@ describe('launcher: a teammate first', () => {
 		expect(trackSearchResultOpened).toHaveBeenCalledWith(
 			expect.objectContaining({ entity_type: 'direct_message', entity_id: DM }),
 		)
+		expect(api.search.recordOpen).toHaveBeenCalledWith('ws-1', DM)
 	})
 
 	it('dims the row and ignores a second Enter while the chat is being created', async () => {

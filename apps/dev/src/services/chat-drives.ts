@@ -8,6 +8,7 @@ import {
 	stripTrailingSlash,
 } from '@maskin/shared'
 import { and, desc, eq, inArray, notInArray, or, sql } from 'drizzle-orm'
+import { isReadablePromptEnabled } from '../lib/readable-prompt'
 
 /** Hard cap on the block, in characters. It rides in every chat, so it stays small. */
 export const CHAT_DRIVES_MAX = 2000
@@ -151,8 +152,11 @@ export async function buildChatDrivesBlock(
 			: drivenLoops
 	).slice(0, MAX_LOOPS)
 	const open = drivenOpen.filter((o) => o.id !== subject?.id).slice(0, MAX_OPEN_OBJECTS)
+	// With the readable prompt on, the "Jobs you are handed" block (chat-job-target.ts) is the
+	// one place a flow's targets are listed; listing them here too put every table in twice.
+	const withTargets = !isReadablePromptEnabled()
 	const loopLines = loops.map((l) => {
-		const targets = describeTargets(l.metadata)
+		const targets = withTargets ? describeTargets(l.metadata) : ''
 		const closes = describeCloseCondition(l.metadata)
 		return `- ${link(l.id, l.title)} (${l.status})${targets ? `. Targets: ${targets}` : ''}${closes ? `. Closes when: ${closes}` : ''}`
 	})
@@ -166,7 +170,9 @@ export async function buildChatDrivesBlock(
 					`This chat is about ${link(subject.id, subject.title)} (${subject.type}, ${subject.status}).`,
 				]
 			: []),
-		...(loopLines.length ? ['Flows, with targets as actual of target:', ...loopLines] : []),
+		...(loopLines.length
+			? [withTargets ? 'Flows, with targets as actual of target:' : 'Flows:', ...loopLines]
+			: []),
 		...(openLines.length ? ['Open items:', ...openLines] : []),
 	]
 

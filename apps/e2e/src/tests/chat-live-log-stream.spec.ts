@@ -65,8 +65,8 @@ test.describe('Chats — live transcript over the SSE log stream', () => {
 		}) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 
-			// A trial workspace caps seats; the agent must join as a member for
-			// the conversation to route a turn to it.
+			// Grant headroom so the seat cap is never in play; the agent must join
+			// as a member for the conversation to route a turn to it.
 			await grantPlanHeadroom(account.apiKey, account.workspaceId)
 			const agent = await account.api.createAgentActor(`E2E Live Log Agent ${Date.now()}`)
 			await account.api.addWorkspaceMember(account.workspaceId, agent.id)

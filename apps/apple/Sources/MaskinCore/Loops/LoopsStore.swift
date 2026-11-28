@@ -135,16 +135,18 @@ public final class LoopsStore {
 	public var isDisplayCustomised: Bool { sort != .recent || display != LoopsDisplay() || filter != .everything }
 
 	/// Every loop in the chosen order, narrowed by the search text and, when the pill is on, to the
-	/// flows that need the viewer.
-	public func filtered(query: String = "") -> [LoopSummary] {
+	/// flows that need the viewer. While words are typed, `rank` (the server's best-match order) wins
+	/// over the chosen sort, so the best match is the first card. Without it the chosen order stands.
+	public func filtered(query: String = "", rank: [String: Int]? = nil) -> [LoopSummary] {
 		let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
-		return sort.apply(
+		let rows = sort.apply(
 			to: loops.filter {
 				(text.isEmpty || $0.displayName.localizedCaseInsensitiveContains(text))
 					&& (!needsYouOnly || ($0.status.isLive && needsYou($0)))
 					&& (!runningOnly || $0.status.isLive)
 					&& (tagFilter == nil || FlowTags.has($0, tagFilter ?? ""))
 			}, reversed: display.reversed)
+		return PageSearchRank.sort(rows, by: rank, id: \.id)
 	}
 
 	public var waitingCount: Int { loops.reduce(0) { $0 + $1.waitingCount } }

@@ -39,7 +39,7 @@ export function LoopStats({ loop, cyclesRunning, asksWaiting, nextFire }: LoopSt
 		const stats: Tile[] = [
 			{
 				value: String(loop.inProgressCount),
-				label: 'in progress',
+				label: 'open',
 				className: inProgressColor,
 				live: isLiveLoopPill(loop.pill) && loop.inProgressCount > 0,
 			},

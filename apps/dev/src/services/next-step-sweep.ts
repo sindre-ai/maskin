@@ -5,7 +5,10 @@
  * Every 5 minutes, on every server instance, for each workspace with the `next-step-sweep` flag:
  *   - overdue: an open next step more than 5 minutes past due;
  *   - no step: a covered object (see NEXT_STEP_COVERED_OBJECTS) driven by an agent with no open or
- *     blocked step, not updated for 2 hours.
+ *     blocked step, not updated for 2 hours;
+ *   - task due: a task owned by an agent that is still in backlog with a due date (metadata.due_at)
+ *     within the next 24 hours. An agent's own change wakes nobody, so a task an agent made for
+ *     itself would otherwise never start (reason task_ready).
  * Skipped without a trace: a driver a person paused, an object that already has a run on it or had
  * one in the last hour (from any mechanism), and an object where the driver has a live decision
  * card (a person is being waited on, which is not stuck).
@@ -21,12 +24,18 @@
  * (outcome recorded_only) and starts nothing. A woken tick starts at most 3 runs per agent.
  * Comparing the recorded list with what is really stuck is a person's step before that flag goes on.
  *
+ * Wake per queue, never per contact. A queued object (a contact, or a member of a running flow that
+ * is not a bet, loop or event) is not woken alone: everything one agent has due in a tick goes into
+ * one run, with at most MAX_OBJECTS_PER_QUEUE_RUN objects in its prompt. It counts as one run
+ * against the agent's cap per tick. Each object still gets its own claim row.
+ *
  * One `driver_woken` event per decision, source `sweep`. The outcome of a run it started is sent
  * by DriverWaker.onSessionEnded().
  */
 import type { Database } from '@maskin/db'
 import {
 	events,
+	actors,
 	forYouWithdrawals,
 	nextStepSweepClaims,
 	nextSteps,
@@ -44,7 +53,8 @@ import {
 	findObjectsNeedingNextStep,
 	getLiveNextStep,
 } from '../lib/next-steps'
-import { DRIVER_WOKEN_ACTION, buildWakePrompt } from './driver-wake'
+import { DRIVER_WOKEN_ACTION, buildQueueWakePrompt, buildWakePrompt } from './driver-wake'
+import { dueAtOf } from './push-policy'
 import { SessionNotAdmittedError } from './self-start-limits'
 import { TERMINAL_STATUSES, startSession } from './session-lifecycle'
 
@@ -53,6 +63,8 @@ export const SWEEP_INTERVAL_MS = 5 * 60_000
 export const NO_STEP_QUIET_MS = 2 * 60 * 60_000
 /** ASSUMED, no source: record only for this long before a workspace may start runs. */
 export const RECORD_ONLY_MS = 3 * 24 * 60 * 60_000
+/** ASSUMED, no source: objects one queued run is told about. The rest wait for the next sweep. */
+export const MAX_OBJECTS_PER_QUEUE_RUN = 25
 /** ASSUMED, no source: runs one agent may be woken for in one tick. */
 export const MAX_WAKES_PER_AGENT_PER_TICK = 3
 const HOUR_MS = 60 * 60_000
@@ -63,7 +75,14 @@ const DECISION_CARD_MAX_AGE_MS = 14 * DAY_MS
 const CANDIDATES_PER_WORKSPACE = 500
 
 export type SweepMode = 'off' | 'record' | 'wake'
-export type SweepReason = Extract<DriverWakeReason, 'step_overdue' | 'no_next_step'>
+export type SweepReason = Extract<DriverWakeReason, 'step_overdue' | 'no_next_step' | 'task_ready'>
+/** A backlog task is ready this long before its due date. */
+export const TASK_DUE_LEAD_MS = DAY_MS
+
+/** What the sweep looks at: an object needing a next step, or a backlog task that is due soon. */
+export type SweepItem = Omit<ObjectNeedingNextStep, 'reason'> & {
+	reason: ObjectNeedingNextStep['reason'] | 'task_due'
+}
 
 // ── Pure decisions ─────────────────────────────────────────────────────────
 
@@ -83,8 +102,14 @@ export function sweepMode(input: {
 	return input.now.getTime() - input.firstRecordedAt.getTime() >= RECORD_ONLY_MS ? 'wake' : 'record'
 }
 
-export function reasonFor(found: Pick<ObjectNeedingNextStep, 'reason'>): SweepReason {
+export function reasonFor(found: Pick<SweepItem, 'reason'>): SweepReason {
+	if (found.reason === 'task_due') return 'task_ready'
 	return found.reason === 'overdue' ? 'step_overdue' : 'no_next_step'
+}
+
+/** A backlog task whose due date falls within the next 24 hours (or has passed) counts as ready. */
+export function isTaskDueSoon(dueAt: Date | null, now: Date): boolean {
+	return dueAt !== null && dueAt.getTime() - now.getTime() <= TASK_DUE_LEAD_MS
 }
 
 /** Start of the time bucket a claim belongs to: the hour when waking, the day when recording. */
@@ -94,6 +119,57 @@ export function bucketStart(now: Date, mode: 'record' | 'wake'): Date {
 }
 
 // ── Reads ──────────────────────────────────────────────────────────────────
+
+/**
+ * Tasks owned by an agent that are still in backlog and due within 24 hours. The due date is free
+ * text in metadata.due_at, so the query only narrows by the date part (a day either side, so a
+ * time zone offset cannot hide a task) and the exact test is made here on the parsed date.
+ */
+export async function findBacklogTasksDueSoon(
+	db: Database,
+	opts: { workspaceId: string; now: Date; limit?: number },
+): Promise<SweepItem[]> {
+	const horizon = new Date(opts.now.getTime() + TASK_DUE_LEAD_MS + DAY_MS)
+		.toISOString()
+		.slice(0, 10)
+	const rows = await db
+		.select({
+			objectId: objects.id,
+			workspaceId: objects.workspaceId,
+			status: objects.status,
+			driverId: actors.id,
+			metadata: objects.metadata,
+		})
+		.from(objects)
+		.innerJoin(actors, and(eq(actors.id, objects.driver), eq(actors.type, 'agent')))
+		.where(
+			and(
+				eq(objects.workspaceId, opts.workspaceId),
+				eq(objects.type, 'task'),
+				eq(objects.status, 'backlog'),
+				sql`${objects.metadata}->>'due_at' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'`,
+				sql`left(${objects.metadata}->>'due_at', 10) <= ${horizon}`,
+			),
+		)
+		.limit(opts.limit ?? CANDIDATES_PER_WORKSPACE)
+	const items: SweepItem[] = []
+	for (const row of rows) {
+		const dueAt = dueAtOf((row.metadata ?? {}) as Record<string, unknown>)
+		if (!isTaskDueSoon(dueAt, opts.now)) continue
+		items.push({
+			objectId: row.objectId,
+			workspaceId: row.workspaceId,
+			type: 'task',
+			status: row.status,
+			driverId: row.driverId,
+			reason: 'task_due',
+			queued: false,
+			nextStepId: null,
+			dueAt,
+		})
+	}
+	return items
+}
 
 /**
  * Of `objectIds`, those with a run on them now, or one that started in the last hour: by any
@@ -269,12 +345,14 @@ export class NextStepSweep {
 		})
 		if (mode === 'off') return
 
-		const found = await findObjectsNeedingNextStep(this.db, {
+		const needingStep = await findObjectsNeedingNextStep(this.db, {
 			workspaceId,
 			now,
 			notUpdatedSince: new Date(now.getTime() - NO_STEP_QUIET_MS),
 			limit: CANDIDATES_PER_WORKSPACE,
 		})
+		const dueTasks = await findBacklogTasksDueSoon(this.db, { workspaceId, now })
+		const found: SweepItem[] = [...needingStep, ...dueTasks]
 		if (found.length === 0) return
 
 		const ids = found.map((f) => f.objectId)
@@ -284,6 +362,7 @@ export class NextStepSweep {
 		])
 		const wokenPerAgent = new Map<string, number>()
 		const paused = new Map<string, boolean>()
+		const queues = new Map<string, SweepItem[]>()
 
 		for (const item of found) {
 			if (busy.has(item.objectId) || covered.has(item.objectId)) continue
@@ -296,6 +375,10 @@ export class NextStepSweep {
 				(wokenPerAgent.get(item.driverId) ?? 0) >= MAX_WAKES_PER_AGENT_PER_TICK
 			)
 				continue
+			if (mode === 'wake' && item.queued) {
+				queues.set(item.driverId, [...(queues.get(item.driverId) ?? []), item])
+				continue
+			}
 
 			const claimed = await this.claim(item, mode, now)
 			if (!claimed) continue
@@ -312,14 +395,24 @@ export class NextStepSweep {
 			wokenPerAgent.set(item.driverId, (wokenPerAgent.get(item.driverId) ?? 0) + 1)
 			await this.wake(item, claimed, now)
 		}
+
+		for (const [driverId, due] of queues) {
+			if ((wokenPerAgent.get(driverId) ?? 0) >= MAX_WAKES_PER_AGENT_PER_TICK) continue
+			const claims: { item: SweepItem; claimId: string }[] = []
+			// Claim until the run is full, so objects an earlier tick already holds don't use up the cap.
+			for (const item of due) {
+				if (claims.length >= MAX_OBJECTS_PER_QUEUE_RUN) break
+				const claimId = await this.claim(item, 'wake', now)
+				if (claimId) claims.push({ item, claimId })
+			}
+			if (claims.length === 0) continue
+			wokenPerAgent.set(driverId, (wokenPerAgent.get(driverId) ?? 0) + 1)
+			await this.wakeQueue(workspaceId, driverId, claims, due.length, now)
+		}
 	}
 
 	/** Inserting the row is the claim. Null when another instance, or an earlier tick, has it. */
-	private async claim(
-		item: ObjectNeedingNextStep,
-		mode: 'record' | 'wake',
-		now: Date,
-	): Promise<string | null> {
+	private async claim(item: SweepItem, mode: 'record' | 'wake', now: Date): Promise<string | null> {
 		const [row] = await this.db
 			.insert(nextStepSweepClaims)
 			.values({
@@ -335,7 +428,7 @@ export class NextStepSweep {
 		return row?.id ?? null
 	}
 
-	private async wake(item: ObjectNeedingNextStep, claimId: string, now: Date): Promise<void> {
+	private async wake(item: SweepItem, claimId: string, now: Date): Promise<void> {
 		const reason = reasonFor(item)
 		const free = () =>
 			this.db.delete(nextStepSweepClaims).where(eq(nextStepSweepClaims.id, claimId))
@@ -412,6 +505,121 @@ export class NextStepSweep {
 				.update(nextSteps)
 				.set({ wakeCount: sql`${nextSteps.wakeCount} + 1`, lastWokenAt: now })
 				.where(eq(nextSteps.id, nextStep.id))
+		}
+	}
+
+	/**
+	 * One run for everything `driverId` has due. The run has no one object to start from, like the
+	 * heartbeat, so the claim rows and each object's active session are what keep another
+	 * mechanism off them.
+	 */
+	private async wakeQueue(
+		workspaceId: string,
+		driverId: string,
+		claims: { item: SweepItem; claimId: string }[],
+		total: number,
+		now: Date,
+	): Promise<void> {
+		const reason: SweepReason = 'step_overdue'
+		const ids = claims.map((c) => c.item.objectId)
+		const claimIds = claims.map((c) => c.claimId)
+		const free = () =>
+			this.db.delete(nextStepSweepClaims).where(inArray(nextStepSweepClaims.id, claimIds))
+
+		const rows = await this.db
+			.select({ id: objects.id, type: objects.type, title: objects.title, status: objects.status })
+			.from(objects)
+			.where(inArray(objects.id, ids))
+		if (rows.length === 0) return void (await free())
+		const stepRows = await this.db
+			.select()
+			.from(nextSteps)
+			.where(and(inArray(nextSteps.objectId, ids), inArray(nextSteps.status, ['open', 'blocked'])))
+		const stepByObject = new Map(stepRows.map((r) => [r.objectId, r]))
+		const byId = new Map(rows.map((r) => [r.id, r]))
+
+		let sessionId: string
+		try {
+			const started = await startSession({
+				workspaceId,
+				actorId: driverId,
+				callerKind: 'internal',
+				actionPrompt: buildQueueWakePrompt({
+					items: ids.flatMap((id) => {
+						const object = byId.get(id)
+						const step = stepByObject.get(id)
+						return object
+							? [
+									{
+										object,
+										nextStep: step
+											? { action: step.action, status: step.status, dueAt: step.dueAt }
+											: null,
+									},
+								]
+							: []
+					}),
+					total,
+				}),
+				config: {
+					start_reason: 'sweep',
+					driver_wake: {
+						source: 'sweep',
+						reasons: [reason],
+						changed_object_ids: ids,
+						queued: true,
+					},
+				},
+				createdBy: driverId,
+				initiatedFromObjectId: null,
+			})
+			sessionId = started.sessionId
+		} catch (err) {
+			if (err instanceof SessionNotAdmittedError) {
+				await this.db
+					.update(nextStepSweepClaims)
+					.set({ mode: 'refused' })
+					.where(inArray(nextStepSweepClaims.id, claimIds))
+				return trackDriverWoken({
+					workspaceId,
+					agentId: driverId,
+					source: 'sweep',
+					reason,
+					outcome: 'dropped_other_mechanism',
+					dropReason: 'not_admitted',
+				})
+			}
+			// Not decided: free the claims so the next tick tries these objects again.
+			await free()
+			logger.error('Next step sweep could not start a queued run', {
+				workspace_id: workspaceId,
+				agent_id: driverId,
+				objects: ids.length,
+				error: String(err),
+			})
+			return
+		}
+
+		await this.db.insert(events).values(
+			ids.map((objectId) => ({
+				workspaceId,
+				actorId: driverId,
+				action: DRIVER_WOKEN_ACTION,
+				entityType: 'session',
+				entityId: sessionId,
+				data: { object_id: objectId, reason },
+			})),
+		)
+		await this.db
+			.update(objects)
+			.set({ activeSessionId: sessionId, updatedAt: now })
+			.where(and(inArray(objects.id, ids), sql`${objects.activeSessionId} IS NULL`))
+		const stepIds = stepRows.map((r) => r.id)
+		if (stepIds.length > 0) {
+			await this.db
+				.update(nextSteps)
+				.set({ wakeCount: sql`${nextSteps.wakeCount} + 1`, lastWokenAt: now })
+				.where(inArray(nextSteps.id, stepIds))
 		}
 	}
 }

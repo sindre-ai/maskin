@@ -49,7 +49,7 @@ public enum CycleActivityPlanner {
 		return CycleActivityState(
 			flowName: loop.displayName, cycle: loop.closedCount + 1,
 			stage: needsYou ? "" : loop.pill.label, progress: progress,
-			summary: needsYou ? "Waiting on you." : "\(loop.inProgressCount) in progress.",
+			summary: needsYou ? "Waiting on you." : "\(loop.inProgressCount) open.",
 			phase: needsYou ? .needsYou : .running)
 	}
 

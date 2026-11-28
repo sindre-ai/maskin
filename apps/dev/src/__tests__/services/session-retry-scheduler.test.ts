@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
 	KILLSWITCH_ENV_VAR,
+	MAX_RETRIES_PER_TICK,
 	MAX_RETRY_ATTEMPTS,
+	RETRY_DEFER_MS,
 	SessionRetryScheduler,
 } from '../../services/session-retry-scheduler'
 
@@ -370,5 +372,83 @@ describe('SessionRetryScheduler', () => {
 		const data = scheduled?.data as Record<string, unknown>
 		expect(data.source).toBeUndefined()
 		expect(data.confidence).toBeUndefined()
+	})
+
+	describe('per-tick allowance', () => {
+		function buildDueRows(count: number, overrides: Partial<Record<string, unknown>> = {}) {
+			return Array.from({ length: count }, (_, i) =>
+				buildDueRow({
+					id: `session-00000000-0000-0000-0000-00000000${String(i + 1).padStart(4, '0')}`,
+					...overrides,
+				}),
+			)
+		}
+
+		it('starts only the allowance when more retries are due, and defers the rest a tick ahead', async () => {
+			const { db, updates } = fakeDb(buildDueRows(10))
+			const scheduler = new SessionRetryScheduler(db as never, {} as NodeJS.ProcessEnv, {
+				maxRetriesPerTick: 2,
+			})
+
+			await scheduler.tick(NOW)
+
+			expect(startSession).toHaveBeenCalledTimes(2)
+			const deferred = updates.filter(
+				(u) => u.retryAt instanceof Date && (u.retryAt as Date).getTime() > NOW.getTime(),
+			)
+			expect(deferred).toHaveLength(8)
+			expect(
+				deferred.every((u) => (u.retryAt as Date).getTime() === NOW.getTime() + RETRY_DEFER_MS),
+			).toBe(true)
+		})
+
+		it('starts the next allowance on the following tick', async () => {
+			const nextTick = new Date(NOW.getTime() + RETRY_DEFER_MS)
+			const { db } = fakeDb(buildDueRows(10, { retryAt: nextTick }))
+			const scheduler = new SessionRetryScheduler(db as never, {} as NodeJS.ProcessEnv, {
+				maxRetriesPerTick: 2,
+			})
+
+			await scheduler.tick(nextTick)
+
+			expect(startSession).toHaveBeenCalledTimes(2)
+		})
+
+		it('starts at most MAX_RETRIES_PER_TICK when no allowance is given', async () => {
+			const { db } = fakeDb(buildDueRows(MAX_RETRIES_PER_TICK + 3))
+			const scheduler = new SessionRetryScheduler(db as never, {} as NodeJS.ProcessEnv)
+
+			await scheduler.tick(NOW)
+
+			expect(startSession).toHaveBeenCalledTimes(MAX_RETRIES_PER_TICK)
+		})
+
+		it('starts a single due retry on its own tick, with nothing deferred', async () => {
+			const { db, updates } = fakeDb([buildDueRow()])
+			const scheduler = new SessionRetryScheduler(db as never, {} as NodeJS.ProcessEnv, {
+				maxRetriesPerTick: 2,
+			})
+
+			await scheduler.tick(NOW)
+
+			expect(startSession).toHaveBeenCalledTimes(1)
+			expect(updates.some((u) => u.retryAt instanceof Date)).toBe(false)
+		})
+
+		it('still clears and alerts a capped row on the tick it comes due, without spending the allowance', async () => {
+			const { db, inserts } = fakeDb([
+				buildDueRow({ attemptNumber: MAX_RETRY_ATTEMPTS }),
+				buildDueRow({ id: 'session-00000000-0000-0000-0000-000000000002' }),
+			])
+			const scheduler = new SessionRetryScheduler(db as never, {} as NodeJS.ProcessEnv, {
+				maxRetriesPerTick: 1,
+			})
+
+			await scheduler.tick(NOW)
+
+			expect(inserts.some((r) => r.action === 'session_retry_capped')).toBe(true)
+			expect(alertOwnersOncePerDay).toHaveBeenCalledTimes(1)
+			expect(startSession).toHaveBeenCalledTimes(1)
+		})
 	})
 })

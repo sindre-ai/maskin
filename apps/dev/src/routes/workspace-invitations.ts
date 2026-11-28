@@ -25,9 +25,8 @@ import { isWorkspaceHumanAdminOrOwner, isWorkspaceMember } from '../lib/workspac
 import {
 	SeatCapExceededError,
 	countHumanMembers,
-	resolvePlanTier,
 	seatCapErrorBody,
-	seatCapForPlan,
+	seatCapForWorkspace,
 } from '../lib/workspace-capacity'
 import { createEmailOnPreferences } from '../services/email-preferences'
 
@@ -378,8 +377,7 @@ app.post('/:token/accept', async (c) => {
 				// Invitee is always human on the new-signup branch (we just inserted
 				// them with type: 'human'). Skip cap only for enterprise-owned workspaces.
 				if (!isEnterprise(locked)) {
-					const plan = resolvePlanTier(locked.settings)
-					const cap = seatCapForPlan(plan)
+					const { plan, cap } = seatCapForWorkspace(locked.settings)
 					if (cap !== null) {
 						const used = await countHumanMembers(tx, invite.workspaceId)
 						if (used >= cap) {
@@ -560,8 +558,7 @@ app.post('/:token/accept', async (c) => {
 					)
 					.limit(1)
 				if (!existingMember) {
-					const plan = resolvePlanTier(locked.settings)
-					const cap = seatCapForPlan(plan)
+					const { plan, cap } = seatCapForWorkspace(locked.settings)
 					if (cap !== null) {
 						const used = await countHumanMembers(tx, invite.workspaceId)
 						if (used >= cap) {

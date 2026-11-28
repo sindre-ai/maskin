@@ -6,13 +6,16 @@ import { YoutubeError } from './errors'
  * Daily quota guard for the YouTube Data API. Google gives the whole Maskin project one budget a
  * day, so the count lives in youtube_quota_usage, not on the integration row. The budget is split
  * in buckets, because Google meters search.list and videos.insert separately from everything else:
- *  - data: 10,000 units a day at Google, held to 5,000 global and 1,000 per workspace.
+ *  - data: 10,000 units a day at Google, held to 5,000 global and 2,000 per workspace.
  *  - search: 100 search.list calls a day at Google, held to 60 global and 20 per workspace.
- *  - upload: 100 videos.insert calls a day at Google, held to 20 global and 5 per workspace.
+ *  - upload: 100 videos.insert calls a day at Google, held to 80 global and 20 per workspace.
  *  - analytics: the YouTube Analytics API has no published default quota (Researcher, 2026-11-04).
  *    The cap is ASSUMED, see ASSUMED_ANALYTICS_DAILY_QUOTA below.
- * Search, upload and analytics are counted in calls (1 unit each). The caps are conservative on
- * purpose, so one looping agent cannot drain the shared budget for everyone.
+ * Search, upload and analytics are counted in calls (1 unit each). The caps stay under Google's so
+ * one looping agent cannot drain the shared budget for everyone. Raised on 25 Nov 2026: uploads
+ * from 5 to 20 per workspace and 20 to 80 global (Google's 100 leaves 20 spare), data from 1,000 to
+ * 2,000 per workspace (global stays 5,000). Safe because every upload needs a person's approval,
+ * so a looping agent cannot spend the upload budget alone.
  */
 export type YoutubeQuotaBucket = 'data' | 'search' | 'upload' | 'analytics'
 
@@ -25,9 +28,9 @@ export type YoutubeQuotaBucket = 'data' | 'search' | 'upload' | 'analytics'
 export const ASSUMED_ANALYTICS_DAILY_QUOTA = 200
 
 export const BUCKET_CAPS: Record<YoutubeQuotaBucket, { global: number; workspace: number }> = {
-	data: { global: 5_000, workspace: 1_000 },
+	data: { global: 5_000, workspace: 2_000 },
 	search: { global: 60, workspace: 20 },
-	upload: { global: 20, workspace: 5 },
+	upload: { global: 80, workspace: 20 },
 	analytics: {
 		global: ASSUMED_ANALYTICS_DAILY_QUOTA,
 		workspace: Math.floor(ASSUMED_ANALYTICS_DAILY_QUOTA / 4),
@@ -127,12 +130,12 @@ export async function chargeYoutubeQuota(
 
 /**
  * Upload bucket (videos.insert): Google allows 100 uploads a day for the project, so Maskin caps
- * it at 20 a day globally and 5 a day per workspace, one unit per upload. The rows live in the
+ * it at 80 a day globally and 20 a day per workspace, one unit per upload. The rows live in the
  * same table under their own scope names, so an upload never eats into the data budget and the
  * data budget never blocks an upload.
  */
-export const UPLOAD_GLOBAL_DAILY_CAP = 20
-export const UPLOAD_WORKSPACE_DAILY_CAP = 5
+export const UPLOAD_GLOBAL_DAILY_CAP = BUCKET_CAPS.upload.global
+export const UPLOAD_WORKSPACE_DAILY_CAP = BUCKET_CAPS.upload.workspace
 export const UPLOAD_GLOBAL_SCOPE = 'upload:global'
 export const uploadWorkspaceScope = (workspaceId: string) => `upload:${workspaceId}`
 

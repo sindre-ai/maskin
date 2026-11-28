@@ -64,6 +64,46 @@ describe('sanitizeEnvForMicroVM', () => {
 		expect(sanitizedCount).toBe(1)
 	})
 
+	describe('with MASKIN_READABLE_PROMPT on', () => {
+		const ON = { MASKIN_READABLE_PROMPT: 'on' }
+
+		it('keeps non-ASCII values out of the inline env without stripping them', () => {
+			const { inline, overflow, sanitizedCount } = sanitizeEnvForMicroVM({
+				...ON,
+				NORWEGIAN: 'pølse-æøå',
+				ASCII: 'plain',
+			})
+			expect(inline).toEqual({ ...ON, ASCII: 'plain' })
+			expect(overflow).toEqual([{ key: 'NORWEGIAN', value: 'pølse-æøå' }])
+			expect(sanitizedCount).toBe(0)
+		})
+
+		it('keeps newlines, tabs and em dashes of a multi-line prompt intact', () => {
+			const prompt = '## Title\n\n- one\n- two\tcol — dash'
+			const { inline, overflow } = sanitizeEnvForMicroVM({ ...ON, SYSTEM_PROMPT: prompt })
+			expect(inline).toEqual(ON)
+			expect(overflow).toEqual([{ key: 'SYSTEM_PROMPT', value: prompt }])
+		})
+
+		it('drops NUL and other control characters, counting the value once', () => {
+			const { overflow, sanitizedCount } = sanitizeEnvForMicroVM({
+				...ON,
+				X: 'a\u0000b\r\nc\u001bd',
+			})
+			expect(overflow).toEqual([{ key: 'X', value: 'ab\ncd' }])
+			expect(sanitizedCount).toBe(1)
+		})
+	})
+
+	it('treats the switch as off unless it is exactly on, so the old stripping stays', () => {
+		const { inline, overflow } = sanitizeEnvForMicroVM({
+			MASKIN_READABLE_PROMPT: 'off',
+			SYSTEM_PROMPT: 'a\nb — c',
+		})
+		expect(inline.SYSTEM_PROMPT).toBe('ab  c')
+		expect(overflow).toEqual([])
+	})
+
 	it('throws on an invalid env var key (shell injection guard)', () => {
 		expect(() => sanitizeEnvForMicroVM({ 'FOO=BAR': 'v' })).toThrow(/Invalid env var key/)
 		expect(() => sanitizeEnvForMicroVM({ 'A;rm -rf /': 'v' })).toThrow(/Invalid env var key/)

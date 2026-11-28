@@ -112,6 +112,80 @@ describe('YouTube action card', () => {
 		expect(publish).toContain('Goes public at exactly: 2026-12-01T09:00:00.000Z (UTC)')
 	})
 
+	it('says a video delete is permanent in capitals and shows the stored title and id', () => {
+		const card = renderYoutubeActionCard({
+			...base,
+			kind: 'delete_video',
+			payload: { id: 'vid1', title: 'Launch day' },
+		})
+		const body = card.decision.draft?.body ?? ''
+		expect(card.decision.title).toContain('PERMANENTLY')
+		expect(card.decision.summary).toContain('PERMANENTLY DELETE')
+		expect(body).toContain('PERMANENT: THIS DELETES THE VIDEO FOR GOOD. IT CANNOT BE UNDONE.')
+		expect(body).toContain('Video title: Launch day')
+		expect(body).toContain('Video id: vid1')
+	})
+
+	it('shows what a comment, playlist and playlist entry delete will remove, from the stored request', () => {
+		const comment = renderActionBody({
+			...base,
+			kind: 'delete_comment',
+			payload: { id: 'c1', author: 'Ann', text: 'Great video' },
+		})
+		expect(comment).toContain('Comment by: Ann')
+		expect(comment).toContain('Comment text: Great video')
+		const playlist = renderActionBody({
+			...base,
+			kind: 'delete_playlist',
+			payload: { id: 'PL1', title: 'Best of' },
+		})
+		expect(playlist).toContain('Playlist title: Best of')
+		expect(playlist).toContain('Playlist id: PL1')
+		const entry = renderActionBody({
+			...base,
+			kind: 'remove_from_playlist',
+			payload: {
+				id: 'item1',
+				playlistId: 'PL1',
+				playlistTitle: 'Best of',
+				videoId: 'vid1',
+				videoTitle: 'Launch day',
+			},
+		})
+		expect(entry).toContain('Playlist title: Best of')
+		expect(entry).toContain('Video title: Launch day')
+		expect(entry).toContain('Only the entry in this playlist is removed')
+	})
+
+	it('shows the visibility of an upload on the card, in capitals, from the stored request', () => {
+		const card = (payload: Record<string, unknown>) =>
+			renderYoutubeActionCard({
+				...base,
+				kind: 'upload_video',
+				payload: { fileName: 'launch.mp4', sizeBytes: 5000, ...payload },
+				targetVideoId: null,
+			})
+		const pub = card({ privacyStatus: 'public' })
+		expect(pub.decision.summary).toContain('visibility PUBLIC')
+		expect(pub.decision.options[0]?.consequences).toEqual([
+			'The video uploads to YouTube as PUBLIC',
+			'Everyone can watch it once YouTube has processed it',
+		])
+		expect(pub.decision.draft?.body).toContain(
+			'Visibility: PUBLIC. The video is visible to everyone',
+		)
+		expect(card({ privacyStatus: 'unlisted' }).decision.options[0]?.consequences[0]).toContain(
+			'UNLISTED',
+		)
+		const scheduled = card({ privacyStatus: 'private', publishAt: '2026-12-01T09:00:00.000Z' })
+		expect(scheduled.decision.options[0]?.consequences[1]).toBe(
+			'It becomes PUBLIC at 2026-12-01T09:00:00.000Z (UTC)',
+		)
+		expect(card({ privacyStatus: 'private' }).decision.options[0]?.consequences[1]).toBe(
+			'Nobody can watch it until a second approval',
+		)
+	})
+
 	it('marks Approve as the destructive option and recommends Reject', () => {
 		const { decision } = renderYoutubeActionCard({ ...base, kind: 'like' })
 		const approve = decision.options.find((o) => o.label === 'Approve')

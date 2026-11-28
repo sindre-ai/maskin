@@ -122,7 +122,7 @@ public final class LoopDetailStore {
 		if loop.waitingCount > 0 { parts.append("\(loop.waitingCount) \(loop.waitingCount == 1 ? "needs" : "need") you") }
 		if failed > 0 { parts.append("\(failed) recent failure\(failed == 1 ? "" : "s")") }
 		if parts.isEmpty { parts.append("Healthy") }
-		parts.append("\(loop.inProgressCount) in progress")
+		parts.append("\(loop.inProgressCount) open")
 		return parts.joined(separator: " · ")
 	}
 

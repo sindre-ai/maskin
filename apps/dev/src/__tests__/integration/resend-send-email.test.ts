@@ -99,7 +99,7 @@ async function setup(
 	await insertSendMode(db, {
 		workspaceId: workspace.id,
 		agentId: agent.id,
-		kind: 'email',
+		kind: 'agent_email',
 		mode: opts.sendMode ?? 'ask_first',
 	})
 	const [resend] = await db
@@ -310,6 +310,38 @@ describe('resend_send_email: the send setting', () => {
 
 		expect((await post(s.agent.id, s.workspace.id, { object_id: email.id })).status).toBe(403)
 		expect(fetchMock).not.toHaveBeenCalled()
+	})
+})
+
+describe('resend_send_email: own address is its own kind', () => {
+	it('is not opened by always allow on Gmail email', async () => {
+		const s = await setup()
+		await insertSendMode(db, {
+			workspaceId: s.workspace.id,
+			agentId: s.agent.id,
+			kind: 'email',
+			mode: 'always_allow',
+		})
+		const email = await insertEmail(s, { approve: false })
+
+		const res = await post(s.agent.id, s.workspace.id, { object_id: email.id })
+
+		expect(res.status).toBe(403)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('is not closed by deny on Gmail email', async () => {
+		const s = await setup({ sendMode: 'always_allow' })
+		await insertSendMode(db, {
+			workspaceId: s.workspace.id,
+			agentId: s.agent.id,
+			kind: 'email',
+			mode: 'deny',
+		})
+		const email = await insertEmail(s, { approve: false })
+		fetchMock.mockResolvedValueOnce(resendOk('em_own'))
+
+		expect((await post(s.agent.id, s.workspace.id, { object_id: email.id })).status).toBe(200)
 	})
 })
 

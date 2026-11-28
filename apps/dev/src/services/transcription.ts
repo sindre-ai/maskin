@@ -5,8 +5,14 @@ import { logger } from '../lib/logger'
 // /v1/audio/transcriptions endpoint. Billed to the operator's OpenRouter
 // account (MASKIN_FALLBACK_OPENROUTER_KEY), the same one `callLlm` uses.
 
-/** Voxtral Small and Mini are priced within ~15% of each other; Small is the more accurate. */
-export const DEFAULT_TRANSCRIPTION_MODEL = 'mistralai/voxtral-small-transcribe-3-0'
+/**
+ * MAI-Transcribe 2 had the lowest word error (about 12%, against about 31% for the previous default,
+ * Voxtral Small) and the lowest cost of the usable models on 13 Danish, English and mixed recordings
+ * (see the Dictation round 3 comparison). Its OpenRouter price ($0.10 per hour) is a promo until
+ * 31 Dec 2026; if the price after that is above about $0.20 per hour, switch back to
+ * 'elevenlabs/scribe-v2' by setting MASKIN_TRANSCRIPTION_MODEL.
+ */
+export const DEFAULT_TRANSCRIPTION_MODEL = 'microsoft/mai-transcribe-2'
 
 const TIMEOUT_MS = 60_000
 

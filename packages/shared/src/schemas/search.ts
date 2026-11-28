@@ -69,6 +69,12 @@ export const searchQuerySchema = z.object({
 	per_group: z.coerce.number().int().min(1).max(SEARCH_MAX_LIMIT).optional(),
 })
 
+/** Body of POST /api/search/opens: the result the caller just opened from a search. */
+export const searchOpenBodySchema = z.object({
+	entity_id: z.string().uuid(),
+})
+export type SearchOpenBody = z.infer<typeof searchOpenBodySchema>
+
 export type SearchQuery = z.infer<typeof searchQuerySchema>
 export type SearchSort = (typeof SEARCH_SORTS)[number]
 export type SearchSourceGroup = (typeof SEARCH_SOURCE_GROUPS)[number]

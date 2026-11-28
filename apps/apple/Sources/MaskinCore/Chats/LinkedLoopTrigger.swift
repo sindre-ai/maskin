@@ -11,7 +11,7 @@ public struct LinkedLoop: Equatable, Sendable {
 	public var pill: LoopPill
 	/// Nil when the loop is not in the loaded list: the Agents fact is then left out.
 	public var agentCount: Int?
-	/// "3 in progress · 12 closed". Nil when the loop is not in the loaded list.
+	/// "3 open · 12 closed". Nil when the loop is not in the loaded list.
 	public var activity: String?
 	public var firstAgentID: String?
 	public var updatedAt: Date?

@@ -1,4 +1,4 @@
-import { PLAN_NAME, PlanPicker } from '@/components/billing/plan-picker'
+import { PLAN_NAME, PlanPicker, type SellablePlan } from '@/components/billing/plan-picker'
 import { Button } from '@/components/ui/button'
 import {
 	Dialog,
@@ -128,7 +128,7 @@ export function PlanExpiredDialog({
 	const checkout = useStripeCheckout(workspaceId)
 	const cancel = useBillingCancel(workspaceId)
 
-	const handleUpgrade = (target: PaidPlan) => {
+	const handleUpgrade = (target: SellablePlan) => {
 		trackUpgradeClicked({ source: 'expired_dialog', target_plan: target, current_plan: plan })
 		const base = window.location.href.split('?')[0]
 		checkout.mutate(

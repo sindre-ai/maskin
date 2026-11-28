@@ -46,6 +46,7 @@ import {
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
+import { startConnectChecklistSession } from '../services/connect-checklist'
 /**
  * LinkedIn (LinkedIn-backed) integration routes — the whole provider surface,
  * rebuilt against LinkedIn Hosted Auth v2.
@@ -557,6 +558,17 @@ app.openapi(callbackRoute, (async (c) => {
 			actorId: pending.actorId,
 			integrationId: pending.id,
 		})
+		// A reconnect keeps the row active (see /connect), so only a row that was not active
+		// is a new connect.
+		if (pending.status !== CONNECTED_STATUS) {
+			void startConnectChecklistSession({
+				db,
+				workspaceId: pending.workspaceId,
+				actorId: pending.actorId,
+				integrationId: pending.id,
+				provider: PROVIDER,
+			})
+		}
 	} else {
 		logger.warn('linkedin-unipile callback: pending row missing actor_id — event skipped', {
 			integrationId: pending.id,
@@ -757,6 +769,15 @@ async function handleCallbackError(
 					actorId: pending.actorId,
 					integrationId: pending.id,
 				})
+				if (pending.status !== CONNECTED_STATUS) {
+					void startConnectChecklistSession({
+						db,
+						workspaceId: pending.workspaceId,
+						actorId: pending.actorId,
+						integrationId: pending.id,
+						provider: PROVIDER,
+					})
+				}
 			}
 			return redirectAfterConnect(c, pending, error_detail)
 		}

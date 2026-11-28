@@ -80,6 +80,7 @@ COPY github-credential-helper.sh /agent-github-credential-helper.sh
 COPY mcp-scrub-env.jq /mcp-scrub-env.jq
 COPY github-mcp-supervisor.cjs /github-mcp-supervisor.cjs
 COPY strip-images-proxy.js /strip-images-proxy.js
+COPY tool-loader.js /tool-loader.js
 COPY input-stream.js /input-stream.js
 COPY output-stream.js /output-stream.js
 RUN chmod +x /entrypoint.sh /agent-run.sh /agent-github-credential-helper.sh

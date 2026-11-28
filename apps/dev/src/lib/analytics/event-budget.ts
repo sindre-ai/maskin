@@ -20,6 +20,7 @@ const TIER1_EXACT = new Set([
 	'chat_session_seeded',
 	'chat_session_rotated',
 	'integration_connect_started',
+	'connect_checklist_started',
 	'integration_tool_called',
 	'driver_woken',
 	'meeting_transcript_landed',

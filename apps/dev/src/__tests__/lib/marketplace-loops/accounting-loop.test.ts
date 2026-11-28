@@ -35,7 +35,7 @@ describe('Accounting loop definition', () => {
 		expect(ACCOUNTING_LOOP.slug).toBe('accounting-loop')
 		expect(ACCOUNTING_LOOP.name).toBe('Accounting')
 		expect(ACCOUNTING_LOOP.useCase).toBe('Finance')
-		expect(ACCOUNTING_LOOP.version).toBe('1.4.0')
+		expect(ACCOUNTING_LOOP.version).toBe('1.5.0')
 		expect(ACCOUNTING_LOOP.description.length).toBeGreaterThan(0)
 	})
 
@@ -67,7 +67,7 @@ describe('Accounting loop definition', () => {
 		expect(settings.checklist?.driverSourceItemId).toBe(ACCOUNTING_LOOP_ACTOR_BOOKKEEPER)
 		const items = settings.checklist?.items ?? []
 		expect(items.map((i) => i.title)).toEqual([
-			'Connect Dinero as a custom tool',
+			'Connect Dinero',
 			'Run the first connection check',
 			'Say which Dinero plan you have',
 			'Upload one test receipt',
@@ -78,6 +78,14 @@ describe('Accounting loop definition', () => {
 			expect(item.title.split(' ').length).toBeLessThanOrEqual(8)
 		}
 		expect(settings.checklist?.body).toContain('at most 3 questions at a time')
+	})
+
+	it('points the connect step at the Dinero sign-in, not a custom tool and token', () => {
+		const settings = loopSettingsSchema.parse(ACCOUNTING_LOOP.settings)
+		const connect = settings.checklist?.items[0]
+		expect(connect?.body).toMatch(/Dinero connected under Settings, Integrations/)
+		expect(connect?.body).toMatch(/sign in once with their own Dinero user/)
+		expect(connect?.body).not.toMatch(/custom tool/)
 	})
 
 	it('ships one actor, four triggers and four skills, no duplicates', () => {
@@ -186,13 +194,18 @@ describe('Accounting loop definition', () => {
 		}
 	})
 
-	// Install step for Dinero's own server: added as a custom tool, limited to drafts, and a plain
-	// warning that its sign-in runs out because the flow cannot renew it. A check on every first run.
+	// Install step for Dinero: connect it under Settings, Integrations and sign in once with the
+	// owner's own Dinero user. The custom tool route stays as a fallback. A check on every first run.
 	it('tells the owner how to connect Dinero and what the first run checks', () => {
 		const check =
 			skillTexts().find((t) => t.startsWith('---\nname: accounting-connection-check')) ?? ''
-		expect(check).toMatch(/add Dinero's own server as a custom tool/)
+		expect(check).toMatch(/under Integrations, connect Dinero/)
+		expect(check).toMatch(/Sign in once with your own Dinero user/)
+		expect(check).toMatch(/Pro or Total/)
+		expect(check).toMatch(/no token to find or paste/)
 		expect(check).toMatch(/only the one company/)
+		expect(check).toMatch(/Only if Dinero cannot be connected under Integrations/)
+		expect(check).toMatch(/add Dinero's own server as a custom tool/)
 		expect(check).toMatch(/needs someone technical/)
 		expect(check).toMatch(/Limit the tool to reading and saving drafts/)
 		expect(check).toMatch(/read and write access/)
@@ -201,14 +214,49 @@ describe('Accounting loop definition', () => {
 		expect(actorTexts().join('\n')).toMatch(/connection check first/)
 	})
 
-	it('says the Dinero sign-in runs out and the flow cannot renew it', () => {
+	it('says a sign-in error means signing in to Dinero again', () => {
 		const check =
 			skillTexts().find((t) => t.startsWith('---\nname: accounting-connection-check')) ?? ''
-		expect(check).toMatch(/early version/)
-		expect(check).toMatch(/runs out after about an hour/)
-		expect(check).toMatch(/cannot renew it/)
+		expect(check).not.toMatch(/early version/)
+		expect(check).toMatch(/sign in to Dinero again with your own Dinero user/)
+		expect(check).toMatch(/older custom tool route, the token has run out/)
+		expect(check).toMatch(/On the older route the sign-in token runs out after about an hour/)
 		expect(ACCOUNTING_LOOP.description).toMatch(/runs out after about an hour/)
 		expect(actorTexts().join('\n')).toMatch(/do not try to sign in yourself/i)
+	})
+
+	// A connected install gets more than the 18 names from Maskin's own limit (36 tools on 25 Nov
+	// 2026), so the first run must not stop on them. The custom tool route keeps the strict check.
+	it('accepts the tool set a signed-in connection offers and keeps the booking rule', () => {
+		const check =
+			skillTexts().find((t) => t.startsWith('---\nname: accounting-connection-check')) ?? ''
+		expect(check).toMatch(
+			/the connection itself limits the Dinero tools to reading and saving drafts/,
+		)
+		expect(check).toMatch(/Accept that set: do not stop because a tool is not on the 18-name list/)
+		// A tool that books, pays or sends still stops the check, and is never called, except the
+		// booking tools that appear only after a person has switched booking on.
+		expect(check).toMatch(
+			/offers any other tool that books or finalises a voucher, registers a payment or sends anything to a customer/,
+		)
+		expect(check).toMatch(/say so and stop\. Never call such a tool/)
+		expect(check).not.toMatch(/steps 1 to 4/)
+		expect(check).toMatch(/finished the install steps \(1 and 2, or 3 on the older route\)/)
+		expect(ACCOUNTING_LOOP.description).not.toMatch(/early version/)
+	})
+
+	it('keeps the token rule and the allowed-list stop for the custom tool route only', () => {
+		const prompt = actorTexts().join('\n')
+		expect(prompt).toMatch(
+			/When Dinero is connected under Integrations, the connection limits the tools/,
+		)
+		expect(prompt).toMatch(
+			/On the older custom tool route, if the connection check shows a Dinero tool/,
+		)
+		expect(prompt).toMatch(
+			/Only if Dinero was added by the older custom tool route, the token runs out/,
+		)
+		expect(prompt).not.toMatch(/- Dinero's sign-in token runs out after about an hour/)
 	})
 
 	// The allowed list has no field in the Custom tools form, so the text is the only way an owner
@@ -254,9 +302,83 @@ describe('Accounting loop definition', () => {
 		}
 		// The check still stops on a tool that books, and on any Dinero tool off the list.
 		expect(check).toMatch(/every Dinero tool you have is on the list/)
-		expect(check).toMatch(/A tool that books, changes or deletes is offered, or a Dinero tool/)
+		expect(check).toMatch(/a tool that books, changes or deletes is offered, or a Dinero tool/)
 		// get_vat_report is the gateway's own read, not a Dinero tool, so the check must not count it.
 		expect(check).toMatch(/get_vat_report is not a Dinero tool and does not count here/)
+	})
+
+	// Booking is the owner's switch. With it off the flow behaves as before, so the draft text stays
+	// and the booking steps are written as conditional on the switch, the booking tools and a period
+	// request. The tools are named in the skill, never in the prompt or the listing text.
+	it('describes the booking steps behind the switch, with the log and the super-user line', () => {
+		const method =
+			skillTexts().find((t) => t.startsWith('---\nname: bookkeeping-draft-method')) ?? ''
+		const check =
+			skillTexts().find((t) => t.startsWith('---\nname: accounting-connection-check')) ?? ''
+		const prompt = actorTexts().join('\n')
+		expect(method).toMatch(/## Period run \(only when booking is on/)
+		for (const name of ['BookVoucher', 'add_purchase_payment', 'add_invoice_payment']) {
+			expect(method).toContain(name)
+			expect(prompt).not.toContain(name)
+			expect(ACCOUNTING_LOOP.description).not.toContain(name)
+		}
+		expect(method).toMatch(/Never book without a timestamp/)
+		expect(method).toMatch(/leave it to Dinero/)
+		expect(method).toMatch(/stays a draft, gets a flag/)
+		expect(method).toMatch(/the rule check shows the entry clear/)
+		expect(method).toMatch(/Put the reason on every line/)
+		expect(method).toMatch(/is logged for you/)
+		expect(method).toMatch(/The owner has approved the books: stop at once/)
+		expect(method).toMatch(/file anything with SKAT or Erhvervsstyrelsen/)
+		expect(prompt).toMatch(/Booking is the owner's switch, never yours/)
+		expect(prompt).toMatch(/the owner has asked you in this chat to work a period/)
+		expect(prompt).toMatch(/Draft only unless booking is switched on/)
+		expect(check).toMatch(/Booking is off until a person switches it on/)
+		expect(check).toMatch(/must be a super-user in Dinero/)
+		expect(check).toMatch(/never add a booking tool to it/)
+		expect(ACCOUNTING_LOOP.description).toMatch(/must be a super-user in Dinero/)
+	})
+
+	// A signed-in connection offers more than the 18 names, and with booking on it also offers the
+	// booking and email tools, so the check must say which may be called, or it would stop the
+	// Bookkeeper on them. The prompt points to the check instead of naming them.
+	it('names the booking and email tools of the connection in the connection check', () => {
+		const check =
+			skillTexts().find((t) => t.startsWith('---\nname: accounting-connection-check')) ?? ''
+		const prompt = actorTexts().join('\n')
+		expect(check).toMatch(
+			/CreateFinanceVoucher, which you call only with its book option set to false/,
+		)
+		expect(check).toMatch(
+			/When a person has switched booking on, it also offers the three booking tools/,
+		)
+		for (const name of [
+			'send_invoice_email',
+			'add_invoice_reminder',
+			'book_invoice_reminder',
+			'send_invoice_reminder_email',
+		]) {
+			expect(check).toContain(name)
+		}
+		expect(check).toMatch(/You use a booking tool only in a period run the owner asked for/)
+		expect(check).toMatch(/only when the owner asks in the chat for exactly that one/)
+		expect(prompt).toMatch(/the gateway sets the tool list itself and offers a few more tools/)
+		expect(prompt).toMatch(/accounting-connection-check says which of them you may call and when/)
+	})
+
+	it('leaves the allowed list for a custom server and the draft path as they were', () => {
+		const check =
+			skillTexts().find((t) => t.startsWith('---\nname: accounting-connection-check')) ?? ''
+		expect(check).toMatch(/keep its allowed list exactly as in step 3/)
+		expect(check).toMatch(/with exactly these 18 names/)
+		expect(ACCOUNTING_LOOP.description).toMatch(/exactly these 18 names/)
+		expect(ACCOUNTING_LOOP.settings.closeCondition).toMatch(/With booking off, nothing is booked/)
+	})
+
+	it('never says reconcile: a payment is registered and a line is matched', () => {
+		const all = [ACCOUNTING_LOOP.description, ...actorTexts(), ...skillTexts()].join('\n')
+		expect(all).not.toMatch(/reconcil/i)
+		expect(all).toMatch(/payment registered/)
 	})
 
 	it('has no key-based install step left', () => {

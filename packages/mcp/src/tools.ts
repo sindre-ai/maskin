@@ -1049,9 +1049,15 @@ export const tools = {
 	},
 	delete_agent: {
 		description:
-			'Delete another agent with its sessions, triggers, files and memory; this cannot be undone. A person must approve first: post `create_comment` on a relevant object with a `decision` card, mention the person, and put `delete_agent: { actor_id }` on the destructive option that approves it. When they choose it you are woken by their reply; then call this tool with the same `id`. Refused (403) without that approval, after 24 hours, or for another agent than the card named. You cannot delete yourself, a person or a system agent.',
+			'Delete another agent with its sessions, triggers, files and memory; this cannot be undone. A person must approve first: post `create_comment` on a relevant object with a `decision` card, mention the person, and put `delete_agent: { actor_id }` on the destructive option that approves it. When they choose it you are woken by their reply; then call this tool with the same `id`. A plain yes in a chat also counts: link the agent in a message in a chat you are in, ask there, and when the person says yes call this tool with `id` and `chat_message_id` set to the id of their yes message (it must be their latest message in that chat; the server checks who wrote it). Refused (403) without that approval, after 24 hours, or for another agent than the card named. You cannot delete yourself, a person or a system agent.',
 		inputSchema: z.object({
 			id: z.string().uuid().describe('The agent to delete: its id from list_actors.'),
+			chat_message_id: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe("Id of the person's chat message that says yes to deleting this agent."),
 			workspace_id: optionalWorkspaceId,
 		}),
 	},
@@ -1207,7 +1213,7 @@ export const tools = {
 	},
 	update_workspace_skill: {
 		description:
-			'Replace the content of a shared workspace skill, found by id or name. Affects every agent it is attached to. The server re-reads the description from the frontmatter.',
+			'Replace the content of a shared workspace skill, found by id or name. Affects every agent it is attached to. The server re-reads the description from the frontmatter. This changes content only: to attach or detach a skill on an agent, call `update_actor` with `attach_skill_ids` / `detach_skill_ids`.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			name: skillNameSchema.describe('Skill id (from list_workspace_skills) or name.'),
@@ -2491,6 +2497,64 @@ export const tools = {
 				.min(1)
 				.optional()
 				.describe('The partId next to the attachment, e.g. "1". Stable between reads.'),
+		}),
+	},
+	gmail_search_mail: {
+		description:
+			'Search the connected Gmail with Gmail search words (e.g. "from:anna is:unread newer_than:7d"), on the normal Gmail API, which works when the hosted Gmail tools refuse the sign-in. Needs "Read" Gmail access. Returns up to 20 threads, newest first (thread_id, subject, from, date, snippet, labels, unread) and next_page_token for page_token. Open one with gmail_read_thread.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			account: z.string().optional().describe('Gmail address, when several are connected.'),
+			q: z.string().max(500).optional().describe('Gmail search words. Left out: newest threads.'),
+			max_results: z.number().int().min(1).max(20).optional().describe('Default 10.'),
+			page_token: z.string().optional().describe('next_page_token of the last result.'),
+		}),
+	},
+	gmail_read_thread: {
+		description:
+			'Read one Gmail thread: every message with from, to, cc, subject, date, labels, body text (cut at 20,000 characters) and attachments (name, mime_type, size_bytes, part_id, attachment_id; keep one with gmail_save_attachment). Normal Gmail API. Needs "Read" Gmail access.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			account: z.string().optional().describe('Gmail address, when several are connected.'),
+			thread_id: z.string().min(1).describe('From gmail_search_mail.'),
+		}),
+	},
+	gmail_change_labels: {
+		description:
+			'Archive a Gmail thread and/or add or remove labels, by label name or id (e.g. "Receipts", "UNREAD", "STARRED"). Normal Gmail API. Needs "Read & write" Gmail access. Pass thread_id and at least one of archive, add_labels, remove_labels. A missing label is refused, not created; trash, spam, sent and draft cannot be changed.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			account: z.string().optional().describe('Gmail address, when several are connected.'),
+			thread_id: z.string().min(1).describe('From gmail_search_mail.'),
+			archive: z.boolean().optional().describe('True takes it out of the inbox.'),
+			add_labels: z.array(z.string()).max(20).optional(),
+			remove_labels: z.array(z.string()).max(20).optional().describe('"UNREAD" marks it read.'),
+		}),
+	},
+	google_calendar_list_calendars: {
+		description:
+			"List the connected Google account's calendars through the normal Google Calendar API (works when the hosted Calendar tools refuse the sign-in). Needs Read access. Returns calendar_id, summary, primary, access_role, time_zone and next_page_token. Read only. Use a calendar_id with google_calendar_list_events.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			account: z.string().optional().describe('Account email, when several are connected.'),
+			page_token: z.string().optional().describe('next_page_token of the last result.'),
+		}),
+	},
+	google_calendar_list_events: {
+		description:
+			'List events on the connected Google Calendar in a time window, in start order, through the normal API (works when the hosted tools refuse the sign-in). Needs Read access. Defaults to the next 30 days on the primary calendar. Each event has summary, start, end, all_day, location, organizer, attendees (first 20), attendee_count, self_attending and self_response. Read only.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			account: z.string().optional().describe('Account email, when several are connected.'),
+			calendar_id: z
+				.string()
+				.optional()
+				.describe('From google_calendar_list_calendars. Left out: primary.'),
+			time_min: z.string().optional().describe('ISO with offset. Default now.'),
+			time_max: z.string().optional().describe('ISO with offset. Default 30 days after time_min.'),
+			max_results: z.number().int().min(1).max(50).optional().describe('Default 25.'),
+			q: z.string().max(200).optional().describe('Events whose text contains this.'),
+			page_token: z.string().optional().describe('next_page_token of the last result.'),
 		}),
 	},
 	resend_send_email: {

@@ -1,7 +1,7 @@
 import type { GithubPendingSelection, LinkableGithubInstallation } from '@/lib/api'
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { buildIntegrationResponse } from '../factories'
 
@@ -493,8 +493,8 @@ describe('IntegrationsPage', () => {
 			render(<IntegrationsPage />)
 			await expandCard('Google Calendar')
 
-			expect(screen.getByText('Google Calendar')).toBeInTheDocument()
-			expect(screen.getByText('Connected as magnus@example.com')).toBeInTheDocument()
+			expect(screen.getByText('1 connected account')).toBeInTheDocument()
+			expect(screen.getByText('magnus@example.com')).toBeInTheDocument()
 			expect(screen.queryByText(/Installation /)).not.toBeInTheDocument()
 
 			await user.click(screen.getByRole('button', { name: 'Disconnect' }))
@@ -700,6 +700,50 @@ describe('IntegrationsPage', () => {
 
 			expect(screen.queryByText(/Gmail · /)).not.toBeInTheDocument()
 			expect(screen.getByRole('button', { name: 'Connect' })).toBeInTheDocument()
+		})
+	})
+
+	describe('google calendar accounts', () => {
+		const calendarProvider = {
+			name: 'google-calendar',
+			displayName: 'Google Calendar',
+			authType: 'oauth2',
+			events: [],
+			externalIdDisplay: 'email' as const,
+		}
+		const calendarRow = (id: string, externalId: string) =>
+			buildIntegrationResponse({ id, provider: 'google-calendar', status: 'active', externalId })
+
+		it('lists each connected account by its address, each with its own Disconnect', async () => {
+			const user = userEvent.setup()
+			mockUseIntegrations.mockReturnValue({
+				data: [calendarRow('gc-1', 'a@meshfirm.com'), calendarRow('gc-2', 'b@gmail.com')],
+				isLoading: false,
+			})
+			mockUseProviders.mockReturnValue({ data: [calendarProvider], isLoading: false })
+
+			render(<IntegrationsPage />)
+			await user.click(screen.getByRole('button', { name: /Google Calendar · 2/ }))
+
+			expect(screen.getByText('2 connected accounts')).toBeInTheDocument()
+			expect(screen.getByText('a@meshfirm.com')).toBeInTheDocument()
+			expect(screen.getByText('b@gmail.com')).toBeInTheDocument()
+			expect(screen.getAllByRole('button', { name: 'Disconnect' })).toHaveLength(2)
+		})
+
+		it('"Connect another account" starts the Google sign-in for google-calendar', async () => {
+			const user = userEvent.setup()
+			mockUseIntegrations.mockReturnValue({
+				data: [calendarRow('gc-1', 'a@meshfirm.com')],
+				isLoading: false,
+			})
+			mockUseProviders.mockReturnValue({ data: [calendarProvider], isLoading: false })
+
+			render(<IntegrationsPage />)
+			await user.click(screen.getByRole('button', { name: /Google Calendar · 1/ }))
+			await user.click(screen.getByRole('button', { name: 'Connect another account' }))
+
+			expect(mockConnect).toHaveBeenCalledWith({ provider: 'google-calendar' })
 		})
 	})
 
@@ -1219,5 +1263,64 @@ describe('IntegrationsPage ordering', () => {
 		const sl = screen.getByText('Slack', { exact: false })
 		expect(gh.compareDocumentPosition(li) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 		expect(li.compareDocumentPosition(sl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+	})
+})
+
+describe('IntegrationsPage link to one provider', () => {
+	const providers = [
+		{ name: 'slack', displayName: 'Slack', authType: 'oauth2', events: [] },
+		{ name: 'dinero', displayName: 'Dinero', authType: 'oauth2', events: [] },
+	]
+
+	beforeEach(() => {
+		mockUseProviders.mockReturnValue({ data: providers, isLoading: false })
+	})
+
+	afterEach(() => {
+		mockSearch.mockReturnValue({})
+	})
+
+	it('opens a connected provider with its agent access visible and marked', () => {
+		mockUseIntegrations.mockReturnValue({
+			data: [
+				buildIntegrationResponse({ provider: 'slack', status: 'active' }),
+				buildIntegrationResponse({ provider: 'dinero', status: 'active' }),
+			],
+			isLoading: false,
+		})
+		mockSearch.mockReturnValue({ provider: 'dinero' })
+		const { container } = render(<IntegrationsPage />)
+
+		const marked = container.querySelector('[data-linked-provider]') as HTMLElement
+		expect(within(marked).getByText('Dinero')).toBeInTheDocument()
+		expect(within(marked).getByText('All other agents')).toBeInTheDocument()
+		// Only the named provider opens; Slack stays collapsed.
+		expect(screen.getAllByText('All other agents')).toHaveLength(1)
+	})
+
+	it('switches to Discover when the named provider is not connected', () => {
+		mockUseIntegrations.mockReturnValue({
+			data: [buildIntegrationResponse({ provider: 'slack', status: 'active' })],
+			isLoading: false,
+		})
+		mockSearch.mockReturnValue({ provider: 'Dinero' })
+		const { container } = render(<IntegrationsPage />)
+
+		const marked = container.querySelector('[data-linked-provider]') as HTMLElement
+		expect(within(marked).getByText('Dinero')).toBeInTheDocument()
+		expect(screen.queryByText('Slack')).not.toBeInTheDocument()
+	})
+
+	it('shows the plain page for a provider that does not exist', () => {
+		mockUseIntegrations.mockReturnValue({
+			data: [buildIntegrationResponse({ provider: 'slack', status: 'active' })],
+			isLoading: false,
+		})
+		mockSearch.mockReturnValue({ provider: 'nope' })
+		const { container } = render(<IntegrationsPage />)
+
+		expect(container.querySelector('[data-linked-provider]')).toBeNull()
+		expect(screen.getByText('Slack')).toBeInTheDocument()
+		expect(screen.queryByText('All other agents')).not.toBeInTheDocument()
 	})
 })

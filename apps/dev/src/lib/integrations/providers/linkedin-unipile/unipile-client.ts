@@ -289,9 +289,22 @@ export type LinkedInPagedResponse = {
 // thin: the moment we start validating shape locally, changing LinkedIn's
 // rules requires a client update rather than an operations-layer one.
 
+/**
+ * One tag in a post, edit, comment or reply. `{{0}}` in the text is replaced by the first
+ * entry's name and made a clickable tag, `{{1}}` by the second, and so on. This is Unipile's
+ * documented shape for comments; the same shape is sent on posts and edits, where the public
+ * docs say nothing, so it is unverified there. Left out of the body when there are no tags, so a
+ * plain-text call sends exactly what it always did.
+ */
+export type LinkedInMention = {
+	name: string
+	profile_id: string
+}
+
 export type LinkedInPublishPostPayload = {
 	account_id: string
 	text: string
+	mentions?: LinkedInMention[]
 	/**
 	 * Present when publishing as a business page. Callers hold the company URN
 	 * (`urn:li:organization:12345`); `publishPost` reduces it to the plain id
@@ -318,6 +331,7 @@ export type LinkedInEditPostPayload = {
 	account_id: string
 	post_id: string
 	text?: string
+	mentions?: LinkedInMention[]
 	can_comment?: 'anyone' | 'connections' | 'no_one'
 }
 
@@ -337,12 +351,14 @@ export type LinkedInCommentOnPostPayload = {
 	account_id: string
 	post_id: string
 	text: string
+	mentions?: LinkedInMention[]
 }
 
 export type LinkedInReplyToCommentPayload = {
 	account_id: string
 	comment_id: string
 	text: string
+	mentions?: LinkedInMention[]
 }
 
 export type LinkedInReadPostCommentsQuery = {
@@ -408,6 +424,11 @@ const LINKEDIN_ORGANIZATION_URN_PREFIX = 'urn:li:organization:'
  * `post_as: '123456'`). A plain id passes through. Pure, so the outgoing body
  * can be asserted directly.
  */
+/** `{ mentions }` when there are tags, `{}` when there are none, so no empty array goes on the wire. */
+function mentionsField(mentions: LinkedInMention[] | undefined): { mentions?: LinkedInMention[] } {
+	return mentions && mentions.length > 0 ? { mentions } : {}
+}
+
 export function normalizePostAs(postAs: string): string {
 	const trimmed = postAs.trim()
 	if (trimmed.toLowerCase().startsWith(LINKEDIN_ORGANIZATION_URN_PREFIX)) {
@@ -718,21 +739,28 @@ export function createLinkedInHttpClient(options: LinkedInHttpClientOptions): Li
 			// serves personal and business-page publish; `post_as` selects the page
 			// when publishing as a page, as the plain company id, not the URN.
 			// (`as_organization` is the v1.0 field name; v2 does not take it.)
-			const { account_id, post_as, ...rest } = payload
-			const body = post_as ? { ...rest, post_as: normalizePostAs(post_as) } : rest
+			const { account_id, post_as, mentions, ...rest } = payload
+			const withMentions = { ...rest, ...mentionsField(mentions) }
+			const body = post_as ? { ...withMentions, post_as: normalizePostAs(post_as) } : withMentions
 			return call('POST', `/v2/${encodeURIComponent(account_id)}/posts`, body)
 		},
 		commentOnPost(payload) {
 			// POST /v2/{account_id}/posts/{post_id}/comments with {text}.
 			const acc = encodeURIComponent(payload.account_id)
 			const post = encodeURIComponent(payload.post_id)
-			return call('POST', `/v2/${acc}/posts/${post}/comments`, { text: payload.text })
+			return call('POST', `/v2/${acc}/posts/${post}/comments`, {
+				text: payload.text,
+				...mentionsField(payload.mentions),
+			})
 		},
 		replyToComment(payload) {
 			// POST /v2/{account_id}/comments/{comment_id}/replies with {text}.
 			const acc = encodeURIComponent(payload.account_id)
 			const comment = encodeURIComponent(payload.comment_id)
-			return call('POST', `/v2/${acc}/comments/${comment}/replies`, { text: payload.text })
+			return call('POST', `/v2/${acc}/comments/${comment}/replies`, {
+				text: payload.text,
+				...mentionsField(payload.mentions),
+			})
 		},
 		readPostComments(query) {
 			// GET /v2/{account_id}/posts/{post_id}/comments (offset paginated).
@@ -786,6 +814,7 @@ export function createLinkedInHttpClient(options: LinkedInHttpClientOptions): Li
 			const post = encodeURIComponent(payload.post_id)
 			const body: Record<string, unknown> = {}
 			if (payload.text !== undefined) body.text = payload.text
+			Object.assign(body, mentionsField(payload.mentions))
 			if (payload.can_comment !== undefined) body.can_comment = payload.can_comment
 			return call('PATCH', `/v2/${acc}/posts/${post}`, body)
 		},

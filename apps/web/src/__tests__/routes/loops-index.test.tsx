@@ -16,6 +16,13 @@ vi.mock('@/hooks/use-loops', () => ({
 	useLoops: () => mockUseLoops(),
 }))
 
+// The server search is stubbed: this file tests the page, the hook has its own tests.
+const mockPageSearchRank = vi.fn()
+vi.mock('@/hooks/use-page-search-rank', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@/hooks/use-page-search-rank')>()),
+	usePageSearchRank: () => mockPageSearchRank(),
+}))
+
 const mockUseTriggers = vi.fn()
 vi.mock('@/hooks/use-triggers', () => ({
 	useTriggers: () => mockUseTriggers(),
@@ -175,6 +182,7 @@ function buildSession(overrides: Partial<SessionResponse> = {}): SessionResponse
 
 beforeEach(() => {
 	vi.clearAllMocks()
+	mockPageSearchRank.mockReturnValue(null)
 	mockUseLoops.mockReturnValue({ data: [], isLoading: false })
 	mockUseTriggers.mockReturnValue({ data: [] })
 	mockUseActors.mockReturnValue({ data: [] })
@@ -264,6 +272,28 @@ describe('LoopsPage', () => {
 			expect(screen.getByText('Seo flow')).toBeInTheDocument()
 			expect(screen.queryByText('Delivery flow')).not.toBeInTheDocument()
 			expect(screen.queryByText('Loose flow')).not.toBeInTheDocument()
+		})
+
+		it('lists the server best match first while words are typed', async () => {
+			const user = userEvent.setup()
+			mockUseLoops.mockReturnValue({
+				data: [
+					buildLoop({ id: 'a', name: 'Alpha growth', content: 'Mentions cco' }),
+					buildLoop({ id: 'b', name: 'CCO pipeline' }),
+				],
+				isLoading: false,
+			})
+			mockPageSearchRank.mockReturnValue(
+				new Map([
+					['b', 0],
+					['a', 1],
+				]),
+			)
+			render(<LoopsPage />)
+
+			await user.type(screen.getAllByRole('searchbox', { name: 'Search flows' })[0], 'cco')
+			const names = screen.getAllByText(/Alpha growth|CCO pipeline/).map((el) => el.textContent)
+			expect(names).toEqual(['CCO pipeline', 'Alpha growth'])
 		})
 
 		it('says so when nothing matches', async () => {

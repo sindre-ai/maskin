@@ -78,6 +78,10 @@ const READS_OUTSIDE_READ_TOOL_NAMES = [
 	'query_data',
 	'list_file_tags',
 	'get_trigger',
+	'gmail_search_mail',
+	'gmail_read_thread',
+	'google_calendar_list_calendars',
+	'google_calendar_list_events',
 ]
 
 // Tools in READ_TOOL_NAMES that are not read-only. None today: install_loop split off list_marketplace.
@@ -366,6 +370,11 @@ describe('MCP surface pin', () => {
 				'approve_object_draft',
 				'gmail_send_email',
 				'gmail_save_attachment',
+				'gmail_search_mail',
+				'gmail_read_thread',
+				'gmail_change_labels',
+				'google_calendar_list_calendars',
+				'google_calendar_list_events',
 				'resend_send_email',
 				'update_integration_access',
 			].sort()

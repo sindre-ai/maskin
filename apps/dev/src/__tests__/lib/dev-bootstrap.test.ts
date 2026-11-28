@@ -16,21 +16,27 @@ import {
 import { KNOWLEDGE_WIKI_LOOP } from '../../lib/marketplace-loops/knowledge-wiki-loop'
 import { MARKET_WATCH_LOOP } from '../../lib/marketplace-loops/market-watch-loop'
 import { MEETING_LOOP } from '../../lib/marketplace-loops/meeting-loop'
+import { PRESENTATION_DESIGNER_LOOP } from '../../lib/marketplace-loops/presentation-designer-loop'
+import { PRODUCT_DELIVERY_LOOP } from '../../lib/marketplace-loops/product-delivery-loop'
 import { PRODUCT_RELEASE_LOOP } from '../../lib/marketplace-loops/product-release-loop'
 import { PRODUCT_USAGE_LOOP } from '../../lib/marketplace-loops/product-usage-loop'
 import { SIGNAL_INTAKE_LOOP } from '../../lib/marketplace-loops/signal-intake-loop'
+import { WORKSPACE_IMPROVEMENTS_LOOP } from '../../lib/marketplace-loops/workspace-improvements-loop'
 import { createTestContext } from '../setup'
 
 const ALL_PACKAGES = [
 	MARKET_WATCH_LOOP,
 	DISCOVERY_LOOP,
 	MEETING_LOOP,
+	PRESENTATION_DESIGNER_LOOP,
 	PRODUCT_RELEASE_LOOP,
+	PRODUCT_DELIVERY_LOOP,
 	CUSTOMER_VOICE_LOOP,
 	KNOWLEDGE_WIKI_LOOP,
 	PRODUCT_USAGE_LOOP,
 	ACCOUNTING_LOOP,
 	SIGNAL_INTAKE_LOOP,
+	WORKSPACE_IMPROVEMENTS_LOOP,
 ]
 
 function matchingMarketplaceRows() {
@@ -103,7 +109,7 @@ describe('maybeBootstrapDev', () => {
 		mockResults.selectQueue = [[]] // findExistingCredentials returns no rows
 		// Unqueued selects fall through to [] — that's how seedDefaultAgentActors'
 		// per-agent "already a member?" check reads as "not present" here, so each
-		// of the five default agents takes the insert branch below.
+		// of the four default agents takes the insert branch below.
 		mockResults.insertQueue = [
 			[{ id: 'actor-1', name: 'You', email: 'dev@local' }],
 			[], // api_keys insert for the human's primary key
@@ -115,8 +121,6 @@ describe('maybeBootstrapDev', () => {
 			[{ workspaceId: 'ws-1', actorId: 'coach-1', role: 'member' }],
 			[{ id: 'chief-1', name: 'Chief of Staff', isSystem: true }],
 			[{ workspaceId: 'ws-1', actorId: 'chief-1', role: 'member' }],
-			[{ id: 'driver-1', name: 'Driver' }],
-			[{ workspaceId: 'ws-1', actorId: 'driver-1', role: 'member' }],
 			[{ id: 'signal-1', name: 'Signal Analyst' }],
 			[{ workspaceId: 'ws-1', actorId: 'signal-1', role: 'member' }],
 			[{ id: 'researcher-1', name: 'Researcher' }],
@@ -152,15 +156,10 @@ describe('maybeBootstrapDev', () => {
 		const insertedNames = calls.inserts
 			.filter((v): v is { name?: string } => typeof v === 'object' && v !== null && 'name' in v)
 			.map((v) => v.name)
-		for (const name of [
-			'Workspace Coach',
-			'Chief of Staff',
-			'Driver',
-			'Signal Analyst',
-			'Researcher',
-		]) {
+		for (const name of ['Workspace Coach', 'Chief of Staff', 'Signal Analyst', 'Researcher']) {
 			expect(insertedNames).toContain(name)
 		}
+		expect(insertedNames).not.toContain('Driver')
 
 		const settingsUpdate = calls.updates.find(
 			(u): u is { settings: { default_agent_id: string } } =>

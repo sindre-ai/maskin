@@ -61,6 +61,7 @@ import {
 	nextSentOffset,
 	parseSentInvitations,
 } from './invitations'
+import { validateMentions } from './mentions'
 import { parsePostId, withAcceptedForms } from './post-id'
 import type {
 	LinkedInClient,
@@ -69,7 +70,11 @@ import type {
 	LinkedInListConversationsResponse,
 	LinkedInSendMessageResponse,
 } from './unipile-client'
-import { buildPeopleSearchUrl, createLinkedInHttpClient } from './unipile-client'
+import {
+	type LinkedInMention,
+	buildPeopleSearchUrl,
+	createLinkedInHttpClient,
+} from './unipile-client'
 import { buildLinkedInClientForWebhook, handleUnipileAccountReconnect } from './webhook'
 
 /**
@@ -1717,6 +1722,7 @@ async function withContentHashIdempotency<T extends Record<string, unknown>>(opt
 
 export type PublishPostInput = {
 	text?: unknown
+	mentions?: unknown
 	post_as?: unknown
 	attachments?: unknown
 	/**
@@ -1773,6 +1779,7 @@ function validatePublishPostInput(
 			ok: true
 			payload: {
 				text: string
+				mentions?: LinkedInMention[]
 				post_as?: string
 				extras: Record<string, unknown>
 				attachment_file_ids?: string[]
@@ -1818,6 +1825,7 @@ function validatePublishPostInput(
 	if (fileIds && Array.isArray(input.attachments) && input.attachments.length > 0) {
 		return { ok: false, error: 'pass attachment_file_ids or attachments, not both' }
 	}
+	const mentions = validateMentions(input.text, input.mentions)
 	const extras: Record<string, unknown> = {}
 	if (Array.isArray(input.attachments)) extras.attachments = input.attachments
 	if (typeof input.can_read === 'string') extras.can_read = input.can_read
@@ -1830,6 +1838,7 @@ function validatePublishPostInput(
 		ok: true,
 		payload: {
 			text: input.text,
+			...(mentions ? { mentions } : {}),
 			...(postAs ? { post_as: postAs } : {}),
 			extras,
 			...(fileIds ? { attachment_file_ids: fileIds } : {}),
@@ -1884,6 +1893,7 @@ export async function publishLinkedInPost(
 					client.publishPost({
 						account_id: pre.credentials.account_id,
 						text: validation.payload.text,
+						...(validation.payload.mentions ? { mentions: validation.payload.mentions } : {}),
 						...(postAs ? { post_as: postAs } : {}),
 						...validation.payload.extras,
 						...(media ? { attachments: media } : {}),
@@ -1936,7 +1946,7 @@ async function loadPostMediaFiles(
 	return loaded
 }
 
-export type CommentInput = { post_id?: unknown; text?: unknown }
+export type CommentInput = { post_id?: unknown; text?: unknown; mentions?: unknown }
 export type CommentResult = { comment_id: string; commented_at: string }
 
 function normalizeCommentResponse(body: unknown): CommentResult {
@@ -1977,10 +1987,18 @@ export async function commentOnLinkedInPost(
 			'text exceeds LinkedIn 3000-character limit',
 		)
 	}
+	const mentions = validateMentions(text, input.mentions)
 	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
 	if (!pre.ok) throw pre.error
 	const client = buildLinkedInClient(pre.credentials)
-	const requestBody = { tool: 'linkedin_comment_on_post', post_id: postId, text }
+	// Tags are part of the hashed request, so the same text with other tags is another comment.
+	// Left out when there are none, so a plain comment hashes exactly as it always did.
+	const requestBody = {
+		tool: 'linkedin_comment_on_post',
+		post_id: postId,
+		text,
+		...(mentions ? { mentions } : {}),
+	}
 	return withContentHashIdempotency({
 		db: ctx.db,
 		actorId: ctx.actorId,
@@ -1993,6 +2011,7 @@ export async function commentOnLinkedInPost(
 						account_id: pre.credentials.account_id,
 						post_id: postId,
 						text,
+						...(mentions ? { mentions } : {}),
 					}),
 				{ mutating: true },
 			)
@@ -2036,6 +2055,7 @@ export const LINKEDIN_DELETE_POST_TOOL = 'linkedin_delete_post'
 export type EditPostInput = {
 	post_id?: unknown
 	text?: unknown
+	mentions?: unknown
 	can_comment?: unknown
 }
 
@@ -2074,6 +2094,7 @@ export async function editLinkedInPost(
 			'text must be a non-empty string, max 3000 chars',
 		)
 	}
+	const mentions = validateMentions(text, input.mentions)
 	let canComment: LinkedInCanComment | undefined
 	if (input.can_comment !== undefined) {
 		if (
@@ -2108,6 +2129,7 @@ export async function editLinkedInPost(
 		target_id: postId,
 	}
 	if (text !== undefined) requestBody.text = text
+	if (mentions) requestBody.mentions = mentions
 	if (canComment !== undefined) requestBody.can_comment = canComment
 
 	return withContentHashIdempotency({
@@ -2122,6 +2144,7 @@ export async function editLinkedInPost(
 						account_id: pre.credentials.account_id,
 						post_id: postId,
 						...(text !== undefined ? { text } : {}),
+						...(mentions ? { mentions } : {}),
 						...(canComment !== undefined ? { can_comment: canComment } : {}),
 					}),
 				{ mutating: true },
@@ -2200,7 +2223,7 @@ export async function deleteLinkedInPost(
 	})
 }
 
-export type ReplyToCommentInput = { comment_id?: unknown; text?: unknown }
+export type ReplyToCommentInput = { comment_id?: unknown; text?: unknown; mentions?: unknown }
 
 export async function replyToLinkedInComment(
 	ctx: LinkedInOperationContext,
@@ -2216,10 +2239,16 @@ export async function replyToLinkedInComment(
 			'text exceeds LinkedIn 3000-character limit',
 		)
 	}
+	const mentions = validateMentions(text, input.mentions)
 	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
 	if (!pre.ok) throw pre.error
 	const client = buildLinkedInClient(pre.credentials)
-	const requestBody = { tool: 'linkedin_reply_to_comment', comment_id: commentId, text }
+	const requestBody = {
+		tool: 'linkedin_reply_to_comment',
+		comment_id: commentId,
+		text,
+		...(mentions ? { mentions } : {}),
+	}
 	return withContentHashIdempotency({
 		db: ctx.db,
 		actorId: ctx.actorId,
@@ -2232,6 +2261,7 @@ export async function replyToLinkedInComment(
 						account_id: pre.credentials.account_id,
 						comment_id: commentId,
 						text,
+						...(mentions ? { mentions } : {}),
 					}),
 				{ mutating: true },
 			)

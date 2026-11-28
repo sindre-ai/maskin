@@ -188,15 +188,6 @@ export const FLAGS = {
 	 */
 	SEND_PERMISSIONS_SCREEN: 'send-permissions-screen',
 	/**
-	 * Gates the Dinero review screen under Settings: the log of what the flow did in Dinero, a
-	 * one-click reversal of a booked item and the "Approve the books" button (bet [Installable
-	 * accounting flow with Danish connectors](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/4de0bf64-cc4b-4774-8a34-03c7c4139831)).
-	 * Frontend only: read with useFeatureFlag in the settings layout (the nav entry) and the route.
-	 * The review routes are for admins and owners only and do nothing until someone calls them.
-	 * Retire once the screen is on for everyone.
-	 */
-	DINERO_REVIEW_SCREEN: 'dinero-review-screen',
-	/**
 	 * Gates the agents in the top row of the iOS share sheet (task [Agents show as people in the iOS share sheet](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/e7484a53-3495-4654-b7c3-bded62fb9348)).
 	 * iOS app only, actor-scoped: read by AppRuntime before the app donates an agent to iOS. Off
 	 * means nothing new is donated and the row shows what it shows today. Retire once the row is
@@ -267,24 +258,6 @@ export const FLAGS = {
 	 * real sign-in has worked for each and the providers are on for everyone.
 	 */
 	SALES_AUTOMATION_INTEGRATIONS: 'sales-automation-integrations',
-	/**
-	 * Gates connecting Uniconta (task
-	 * [Connect Uniconta to the accounting flow](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/e303850f-6315-428b-bb65-b764f7729314)).
-	 * Actor-scoped, read by the integrations routes: off means Uniconta is missing from
-	 * GET /api/integrations/providers and its connect call is refused, so Settings shows nothing new.
-	 * A workspace that is already connected keeps working through the gateway. Retire once a real
-	 * Uniconta sign-in has worked and Uniconta is on for everyone.
-	 */
-	UNICONTA_CONNECT: 'uniconta-connect',
-	/**
-	 * Gates connecting Business Central (task
-	 * [Connect Business Central ERP data](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/aad840e6-8785-46c0-9482-c6899cd5933d)).
-	 * Actor-scoped, read by the integrations routes: off means Business Central is missing from
-	 * GET /api/integrations/providers and its connect call is refused, so Settings shows nothing new.
-	 * A workspace that is already connected keeps working through the gateway. Retire once a real
-	 * Business Central sign-in has worked and it is on for everyone.
-	 */
-	BUSINESS_CENTRAL_CONNECT: 'business-central-connect',
 	/**
 	 * Gates the ten integrations that sign in through an app Maskin owns at the vendor, or need the
 	 * vendor to approve Maskin first: HubSpot, Asana, DocuSign, Figma, Dropbox, Intercom, Pipedrive,

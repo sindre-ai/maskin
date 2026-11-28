@@ -45,7 +45,7 @@ import { sortBy } from '@/lib/sort'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { Search } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { type ReactNode, useEffect, useRef, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings/integrations')({
 	component: IntegrationsPage,
@@ -54,10 +54,13 @@ export const Route = createFileRoute('/_authed/$workspaceId/settings/integration
 	// carries the pending row whose installation choices are awaiting a pick,
 	// `error` reports a failed handshake, and `return_to` is the chat the connect
 	// started from, so the page can send the user back once they have picked.
+	// `provider` is the link an agent writes to send someone to one integration
+	// (?provider=dinero); a name that matches nothing leaves the page as it is.
 	validateSearch: (search: Record<string, unknown>) => ({
 		select_github: typeof search.select_github === 'string' ? search.select_github : undefined,
 		error: typeof search.error === 'string' ? search.error : undefined,
 		return_to: typeof search.return_to === 'string' ? search.return_to : undefined,
+		provider: typeof search.provider === 'string' ? search.provider : undefined,
 	}),
 })
 
@@ -91,6 +94,7 @@ function IntegrationsPage() {
 		select_github: selectGithubId,
 		return_to: rawReturnTo,
 		error: errorCode,
+		provider: providerParam,
 	} = Route.useSearch()
 	const returnTo = safeReturnPath(rawReturnTo, workspaceId)
 	const navigate = useNavigate({ from: Route.fullPath })
@@ -148,7 +152,31 @@ function IntegrationsPage() {
 	}
 	const resendAwaitingSecret = awaitingSecretByProvider.get('resend') ?? []
 
-	const [tab, setTab] = useState<'connected' | 'discover'>('connected')
+	// A link naming a provider opens the tab where that provider sits, until the person picks a tab.
+	const linkedName = providerParam?.trim().toLowerCase()
+	const linkedProvider = linkedName
+		? visibleProviders.find((p) => p.name !== 'custom-mcp' && p.name.toLowerCase() === linkedName)
+		: undefined
+	const [pickedTab, setTab] = useState<'connected' | 'discover' | null>(null)
+	const tab =
+		pickedTab ??
+		(linkedProvider && !activeByProvider.has(linkedProvider.name) ? 'discover' : 'connected')
+	const providerRow = (
+		provider: (typeof visibleProviders)[number],
+		installations: IntegrationResponse[],
+	) => {
+		const linked = provider.name === linkedProvider?.name
+		const row = (
+			<ProviderConnectRow
+				key={provider.name}
+				provider={provider}
+				installations={installations}
+				workspaceId={workspaceId}
+				focused={linked}
+			/>
+		)
+		return linked ? <LinkedProviderMark key={provider.name}>{row}</LinkedProviderMark> : row
+	}
 	const [query, setQuery] = useState('')
 	const [category, setCategory] = useState<IntegrationCategory | 'all'>('all')
 	const needle = query.trim().toLowerCase()
@@ -257,14 +285,9 @@ function IntegrationsPage() {
 						<EmptyState title="Nothing connected here" description={noMatchCopy} />
 					) : tab === 'connected' ? (
 						<section className="space-y-3 px-2">
-							{connectedProviders.map((provider) => (
-								<ProviderConnectRow
-									key={provider.name}
-									provider={provider}
-									installations={activeByProvider.get(provider.name) ?? []}
-									workspaceId={workspaceId}
-								/>
-							))}
+							{connectedProviders.map((provider) =>
+								providerRow(provider, activeByProvider.get(provider.name) ?? []),
+							)}
 							{showResendAwaiting && (
 								<ResendResumeSection
 									rows={resendAwaitingSecret}
@@ -280,14 +303,7 @@ function IntegrationsPage() {
 						/>
 					) : (
 						<section className="space-y-3 px-2">
-							{discoverProviders.map((provider) => (
-								<ProviderConnectRow
-									key={provider.name}
-									provider={provider}
-									installations={[]}
-									workspaceId={workspaceId}
-								/>
-							))}
+							{discoverProviders.map((provider) => providerRow(provider, []))}
 						</section>
 					)}
 				</>
@@ -305,6 +321,19 @@ function IntegrationsPage() {
 				prefill={resendDialog.prefill}
 				onClose={() => setResendDialog({ open: false, prefill: null })}
 			/>
+		</div>
+	)
+}
+
+/** Marks the provider a link named: scrolls it into view once and outlines it. */
+function LinkedProviderMark({ children }: { children: ReactNode }) {
+	const ref = useRef<HTMLDivElement>(null)
+	useEffect(() => {
+		ref.current?.scrollIntoView?.({ block: 'center' })
+	}, [])
+	return (
+		<div ref={ref} data-linked-provider className="rounded-2xl ring-2 ring-brand/50">
+			{children}
 		</div>
 	)
 }

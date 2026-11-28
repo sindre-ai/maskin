@@ -117,7 +117,6 @@ final class SearchRowActions {
 			search.remove(result)
 			undoOffer = UndoOffer(message: "Archived 1. Undo.") { [self] in
 				_ = await chats.setArchived([result.entityId], false)
-				search.invalidateDirectories()
 				await search.retry()
 			}
 		}
@@ -140,7 +139,6 @@ final class SearchRowActions {
 		search.remove(result)
 		undoOffer = UndoOffer(message: "Deleted. Undo.") { [self] in
 			objects.undoDelete(object.id)
-			search.invalidateDirectories()
 			await search.retry()
 		}
 	}

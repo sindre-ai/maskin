@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest'
-import { FLAGS, isFlagEnabled, parseFeatureFlagConfig } from '../../../../lib/feature-flags'
 import { GATEWAY_PROVIDERS, buildUpstreamHeaders } from '../../../../lib/integrations/mcp-gateway'
 import {
 	BUSINESS_CENTRAL_PROVIDER,
@@ -116,19 +115,5 @@ describe('Business Central tool kinds', () => {
 	it('lets no annotation talk a tool into being a read, and a destructive hint win over a name', () => {
 		expect(kind('bc_actions_invoke', { readOnlyHint: true })).toBe('write')
 		expect(kind('List_Items_PAG30008', { destructiveHint: true })).toBe('write')
-	})
-})
-
-describe('business-central-connect flag', () => {
-	it('is off unless the actor is a tester', () => {
-		const actor = '00000000-0000-4000-8000-000000000001'
-		const off = parseFeatureFlagConfig({})
-		const on = parseFeatureFlagConfig({
-			FF_TESTER_ACTOR_IDS: actor,
-			FF_TESTER_FEATURES: FLAGS.BUSINESS_CENTRAL_CONNECT,
-		})
-		expect(FLAGS.BUSINESS_CENTRAL_CONNECT).toBe('business-central-connect')
-		expect(isFlagEnabled(actor, FLAGS.BUSINESS_CENTRAL_CONNECT, off)).toBe(false)
-		expect(isFlagEnabled(actor, FLAGS.BUSINESS_CENTRAL_CONNECT, on)).toBe(true)
 	})
 })

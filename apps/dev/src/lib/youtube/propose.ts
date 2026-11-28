@@ -12,6 +12,13 @@ import {
 	createPendingAction,
 } from './actions'
 import { assertWithinYoutubeCaps, normalizeCommentText } from './caps'
+import {
+	type CaptionDeletePayload,
+	type CaptionFilePayload,
+	YoutubeCaptionRuleError,
+	assertVideoId,
+	buildCaptionFilePayload,
+} from './captions'
 
 /**
  * What a YouTube write tool does: build the exact request, check what can be checked now, and hand
@@ -25,6 +32,14 @@ import { assertWithinYoutubeCaps, normalizeCommentText } from './caps'
 
 export const YOUTUBE_THUMBNAIL_MAX_BYTES = 2 * 1024 * 1024
 const THUMBNAIL_MIME_TYPES = ['image/png', 'image/jpeg']
+
+/** Tools that check the target is on the connected channel, so they cannot go on without its id. */
+const NEEDS_OWN_CHANNEL: ReadonlySet<string> = new Set([
+	'update_video_metadata',
+	'delete_video',
+	'delete_playlist',
+	'remove_from_playlist',
+])
 
 export interface ProposeContext extends YoutubeClientContext {
 	sessionId?: string | null
@@ -80,6 +95,64 @@ export interface LikeInput {
 	video_id: string
 }
 
+export interface UploadCaptionInput {
+	video_id: string
+	file_id: string
+	language: string
+	name?: string
+	is_draft?: boolean
+}
+
+export interface ReplaceCaptionInput {
+	video_id: string
+	caption_id: string
+	file_id: string
+	is_draft?: boolean
+}
+
+export interface DeleteCaptionInput {
+	video_id: string
+	caption_id: string
+}
+
+interface CaptionTrackRead {
+	items?: Array<{
+		id?: string
+		snippet?: { videoId?: string; language?: string; name?: string; isDraft?: boolean }
+	}>
+}
+
+export interface DeleteVideoInput {
+	video_id: string
+}
+
+export interface DeleteCommentInput {
+	comment_id: string
+}
+
+export interface DeletePlaylistInput {
+	playlist_id: string
+}
+
+export interface RemoveFromPlaylistInput {
+	playlist_id: string
+	video_id: string
+}
+
+export interface ModerateCommentInput {
+	comment_id: string
+	status: 'published' | 'held_for_review' | 'rejected'
+	ban_author?: boolean
+}
+
+const MODERATION_STATUS_BY_INPUT = {
+	published: 'published',
+	held_for_review: 'heldForReview',
+	rejected: 'rejected',
+} as const
+/** How much of the comment the card shows. The card is for a quick read, not the whole thread. */
+const MODERATED_COMMENT_TEXT_MAX = 1_000
+
 interface ChannelRead {
 	items?: Array<{ id?: string; snippet?: { title?: string } }>
 }
@@ -107,6 +180,161 @@ export async function readOwnChannel(ctx: YoutubeClientContext) {
 	})
 	const item = channel.items?.[0]
 	return { id: item?.id ?? null, title: item?.snippet?.title ?? null }
+}
+
+interface TitledRead {
+	items?: Array<{ snippet?: { channelId?: string; title?: string } }>
+}
+
+interface CommentRead {
+	items?: Array<{
+		snippet?: {
+			videoId?: string
+			authorDisplayName?: string
+			textOriginal?: string
+			textDisplay?: string
+		}
+	}>
+}
+
+interface PlaylistItemRead {
+	items?: Array<{ id?: string; snippet?: { title?: string; position?: number } }>
+}
+
+/** How much of a comment the card shows. The comment itself is not stored past the action. */
+const COMMENT_EXCERPT_CHARS = 300
+
+/**
+ * Reads that a delete card is built from. They are never served from the cache, so the title on
+ * the card is the title the video has now.
+ */
+const freshRead = <T>(
+	ctx: YoutubeClientContext,
+	tool: string,
+	path: string,
+	params: Record<string, string>,
+) => youtubeRead<T>(ctx, { tool, path, params, units: 1, cache: false })
+
+const notFound = (what: string) =>
+	new YoutubeError({ code: 'NOT_FOUND', message: `No ${what} with that id.` })
+
+function assertOwn(channelId: string | undefined, own: string | null, what: string) {
+	if (!own || channelId !== own) {
+		throw new YoutubeError({
+			code: 'PERMISSION_DENIED',
+			message: `That ${what} is not on the connected channel.`,
+		})
+	}
+}
+
+/** The title is read here from Google, never taken from the agent, so the card shows the real one. */
+async function buildDeleteVideo(
+	ctx: YoutubeClientContext,
+	input: DeleteVideoInput,
+	channelId: string | null,
+): Promise<Built> {
+	const video = await freshRead<TitledRead>(ctx, 'youtube__delete_video', 'videos', {
+		part: 'snippet',
+		id: input.video_id,
+	})
+	const snippet = video.items?.[0]?.snippet
+	if (!snippet) throw notFound('video')
+	assertOwn(snippet.channelId, channelId, 'video')
+	return {
+		kind: 'delete_video',
+		payload: { id: input.video_id, title: snippet.title ?? '' },
+		targetVideoId: input.video_id,
+	}
+}
+
+async function buildDeleteComment(
+	ctx: YoutubeClientContext,
+	input: DeleteCommentInput,
+): Promise<Built> {
+	const read = await freshRead<CommentRead>(ctx, 'youtube__delete_comment', 'comments', {
+		part: 'snippet',
+		id: input.comment_id,
+	})
+	const snippet = read.items?.[0]?.snippet
+	if (!snippet) throw notFound('comment')
+	const text = (snippet.textOriginal ?? snippet.textDisplay ?? '').trim()
+	return {
+		kind: 'delete_comment',
+		payload: {
+			id: input.comment_id,
+			author: snippet.authorDisplayName ?? '',
+			text:
+				text.length > COMMENT_EXCERPT_CHARS ? `${text.slice(0, COMMENT_EXCERPT_CHARS)}...` : text,
+		},
+		// Replies carry no video id. The card shows the video when the comment has one.
+		...(snippet.videoId ? { targetVideoId: snippet.videoId } : {}),
+	}
+}
+
+async function readOwnPlaylistTitle(
+	ctx: YoutubeClientContext,
+	tool: string,
+	playlistId: string,
+	channelId: string | null,
+): Promise<string> {
+	const playlist = await freshRead<TitledRead>(ctx, tool, 'playlists', {
+		part: 'snippet',
+		id: playlistId,
+	})
+	const snippet = playlist.items?.[0]?.snippet
+	if (!snippet) throw notFound('playlist')
+	assertOwn(snippet.channelId, channelId, 'playlist')
+	return snippet.title ?? ''
+}
+
+async function buildDeletePlaylist(
+	ctx: YoutubeClientContext,
+	input: DeletePlaylistInput,
+	channelId: string | null,
+): Promise<Built> {
+	const title = await readOwnPlaylistTitle(
+		ctx,
+		'youtube__delete_playlist',
+		input.playlist_id,
+		channelId,
+	)
+	return { kind: 'delete_playlist', payload: { id: input.playlist_id, title } }
+}
+
+/**
+ * Google removes a playlist entry by the entry's own id, not the video's, so the server looks the
+ * entry up. The entry id, the playlist and the video titles are read here, never taken from the agent.
+ */
+async function buildRemoveFromPlaylist(
+	ctx: YoutubeClientContext,
+	input: RemoveFromPlaylistInput,
+	channelId: string | null,
+): Promise<Built> {
+	const playlistTitle = await readOwnPlaylistTitle(
+		ctx,
+		'youtube__remove_from_playlist',
+		input.playlist_id,
+		channelId,
+	)
+	const entries = await freshRead<PlaylistItemRead>(
+		ctx,
+		'youtube__remove_from_playlist',
+		'playlistItems',
+		{ part: 'snippet', playlistId: input.playlist_id, videoId: input.video_id, maxResults: '1' },
+	)
+	const entry = entries.items?.[0]
+	if (!entry?.id) throw notFound('entry for that video in that playlist')
+	return {
+		kind: 'remove_from_playlist',
+		payload: {
+			id: entry.id,
+			playlistId: input.playlist_id,
+			playlistTitle,
+			videoId: input.video_id,
+			videoTitle: entry.snippet?.title ?? '',
+		},
+		targetVideoId: input.video_id,
+	}
 }
 
 /** A comment's text is kept as this hash only once its action ends, for the "no identical text twice" rule. */
@@ -267,6 +495,190 @@ function buildLike(input: LikeInput): Built {
 	}
 }
 
+type CaptionTool = 'upload_caption' | 'replace_caption' | 'delete_caption'
+
+/** A caption write only touches a video on the connected channel: anything else is refused before it is held. */
+async function assertOwnVideo(
+	ctx: YoutubeClientContext,
+	tool: CaptionTool,
+	videoId: string,
+	channelId: string | null,
+): Promise<void> {
+	const video = await youtubeRead<VideoRead>(ctx, {
+		tool: `youtube__${tool}`,
+		path: 'videos',
+		params: { part: 'snippet', id: videoId },
+		units: 1,
+	})
+	const owner = video.items?.[0]?.snippet?.channelId
+	if (!owner) throw new YoutubeError({ code: 'NOT_FOUND', message: 'No video with that id.' })
+	if (!channelId || owner !== channelId) {
+		throw new YoutubeError({
+			code: 'PERMISSION_DENIED',
+			message: 'That video is not on the connected channel.',
+		})
+	}
+}
+
+/**
+ * The track a replace or delete means, as Google lists it for that video. Language and name come
+ * from here, not from the agent, so the card shows what is really being overwritten or removed.
+ * One captions.list call, 50 units, never cached.
+ */
+async function readCaptionTrack(
+	ctx: YoutubeClientContext,
+	tool: CaptionTool,
+	videoId: string,
+	captionId: string,
+) {
+	const list = await youtubeRead<CaptionTrackRead>(ctx, {
+		tool: `youtube__${tool}`,
+		path: 'captions',
+		params: { part: 'snippet', videoId },
+		units: 50,
+		cache: false,
+	})
+	const track = list.items?.find((item) => item.id === captionId)
+	if (!track) {
+		throw new YoutubeError({
+			code: 'NOT_FOUND',
+			message: 'That video has no caption track with that id.',
+			hint: 'Use the track id youtube__get_own_captions returns.',
+		})
+	}
+	return {
+		language: track.snippet?.language ?? '',
+		name: track.snippet?.name ?? '',
+		isDraft: track.snippet?.isDraft === true,
+	}
+}
+
+async function loadCaptionFile(db: Database, workspaceId: string, fileId: string) {
+	const [file] = await db
+		.select({
+			id: files.id,
+			name: files.name,
+			sizeBytes: files.sizeBytes,
+			contentHash: files.contentHash,
+		})
+		.from(files)
+		.where(and(eq(files.id, fileId), eq(files.workspaceId, workspaceId)))
+		.limit(1)
+	if (!file) throw invalid('That file is not in this workspace.')
+	return file
+}
+
+const captionRule = (err: unknown): never => {
+	if (err instanceof YoutubeCaptionRuleError) throw invalid(err.message)
+	throw err
+}
+
+async function buildUploadCaption(
+	ctx: YoutubeClientContext,
+	input: UploadCaptionInput,
+	channelId: string | null,
+): Promise<Built> {
+	let payload: CaptionFilePayload
+	try {
+		const file = await loadCaptionFile(ctx.db, ctx.workspaceId, input.file_id)
+		payload = buildCaptionFilePayload(file, {
+			videoId: input.video_id,
+			language: input.language,
+			name: input.name,
+			isDraft: input.is_draft,
+		})
+	} catch (err) {
+		return captionRule(err)
+	}
+	await assertOwnVideo(ctx, 'upload_caption', input.video_id, channelId)
+	return { kind: 'upload_caption', payload: { ...payload }, targetVideoId: input.video_id }
+}
+
+async function buildReplaceCaption(
+	ctx: YoutubeClientContext,
+	input: ReplaceCaptionInput,
+	channelId: string | null,
+): Promise<Built> {
+	try {
+		assertVideoId(input.video_id)
+	} catch (err) {
+		return captionRule(err)
+	}
+	await assertOwnVideo(ctx, 'replace_caption', input.video_id, channelId)
+	const track = await readCaptionTrack(ctx, 'replace_caption', input.video_id, input.caption_id)
+	let payload: CaptionFilePayload
+	try {
+		const file = await loadCaptionFile(ctx.db, ctx.workspaceId, input.file_id)
+		payload = buildCaptionFilePayload(file, {
+			videoId: input.video_id,
+			captionId: input.caption_id,
+			// The track keeps its language and name. A replace changes the text, not what the track is.
+			language: track.language,
+			name: track.name,
+			isDraft: input.is_draft ?? track.isDraft,
+		})
+	} catch (err) {
+		return captionRule(err)
+	}
+	return { kind: 'replace_caption', payload: { ...payload }, targetVideoId: input.video_id }
+}
+
+async function buildDeleteCaption(
+	ctx: YoutubeClientContext,
+	input: DeleteCaptionInput,
+	channelId: string | null,
+): Promise<Built> {
+	try {
+		assertVideoId(input.video_id)
+	} catch (err) {
+		return captionRule(err)
+	}
+	await assertOwnVideo(ctx, 'delete_caption', input.video_id, channelId)
+	const track = await readCaptionTrack(ctx, 'delete_caption', input.video_id, input.caption_id)
+	const payload: CaptionDeletePayload = {
+		videoId: input.video_id,
+		captionId: input.caption_id,
+		language: track.language,
+		name: track.name,
+	}
+	return { kind: 'delete_caption', payload: { ...payload }, targetVideoId: input.video_id }
+}
+
+/**
+ * The comment's author and text are read by the server and stored in the request, so the card shows
+ * the real comment and not what the agent says it is. The executor sends only the id, the status and
+ * the ban flag; the rest is there for the person deciding, and is covered by the approval hash.
+ */
+async function buildModerateComment(
+	ctx: YoutubeClientContext,
+	input: ModerateCommentInput,
+): Promise<Built> {
+	if (input.ban_author && input.status !== 'rejected') {
+		throw invalid('ban_author only works together with status rejected.')
+	}
+	const read = await youtubeRead<CommentRead>(ctx, {
+		tool: 'youtube__moderate_comment',
+		path: 'comments',
+		params: { part: 'snippet', id: input.comment_id, textFormat: 'plainText' },
+		units: 1,
+		// The card must show the comment as it is now, and comment text is never kept in the cache.
+		cache: false,
+	})
+	const snippet = read.items?.[0]?.snippet
+	if (!snippet) throw new YoutubeError({ code: 'NOT_FOUND', message: 'No comment with that id.' })
+	return {
+		kind: 'moderate_comment',
+		payload: {
+			id: input.comment_id,
+			moderationStatus: MODERATION_STATUS_BY_INPUT[input.status],
+			...(input.ban_author ? { banAuthor: true } : {}),
+			commentAuthor: snippet.authorDisplayName ?? 'unknown',
+			commentText: (snippet.textDisplay ?? '').slice(0, MODERATED_COMMENT_TEXT_MAX),
+		},
+		...(snippet.videoId ? { targetVideoId: snippet.videoId } : {}),
+	}
+}
+
 /** The people who may decide a change: the human owners and admins of the workspace. */
 export async function findApprovers(db: Database, workspaceId: string): Promise<string[]> {
 	const rows = await db
@@ -300,6 +712,14 @@ export type ProposeInput =
 	| { tool: 'post_comment'; args: PostCommentInput }
 	| { tool: 'reply_to_comment'; args: ReplyToCommentInput }
 	| { tool: 'like'; args: LikeInput }
+	| { tool: 'upload_caption'; args: UploadCaptionInput }
+	| { tool: 'replace_caption'; args: ReplaceCaptionInput }
+	| { tool: 'delete_caption'; args: DeleteCaptionInput }
+	| { tool: 'delete_video'; args: DeleteVideoInput }
+	| { tool: 'delete_comment'; args: DeleteCommentInput }
+	| { tool: 'delete_playlist'; args: DeletePlaylistInput }
+	| { tool: 'remove_from_playlist'; args: RemoveFromPlaylistInput }
+	| { tool: 'moderate_comment'; args: ModerateCommentInput }
 
 export interface ProposeCommon {
 	/** The object the approval card is posted on: the task, bet or flow the change is for. */
@@ -329,9 +749,11 @@ export async function proposeYoutubeWrite(
 	await assertObjectInWorkspace(db, workspaceId, common.object_id)
 
 	// The channel's name is read by the server, never taken from the agent, so the card shows the
-	// real channel. A failed read leaves the card with the generic wording.
+	// real channel. A failed read leaves the card with the generic wording, except where the
+	// channel id is what proves the target is ours.
 	const channel = await readOwnChannel(ctx).catch((err) => {
-		if (request.tool === 'update_video_metadata') throw err
+		// A video edit, a caption write and a delete of a video or playlist check the owner, so they need the channel id.
+		if (NEEDS_OWN_CHANNEL.has(request.tool) || request.tool.endsWith('_caption')) throw err
 		return { id: null, title: null }
 	})
 
@@ -357,6 +779,30 @@ export async function proposeYoutubeWrite(
 			break
 		case 'like':
 			built = buildLike(request.args)
+			break
+		case 'upload_caption':
+			built = await buildUploadCaption(ctx, request.args, channel.id)
+			break
+		case 'replace_caption':
+			built = await buildReplaceCaption(ctx, request.args, channel.id)
+			break
+		case 'delete_caption':
+			built = await buildDeleteCaption(ctx, request.args, channel.id)
+			break
+		case 'delete_video':
+			built = await buildDeleteVideo(ctx, request.args, channel.id)
+			break
+		case 'delete_comment':
+			built = await buildDeleteComment(ctx, request.args)
+			break
+		case 'delete_playlist':
+			built = await buildDeletePlaylist(ctx, request.args, channel.id)
+			break
+		case 'remove_from_playlist':
+			built = await buildRemoveFromPlaylist(ctx, request.args, channel.id)
+			break
+		case 'moderate_comment':
+			built = await buildModerateComment(ctx, request.args)
 			break
 	}
 
