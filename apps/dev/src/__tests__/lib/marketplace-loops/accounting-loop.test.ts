@@ -35,7 +35,7 @@ describe('Accounting loop definition', () => {
 		expect(ACCOUNTING_LOOP.slug).toBe('accounting-loop')
 		expect(ACCOUNTING_LOOP.name).toBe('Accounting')
 		expect(ACCOUNTING_LOOP.useCase).toBe('Finance')
-		expect(ACCOUNTING_LOOP.version).toBe('1.5.0')
+		expect(ACCOUNTING_LOOP.version).toBe('1.6.0')
 		expect(ACCOUNTING_LOOP.description.length).toBeGreaterThan(0)
 	})
 
@@ -88,14 +88,15 @@ describe('Accounting loop definition', () => {
 		expect(connect?.body).not.toMatch(/custom tool/)
 	})
 
-	it('ships one actor, four triggers and four skills, no duplicates', () => {
+	it('ships one actor, five triggers and five skills, no duplicates', () => {
 		expect(ACCOUNTING_LOOP_ACTOR_IDS).toEqual([ACCOUNTING_LOOP_ACTOR_BOOKKEEPER])
-		expect(ACCOUNTING_LOOP_TRIGGER_IDS.length).toBe(4)
-		expect(ACCOUNTING_LOOP_SKILL_IDS.length).toBe(4)
+		expect(ACCOUNTING_LOOP_TRIGGER_IDS.length).toBe(5)
+		expect(ACCOUNTING_LOOP_SKILL_IDS.length).toBe(5)
 		expect(new Set(ACCOUNTING_LOOP_SKILL_IDS).size).toBe(ACCOUNTING_LOOP_SKILL_IDS.length)
 		expect(ACCOUNTING_LOOP_SKILL_IDS.map((id) => getSkillData(id).name).sort()).toEqual([
 			'accounting-connection-check',
 			'accounting-rule-check',
+			'accounting-tax-instalment-check',
 			'bookkeeping-draft-method',
 			'vat-return-check',
 		])
@@ -541,6 +542,127 @@ describe('Accounting loop definition', () => {
 		it('stops and names the owner when the report tool is not there', () => {
 			expect(skill()).toMatch(/If the tool is not among your tools, say so in the first line/)
 			expect(skill()).toMatch(/Dinero connected by sign-in/)
+		})
+	})
+
+	// The tax instalment check: reads the rules at Skat, compares the amounts with the year's result
+	// so far and drafts a recommendation in kroner. The owner changes an amount or pays, never the flow.
+	describe('tax instalment check', () => {
+		const skill = () =>
+			skillTexts().find((t) => t.startsWith('---\nname: accounting-tax-instalment-check')) ?? ''
+		const trigger = () =>
+			ACCOUNTING_LOOP_TRIGGER_IDS.map((id) => getTriggerData(id)).find((t) =>
+				t.name.startsWith('Tax instalment check'),
+			)
+
+		it('runs on the 10th of January, March and November, in UTC, run by the Bookkeeper', () => {
+			const t = trigger()
+			expect(t?.type).toBe('cron')
+			expect(t?.config).toMatchObject({ expression: '0 7 10 1,3,11 *' })
+			expect(t?.name).toMatch(/UTC/)
+			expect(t?.targetActorId).toBe(ACCOUNTING_LOOP_ACTOR_BOOKKEEPER)
+			expect(t?.enabled).toBe(true)
+			expect(t?.actionPrompt).toContain('flow named Accounting')
+			expect(t?.actionPrompt).toMatch(/more than 1 hour after its scheduled time, do nothing/)
+		})
+
+		it('stays silent in March and November unless an instalment is due within 14 days', () => {
+			const prompt = trigger()?.actionPrompt ?? ''
+			expect(prompt).toMatch(/In January always make the recommendation/)
+			expect(prompt).toMatch(
+				/March and November make it only if an instalment falls due within 14 days/,
+			)
+			expect(skill()).toMatch(
+				/March and November make it only if an instalment falls due within 14 days/,
+			)
+		})
+
+		it('ends silently when the connection fails, leaving the owner note to the weekly check', () => {
+			const prompt = trigger()?.actionPrompt ?? ''
+			expect(prompt).toMatch(/If the connection fails, end the session without a comment/)
+			expect(prompt).toMatch(/weekly connection check already tells the owner/)
+		})
+
+		it('reads the rules at Skat and cites the page, never from memory', () => {
+			const text = skill()
+			expect(text).toMatch(/Rules are read, not remembered/)
+			expect(text).toMatch(
+				/Never state an instalment date, an amount rule, a rate or a limit from memory/,
+			)
+			expect(text).toMatch(/with the page address and the day you read it/)
+			expect(text).toContain('skat.dk')
+			expect(actorTexts().join('\n')).toMatch(/Never state a date, a rate or a limit from memory/)
+		})
+
+		it('asks for the amounts set in a comment on the flow object, since a scheduled run has no chat', () => {
+			const text = skill()
+			expect(text).toMatch(
+				/On the scheduled check there is no chat, so ask in the comment on the flow object/,
+			)
+			expect(text).toMatch(/Until the owner answers, write the amounts as unknown/)
+		})
+
+		it('drafts a recommendation in kroner in a fixed table, one file per month', () => {
+			const text = skill()
+			expect(text).toContain(
+				'| instalment | due date | amount set in kroner | paid | suggested amount in kroner | change in kroner |',
+			)
+			expect(text).toMatch(/raise, lower or keep/)
+			expect(text).toMatch(/All money in kroner/)
+			expect(text).toMatch(/Make one recommendation per month/)
+			expect(text).toMatch(
+				/named exactly Tax instalment check followed by the accounting year's name/,
+			)
+			expect(text).toMatch(/list_files \(the flow's own file tool, never Dinero's list_files/)
+			expect(text).toMatch(/create_file/)
+		})
+
+		it('says the accounting result is not the taxable income and never invents a figure', () => {
+			const text = skill()
+			expect(text).toMatch(/accounting result is not the taxable income/)
+			expect(text).toMatch(/Never guess an amount/)
+			expect(text).toMatch(/Count booked vouchers only/)
+			expect(text).toMatch(/Never fill the gap with an estimate/)
+			expect(text).toMatch(/Do not project the rest of the year yourself/)
+		})
+
+		it('leaves changing an amount and paying to the owner, and never says it was done', () => {
+			const all = [skill(), trigger()?.actionPrompt ?? '', ...actorTexts()].join('\n')
+			expect(skill()).toMatch(/the owner changes an amount or pays, at Skat, themselves/)
+			expect(skill()).toMatch(/Draft only/)
+			expect(trigger()?.actionPrompt).toMatch(/changing an amount or paying is always the owner's/)
+			expect(skill()).toMatch(/never book, change, approve, pay, send, sign or file/i)
+			expect(all).not.toMatch(
+				/\b(has|have|had|was|were|is|are|been|get|gets) (been )?(paid|changed|filed|signed|submitted)\b/i,
+			)
+			expect(skill()).toMatch(/5\. Recommendation\./)
+			expect(skill()).toMatch(/6\. What the owner does\./)
+		})
+
+		it('uses only Dinero tools that are on the allowed list', () => {
+			const allowed = new Set([
+				'CreatePurchaseVoucher',
+				'upload_file',
+				'list_organizations',
+				'list_accounting_years',
+				'get_chart_of_accounts',
+				'list_purchase_accounts',
+				'list_vat_types',
+				'list_contacts',
+				'get_contact',
+				'GetContactByName',
+				'list_vouchers',
+				'get_purchase_voucher',
+				'list_files',
+				'list_voucher_file_cards',
+				'get_purchase_drafts_for_file',
+				'SearchBankTransactions',
+			])
+			const named =
+				skill().match(/\b(?:list_[a-z_]+|get_[a-z_]+|SearchBankTransactions|Create[A-Za-z]+)\b/g) ??
+				[]
+			expect(named.length).toBeGreaterThan(0)
+			for (const name of named) expect(allowed.has(name)).toBe(true)
 		})
 	})
 
